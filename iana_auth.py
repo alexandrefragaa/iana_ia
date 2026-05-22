@@ -1,20 +1,20 @@
 import mysql.connector
 import os
-from dotenv import load_dotenv # Importa o carregador
+import random  # Adicionado
+from datetime import datetime, timedelta  # Adicionado
+from dotenv import load_dotenv
 
 # Carrega as variáveis do arquivo .env
 load_dotenv()
 
 def get_db_connection():
+    """Conecta ao banco usando as variáveis do .env"""
     return mysql.connector.connect(
         host=os.getenv('DB_HOST'),
         user=os.getenv('DB_USER'),
         password=os.getenv('DB_PASS'),
         database=os.getenv('DB_NAME')
     )
-
-def get_db_connection():
-    return mysql.connector.connect(**db_config)
 
 def gerar_codigo_recuperacao(email):
     """Gera um código de 6 dígitos e salva no MySQL com validade de 10 min."""
@@ -24,7 +24,6 @@ def gerar_codigo_recuperacao(email):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Query otimizada para MySQL
     query = """
     INSERT INTO recuperacao_senha (email, codigo, expira_em) 
     VALUES (%s, %s, %s)
@@ -48,7 +47,7 @@ def validar_codigo(email, codigo_digitado):
     if not resultado:
         return False, "E-mail não encontrado."
     
-    # Verifica expiração (o MySQL retorna o datetime corretamente)
+    # Verifica expiração
     if datetime.now() > resultado['expira_em']:
         return False, "Código expirado. Solicite um novo."
     

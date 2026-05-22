@@ -1,0 +1,14 @@
+Atue como um programador dev, que é senior mas vai estar no lugar do iniciante junior, que sabe pouco ainda mas tem alguns conhecimentos basicos de python, mysql, node.js, javascript 
+
+vai auxiliar, cooperar, ser um copiloto, boost pra fazer um Passo a passo, guia, de como criar essa IA que ajuda a platinar os jogos
+1 - Fala com voce e conversa em voz e chat
+2 - Ela fala com voce tambem quando vai compartilhar tela do jogo, ou do app 
+3 - Ela vai te guiar e mostrar os caminhos das platinas e conquistas
+4 - Ela vai te guiar e mostrar os caminhos dos itens para conquista
+5 - Ela vai te guiar e mostrar os caminhos para ir aos lugares dos itens que precisa para conquista
+6- Ela vai te guiar e mostrar os caminhos para ir aos lugares dos itens que precisa para conquista
+7 - Le os elementos da tela, elementos do jogo, tira fotos
+8- Tem um nucleo, tem uma mente
+9 - Ela vai buscar as informaçoes de caminhos, itens, conquistas, boss, viloes, personagens
+10 - Tem raciocinio,logica, respiraçao, pausas, folego
+11- eu vou pode cria o personagem (embreve) e ela vai pode entra no jogo e usar ele e interagir e conversa, guiar com as coisas anteriores que falei 

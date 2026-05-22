@@ -1,0 +1,318 @@
+/* ======================================= */
+/* CONFIGURAÇÕES GERAIS E RESETS           */
+/* ======================================= */
+* { 
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    /* Background com o degradê radial nas cores oficiais da logo (Roxo e Ciano) */
+    background: radial-gradient(circle at center, rgba(147, 51, 234, 0.15) 0%, rgba(34, 211, 238, 0.05) 50%, #050505 100%);
+    background-color: #050505;
+    color: #e3e3e3;
+}
+
+.app-container {
+    height: 100vh;
+    display: flex;
+    overflow: hidden;
+}
+
+#chat-screen {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100%;
+    overflow: hidden;
+    position: relative;
+}
+
+.chat-box {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    width: 100%; /* Garantido */
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+#history-container {
+    flex: 1;
+    overflow-y: auto;
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* O item da conversa */
+.chat-item {
+    padding: 10px 15px;
+    border-radius: 20px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    transition: all 0.2s;
+    color: #e3e3e3;
+    font-size: 0.9rem;
+}
+
+.chat-item:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Esconde o ícone por padrão, mostra no hover */
+.chat-item .options-icon {
+    display: none;
+    width: 18px;
+    opacity: 0.7;
+}
+
+.chat-item:hover .options-icon {
+    display: block;
+}
+
+/* Ajuste para o texto não bater no ícone */
+.chat-item span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-right: 10px;
+}
+
+#modal-renomear {
+    backdrop-filter: blur(5px); /* Efeito de vidro esfumaçado */
+}
+
+#input-novo-titulo:focus {
+    outline: none;
+    border-color: #a855f7;
+}
+
+/* ======================================= */
+/* ÁREA DE BOAS-VINDAS (AVATAR E TEXTOS)   */
+/* ======================================= */
+.welcome-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    margin-bottom: 30px;
+    width: 100%;
+}
+
+.iana-rosto-inicio {
+    width: 120px;
+    height: 120px;
+    object-fit: cover;
+    /* Brilho e borda ajustados para o Roxo oficial da logo */
+    filter: drop-shadow(0 0 15px rgba(147, 51, 234, 0.6)); 
+    border: 2px solid #a855f7;          
+    border-radius: 50%;
+    padding: 5px;
+    transition: transform 0.3s ease;
+}
+
+#user-greeting {
+    font-size: 2.2rem;
+    font-weight: 800;
+    margin-top: 15px;
+    max-width: 600px;
+    line-height: 1.3;
+    text-transform: none;
+    letter-spacing: normal;
+    /* Degradê do título combinando com a identidade visual */
+    background: linear-gradient(90deg, #fbc2eb 0%, #a6c1ee 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+#help-question {
+    font-size: 1.3rem;
+    color: #a1a1aa; 
+    font-weight: 400;
+    max-width: 400px;
+    text-align: center;
+    line-height: 1.5;
+    margin: 10px auto 0 auto;
+    transition: opacity 0.5s ease-in-out;
+}
+
+/* ======================================= */
+/* ÁREA DO INPUT (BARRA ESTILO GEMINI)     */
+/* ======================================= */
+.input-area { 
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    padding: 20px 40px;
+    background: #050505;
+    flex-shrink: 0;
+}
+
+/* A Caixa de Pesquisa (Estilo Pílula combinando com a Logo e Chatbox) */
+.search-pill {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    max-width: 800px;
+    background-color: #151515;
+    border: 2px solid rgba(147, 51, 234, 0.5); /* Borda Roxa idêntica ao Chatbox original */
+    border-radius: 32px;
+    padding: 8px 10px 8px 24px;
+    box-shadow: 0 0 15px rgba(147, 51, 234, 0.3); /* Sombra roxa suave original */
+    transition: all 0.3s ease;
+}
+
+.search-pill:focus-within {
+    border-color: #22d3ee; /* Transição para o ciano/azul vibrante quando focado */
+    box-shadow: 0 0 25px rgba(34, 211, 238, 0.3);
+}
+
+.search-pill input {
+    flex-grow: 1;
+    background: transparent;
+    border: none;
+    color: white;
+    font-size: 1.05rem;
+    outline: none;
+}
+
+/* BOTÃO ENVIAR (Ícone Redondo com o Degradê da Logo) */
+#send-btn {
+    background: linear-gradient(135deg, #a855f7 0%, #22d3ee 100%); /* Degradê Roxo e Ciano */
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), filter 0.2s ease;
+}
+
+#send-btn img { 
+    width: 18px;
+    height: 18px;
+    filter: invert(1); /* Deixa o ícone branco para contraste perfeito */
+}
+
+#send-btn:hover {
+    transform: scale(1.08);
+    filter: brightness(1.2);
+}
+
+/* ======================================= */
+/* CABEÇALHO DO CHAT E ELEMENTOS           */
+/* ======================================= */
+.top-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px 40px;
+    width: 100%;
+    background-color: #0d1117;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.brand-name { 
+    display: block;
+    font-weight: 700;
+    font-size: 1.4rem;
+    /* Nome da marca acompanhando as cores oficiais */
+    background: linear-gradient(90deg, #a855f7, #22d3ee);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.sidebar {
+    display: flex;
+    width: 260px;
+    background-color: #0d0d0e;
+    border-right: 1px solid #1e1f20;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 15px;
+}
+
+/* BOTÃO NOVA CONVERSA (Arredondado + Degradê da Logo) */
+.new-chat-btn {
+    width: 100%;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 25px; 
+    background: linear-gradient(135deg, #a855f7 0%, #22d3ee 100%); /* Roxo para Ciano */
+    color: white;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: transform 0.2s, filter 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.new-chat-btn:hover {
+    filter: brightness(1.15);
+    transform: scale(1.02);
+}
+
+.user-auth { 
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+/* BOTÃO ENTRAR (Borda fina arredondada na cor da logo) */
+.btn-login {
+    background: transparent;
+    color: #e3e3e3;
+    border: 1px solid rgba(147, 51, 234, 0.6); /* Borda Roxa */
+    padding: 8px 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.2s ease;
+}
+
+.btn-login:hover {
+    background-color: rgba(147, 51, 234, 0.1);
+    border-color: #22d3ee; /* Transiciona para ciano no foco */
+    color: #ffffff;
+}
+
+/* BOTÃO REGISTRAR (Preenchido com o mesmo Degradê da Logo) */
+.btn-signup {
+    background: linear-gradient(135deg, #a855f7 0%, #22d3ee 100%); /* Roxo para Ciano */
+    color: white;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: transform 0.2s ease, filter 0.2s ease;
+}
+
+.btn-signup:hover {
+    filter: brightness(1.1);
+    transform: scale(1.02);
+}
+
+/* Ocultado seguindo o padrão minimalista do Gemini/ChatGPT */
+.status-box {
+    display: none;
+}

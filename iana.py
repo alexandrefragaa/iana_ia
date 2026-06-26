@@ -1,3 +1,4 @@
+
 import sys
 import os
 import requests
@@ -187,8 +188,8 @@ try:
     if banco_ok and len(msg_final) > 5:
         try:
             prompt_mineracao = (
-                "Leia a mensagem do usuário a seguir e extraia o tópico, abranger isso,  ou assunto principal"
-                "em um texto curto de no máximo 5 linhas. Seja direto, traga apenas o contexto, o que a pessoa quer"
+                "Leia a mensagem do usuário a seguir e extraia o tópico ou assunto principal "
+                "em um título curto de no máximo 4 palavras. Seja direto, traga apenas o título "
                 f"sem aspas e sem pontuação. Mensagem: {msg_final}"
             )
 

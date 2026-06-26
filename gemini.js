@@ -1,3 +1,4 @@
+
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "./env.js";
 
@@ -14,4 +15,5 @@ export async function askGemini(message) {
   ]);
 
   return result.response.text();
+
 }

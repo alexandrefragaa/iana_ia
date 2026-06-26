@@ -1,3 +1,4 @@
+
 # mine.py - Pipeline completo de mineração
 
 import requests
@@ -93,3 +94,4 @@ if __name__ == "__main__":
     mine_links()
     mine_topics()
     show_summary()
+

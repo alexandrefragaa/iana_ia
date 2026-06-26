@@ -1,3 +1,4 @@
+
 import express from 'express';
 import session from 'express-session';
 import passport from 'passport';
@@ -343,24 +344,18 @@ app.post('/chat/conversas', autenticado, async (req, res) => {
 });
 
 app.get('/chat/historico/:id', autenticado, async (req, res) => {
-  try {
-    // 🎯 AQUI ESTÁ A CORREÇÃO: Buscando na tabela certa (mensagens_chat) e com a coluna certa (id_conversa)
-    const [rows] = await pool.query(
-      'SELECT conteudo, tipo_sender, criado_em FROM mensagens_chat WHERE id_conversa=? ORDER BY id ASC',
-      [req.params.id]
-    );
-    
-    // Mapeando do jeito que o chat.js espera receber
-    const mensagens = rows.map(r => ({
-      conteudo: r.conteudo,
-      tipo_sender: r.tipo_sender, 
-      criado_em: r.criado_em
-    }));
-    
-    res.json({ mensagens });
-  } catch (err) {
-    res.status(500).json({ erro: err.message });
-  }
+    try {
+        const [rows] = await pool.query(
+            'SELECT mensagem, remetente, criado_em FROM mensagens WHERE conversa_id=? ORDER BY id ASC',
+            [req.params.id]
+        );
+        const mensagens = rows.map(r => ({
+            conteudo: r.mensagem,
+            tipo_sender: r.remetente === 'user' ? 'usuario' : 'iana',
+            criado_em: r.criado_em
+        }));
+        res.json({ mensagens });
+    } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 app.put('/chat/conversas/:id', autenticado, async (req, res) => {
@@ -382,16 +377,10 @@ app.patch('/chat/conversas/:id/fixar', autenticado, async (req, res) => {
 
 app.delete('/chat/conversas/:id', autenticado, async (req, res) => {
     try {
-        // 🎯 CORREÇÃO: Tabela mensagens_chat e coluna id_conversa
-        await pool.query('DELETE FROM mensagens_chat WHERE id_conversa=?', [req.params.id]);
-        
-        // Deleta a conversa mãe
+        await pool.query('DELETE FROM mensagens WHERE conversa_id=?', [req.params.id]);
         await pool.query('DELETE FROM conversas WHERE id=? AND usuario_id=?', [req.params.id, req.user.id]);
-        
         res.json({ message: 'Conversa deletada.' });
-    } catch (err) { 
-        res.status(500).json({ erro: err.message }); 
-    }
+    } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 /* ── ROTAS ANTIGAS — mantidas por compatibilidade ──────────────── */

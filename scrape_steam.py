@@ -13,9 +13,21 @@ except ImportError:
     print("❌ Erro: Não foi possível importar learning_engine.")
     sys.exit(1)
 
-ARQUIVO_ALVOS = "jogos_alvos.txt"
-ARQUIVO_APRENDIDOS = "aprendidos.txt"
+# ==========================================
+# 🎯 ENGENHARIA DE PASTAS (Rotas Seguras)
+# ==========================================
+DIRETORIO_RAIZ = os.path.dirname(os.path.abspath(__file__))
+PASTA_DATA = os.path.join(DIRETORIO_RAIZ, "data")
 
+os.makedirs(PASTA_DATA, exist_ok=True)
+
+ARQUIVO_ALVOS = os.path.join(PASTA_DATA, "jogos_alvos.txt")
+ARQUIVO_APRENDIDOS = os.path.join(PASTA_DATA, "aprendidos.txt")
+ARQUIVO_CONQUISTAS = os.path.join(PASTA_DATA, "conquistas.txt")
+
+# ==========================================
+# ⚙️ FUNÇÕES DE ARQUIVO
+# ==========================================
 def ler_arquivo(caminho):
     if not os.path.exists(caminho):
         return []
@@ -26,12 +38,14 @@ def registrar_aprendizado(nome_jogo):
     with open(ARQUIVO_APRENDIDOS, 'a', encoding='utf-8') as f:
         f.write(nome_jogo + '\n')
 
-# 🎯 AQUI ESTÁ A SUA FUNÇÃO DE BACKUP FÍSICO
 def salvar_conquistas_txt(nome_jogo, titulo, descricao):
-    """ Salva a conquista em um arquivo físico de backup legível por humanos """
-    with open('conquistas.txt', 'a', encoding='utf-8') as f:
-        f.write(f"Jogo: {nome_jogo} | 🏆 Troféu: {titulo} | 📝 Como platinar: {descricao}\n")
+    """ Salva a conquista na pasta /data garantida! """
+    with open(ARQUIVO_CONQUISTAS, 'a', encoding='utf-8') as f:
+        f.write(f"🎮 Jogo: {nome_jogo} | 🏆 Troféu: {titulo} | 📝 Como platinar: {descricao}\n")
 
+# ==========================================
+# 🌐 FUNÇÕES DA API DA STEAM
+# ==========================================
 def obter_todos_os_ids_da_steam(api_key):
     print("🌐 Baixando o catálogo mestre via API...")
     url_api = f"https://api.steampowered.com/IStoreService/GetAppList/v1/?key={api_key}&max_results=50000"
@@ -54,17 +68,17 @@ def minerar_conquistas_api(app_id, nome_jogo, api_key):
         dados = response.json()
         if 'game' in dados and 'availableGameStats' in dados['game'] and 'achievements' in dados['game']['availableGameStats']:
             conquistas = dados['game']['availableGameStats']['achievements']
-            print(f" {nome_jogo} - Encontradas {len(conquistas)} conquistas! Injetando no Cérebro e no TXT...")
+            print(f"🎮 {nome_jogo} - Encontradas {len(conquistas)} conquistas! Injetando no Cérebro e no TXT...")
             
             for ach in conquistas:
                 titulo = ach.get('displayName', 'Oculto')
                 descricao = ach.get('description', 'Conquista Secreta / Sem descrição')
                 conteudo = f"O jogo '{nome_jogo}' possui a conquista '{titulo}'. Como platinar / Descrição: {descricao}."
                 
-                # 1. Injeta no ChromaDB
+                # Injeta na mente
                 learn(titulo=f"Steam_{app_id}_{titulo}", conteudo=conteudo, categoria="conquistas_steam")
                 
-                # 🎯 2. AQUI ESTÁ A CHAMADA DA SUA FUNÇÃO SALVANDO NO CADERNO (Logo após o learn)
+                # Injeta no caderno FÍSICO usando a rota segura
                 salvar_conquistas_txt(nome_jogo, titulo, descricao)
             
             return True 
@@ -72,9 +86,12 @@ def minerar_conquistas_api(app_id, nome_jogo, api_key):
     except Exception:
         return False
 
+# ==========================================
+# 🚀 EXECUÇÃO PRINCIPAL
+# ==========================================
 if __name__ == "__main__":
     print("-" * 50)
-    print("👾 ROBÔ HÍBRIDO DA IANA (BUSCA MANUAL OU EM LOTE) 👾")
+    print("👾 ROBÔ HÍBRIDO DA IANA (COM PASTAS CORRETAS) 👾")
     print("-" * 50)
 
     steam_api_key = os.getenv("STEAM_API_KEY")

@@ -1,8 +1,9 @@
-import { scrape } from "./crawler/scraper.js";
+
+import { scrape } from "./scraper.js";
 import { isDuplicate, saveLink } from "./dedup.js";
 import { isValidGameContent } from "./filter.js";
-import { saveDiscovery } from "./crawler/savetoTxT.js";
-import { saveToDB } from "./crawler/savetoDb.js";
+import { saveDiscovery } from "./savetoTxT.js";
+import { saveToDB } from "./savetoDb.js";
 import fs from "fs";
 
 // Ler URLs dos arquivos de dados

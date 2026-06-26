@@ -1,49 +1,14 @@
-import sys
-import os
+
+# scrape_learning.py - Pipeline direto e eficiente
+
 import requests
 from bs4 import BeautifulSoup
+from learning_engine import learn
 from pathlib import Path
 import time
 
-# =======================================================================
-# 1. INJEÇÃO DE ROTA
-# =======================================================================
-ia_platina = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(ia_platina)
-
-# Importa o motor da Iana depois de arrumar a rota
-from learning_engine import learn
-
-# =======================================================================
-# 2. SISTEMA DE CONTROLE (O Caderno da Iana)
-# =======================================================================
-caminho_aprendidos = os.path.join(ia_platina, "data", "aprendidos.txt")
-
-def ja_aprendeu(item):
-    """Verifica se o link ou tópico já está no caderno de aprendidos"""
-    try:
-        with open(caminho_aprendidos, 'r', encoding='utf-8') as f:
-            # Lê o arquivo e checa se o item já está listado
-            return item in f.read()
-    except FileNotFoundError:
-        # Se o arquivo não existe ainda, é porque ela não aprendeu nada
-        return False
-
-def registrar_aprendizado(item):
-    """Anota no caderno que este item já foi dominado"""
-    with open(caminho_aprendidos, 'a', encoding='utf-8') as f:
-        f.write(item + "\n")
-
-# =======================================================================
-# 3. MOTORES DE MINERAÇÃO
-# =======================================================================
-def scrape_and_learn(url):
-    """Extrai e aprende, ignorando os repetidos"""
-    if ja_aprendeu(url):
-        print(f"⏩ [PULANDO] Já sei isso de cor: {url}")
-        return False
-
-    print(f"⏳ [EM ANDAMENTO] Lendo e aprendendo: {url}...")
+def scrape_and_learn(url, game=None):
+    """Extrai e aprende em um passo"""
     try:
         r = requests.get(url, timeout=6)
         soup = BeautifulSoup(r.text, "html.parser")
@@ -59,59 +24,45 @@ def scrape_and_learn(url):
         
         if len(content) > 50:
             learn(f"{title}", content, "mining", f"url_{hash(url)}")
-            registrar_aprendizado(url) # Anota no caderno!
-            print(f"✅ [APRENDIDO] Injetado na memória: {title}")
             return True
-    except Exception as e:
-        print(f"❌ [ERRO] Falha ao acessar {url}: {e}")
-        
+    except:
+        pass
     return False
 
+
 def learn_topics(filepath):
-    """Aprende tópicos, ignorando os repetidos"""
-    sucesso = 0
+    """Aprende tópicos direto como conhecimento estruturado"""
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             topics = [line.strip() for line in f if line.strip()]
         
         for topic in topics:
-            if ja_aprendeu(topic):
-                print(f"⏩ [PULANDO] Tópico já dominado: {topic}")
-                continue
-                
-            print(f"⏳ [EM ANDAMENTO] Estudando tópico: {topic}...")
             learn(f"Tópico: {topic}", f"Informação sobre: {topic}", "mining", f"topic_{hash(topic)}")
-            registrar_aprendizado(topic) # Anota no caderno!
-            print(f"✅ [APRENDIDO] Tópico salvo na memória!")
-            sucesso += 1
-            
-        return sucesso
-    except FileNotFoundError:
+        
+        return len(topics)
+    except:
         return 0
 
-# =======================================================================
-# 4. START DO PIPELINE
-# =======================================================================
+
 def run():
-    print("⚡ Sistema Neural de Mineração Iniciado!\n")
+    print("⚡ Mineração Turbo Iniciada!\n")
     
-    caminho_links = os.path.join(ia_platina, "data", "links_para_mineracao.txt")
-    caminho_titulos = os.path.join(ia_platina, "data", "titulos_para_buscar.txt")
+    # 1. Minerar TODOS os links
+    with open("./data/links_para_mineracao.txt") as f:
+        urls = [line.strip() for line in f if line.startswith("http")]
     
-    urls = []
-    try:
-        with open(caminho_links, 'r', encoding='utf-8') as f:
-            urls = [line.strip() for line in f if line.startswith("http")]
-    except FileNotFoundError:
-        print(f"⚠️ Aviso: Arquivo não encontrado em {caminho_links}")
-        
-    print(f"🔗 Analisando {len(urls)} links na fila...\n")
+    print(f"🔗 {len(urls)} links → minerando...")
     success = sum(scrape_and_learn(url) for url in urls)
+    print(f"✅ {success}/{len(urls)} links aprendidos\n")
     
-    print(f"\n📚 Analisando tópicos pendentes...\n")
-    topics = learn_topics(caminho_titulos)
+    # 2. Aprender TODOS os tópicos
+    print(f"📚 Tópicos → processando...")
+    topics = learn_topics("./data/titulos_para_buscar.txt")
+    print(f"✅ {topics} tópicos aprendidos\n")
     
-    print(f"\n🎉 Relatório Final: {success} novos links e {topics} novos tópicos integrados!")
+    # 3. Resultado final
+    print(f"🎉 Total: {success + topics} itens integrados ao conhecimento!")
+
 
 if __name__ == "__main__":
     run()

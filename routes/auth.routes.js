@@ -1,3 +1,4 @@
+
 import express from 'express';
 import passport from 'passport';
 import { register, login, logout, forgotPassword, resetPassword, getUser } from '../controllers/auth.controller.js';

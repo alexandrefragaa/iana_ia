@@ -7,4 +7,5 @@ export function isDuplicate(link) {
 
 export function saveLink(link) {
     fs.appendFileSync("./crawler/discovered_links.txt", link + "\n");
+
 }

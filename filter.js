@@ -1,3 +1,4 @@
+
 export function isValidGameContent(title, url) {
     const keywords = [
         "game", "guide", "boss", "walkthrough",
@@ -8,4 +9,5 @@ export function isValidGameContent(title, url) {
     const text = (title + url).toLowerCase();
 
     return keywords.some(k => text.includes(k));
+
 }

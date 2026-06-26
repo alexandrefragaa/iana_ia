@@ -4,11 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/png" sizes="62x62" href="img/iana-avatar.png">
+    <link rel="icon" type="image/png" sizes="62x62" href="/img/iana-avatar.png">
     <title>Iana</title>
-    <link rel="stylesheet" href="css/styles.css">
-    <link rel="stylesheet" href="css/buttons.css">
-    <link rel="stylesheet" href="css/animations.css">
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/buttons.css">
+    <link rel="stylesheet" href="/css/animations.css">
 </head>
 
 <body>
@@ -21,7 +21,7 @@
 
                 <div class="sidebar-brand-wrapper">
 
-                    <img src="img/iana-avatar.png" class="sidebar-avatar-brand" alt="Iana">
+                    <img src="/img/iana-avatar.png" class="sidebar-avatar-brand" alt="Iana">
 
                     <span class="brand-name-sidebar">
                         Iana
@@ -41,7 +41,7 @@
 
                 <button class="new-chat-btn" id="btn-nova-conversa">
 
-                    <img src="img/escrever.png" class="icon-escrever" alt="Novo Chat">
+                    <img src="/img/escrever.png" class="icon-escrever" alt="Novo Chat">
 
                     <span>Novo Chat</span>
 
@@ -49,7 +49,7 @@
 
                 <button class="search-chat-btn" id="btn-abrir-pesquisa">
 
-                    <img src="img/lupa.png" style="width:16px; filter:invert(.7);">
+                    <img src="/img/lupa.png" style="width:16px; filter:invert(.7);">
 
                     <span>Buscar Chat</span>
 
@@ -65,7 +65,7 @@
 
                     <div class="user-session-info">
 
-                        <img src="img/iana-avatar.png" class="user-session-avatar" alt="Usuário">
+                        <img src="/img/iana-avatar.png" class="user-session-avatar" alt="Usuário">
 
                         <span id="sidebar-user-name">
                             Nome do Usuário
@@ -75,7 +75,7 @@
 
                     <button class="btn-pontos" id="btn-user-menu">
 
-                        <img src="img/points.png" class="icon-points" alt="Opções">
+                        <img src="/img/points.png" class="icon-points" alt="Opções">
 
                     </button>
 
@@ -131,7 +131,7 @@
 
                     <div class="welcome-container" id="welcome-view">
 
-                        <img src="img/iana-avatar.png" class="iana-rosto-inicio" alt="Iana">
+                        <img src="/img/iana-avatar.png" class="iana-rosto-inicio" alt="Iana">
 
                         <h1 id="user-greeting">
                             <span class="gradient-text">
@@ -145,7 +145,20 @@
 
                     </div>
 
-                    
+                    <div class="thinking-container" id="thinking-view" style="display:none;">
+                        <div class="thinking-status">
+                            <div class="thinking-dot"></div>
+                            <p>Pensando...</p>
+                        </div>
+                        <div class="thinking-status">
+                            <div class="analyzing-dot"></div>
+                            <p>Analisando...</p>
+                        </div>
+                        <div class="thinking-status">
+                            <div class="speaking-dot"></div>
+                            <p>Respondendo...</p>
+                        </div>
+                    </div>
 
                 </div>
 
@@ -158,7 +171,7 @@
                             <button id="btn-upload-trigger" type="button" class="pill-action-btn"
                                 title="Anexar arquivo">
 
-                                <img src="img/mais.png" style="width:22px;" alt="Anexar">
+                                <img src="/img/mais.png" style="width:22px;" alt="Anexar">
 
                             </button>
 
@@ -168,21 +181,21 @@
 
                             <button id="btn-audio-record" type="button" class="pill-action-btn" title="Gravar áudio">
 
-                                <img src="img/microfone.png" style="width:20px;" alt="Gravar">
+                                <img src="/img/microfone.png" style="width:20px;" alt="Gravar">
 
                             </button>
 
                             <button id="btn-stop-response" type="button" class="pill-action-btn" style="display:none;"
                                 title="Parar resposta">
 
-                                <img src="img/seta-para-cima.png" style="width:18px;" alt="Parar">
+                                <img src="/img/seta-para-cima.png" style="width:18px;" alt="Parar">
 
                             </button>
 
 
                             <button id="send-btn" type="button" title="Enviar">
 
-                                <img src="img/send-message.svg" alt="Enviar">
+                                <img src="/img/send-message.svg" alt="Enviar">
 
                             </button>
 
@@ -377,9 +390,9 @@
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
-    <script src="js/features.js"></script>
+    <script src="/js/features.js"></script>
 
-<script src="js/chat.js"></script>
+    <script src="/js/chat.js"></script>
 
 </body>
 

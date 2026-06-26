@@ -1,3 +1,4 @@
+
 import os
 import sys
 import chromadb
@@ -50,4 +51,5 @@ def learn(titulo, conteudo, categoria="mining", id_documento=None):
         return True
     except Exception as e:
         print(f"⚠️ Erro ao tentar aprender sobre ({titulo}): {e}")
+
         return False

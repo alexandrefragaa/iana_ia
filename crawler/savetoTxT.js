@@ -1,5 +1,3 @@
-//salvar em texto
-
 import fs from "fs";
 
 export function saveDiscovery(title, link) {

@@ -116,10 +116,10 @@ async function listarConversasUsuario(idUsuario) {
     if (!idUsuario) return [];
     try {
         const [rows] = await pool.query(
-            'SELECT id, titulo, fixada FROM conversas WHERE usuario_id=? ORDER BY fixada DESC, id DESC',
+            'SELECT id_conversa, titulo, fixada FROM conversas WHERE id_usuario=? ORDER BY fixada DESC, criado_em DESC',
             [idUsuario]
         );
-        return rows.map(r => ({ id_conversa: r.id, titulo: r.titulo, fixada: !!r.fixada }));
+        return rows.map(r => ({ id_conversa: r.id_conversa, titulo: r.titulo, fixada: !!r.fixada }));
     } catch (err) {
         authFallbackAtivo = true;
         return [...conversasMemoria.values()]
@@ -150,8 +150,8 @@ async function salvarMensagemChat(idUsuario, idConversa, conteudo, tipoSender) {
 
     try {
         await pool.query(
-            'INSERT INTO mensagens (conversa_id,remetente,mensagem) VALUES (?,?,?)',
-            [idConversa, tipoSender === 'iana' ? 'iana' : 'user', conteudo]
+            'INSERT INTO mensagens_chat (id_usuario,id_conversa,conteudo,tipo_sender,criado_em) VALUES (?,?,?,?,NOW())',
+            [idUsuario, idConversa, conteudo, tipoSender === 'iana' ? 'iana' : 'usuario']
         );
         return mensagem;
     } catch (err) {
@@ -176,12 +176,12 @@ async function carregarHistoricoChat(idUsuario, idConversa) {
 
     try {
         const [rows] = await pool.query(
-            'SELECT mensagem, remetente, criado_em FROM mensagens WHERE conversa_id=? ORDER BY id ASC',
+            'SELECT conteudo, tipo_sender, criado_em FROM mensagens_chat WHERE id_conversa=? ORDER BY id ASC',
             [idConversa]
         );
         return rows.map(r => ({
-            conteudo: r.mensagem,
-            tipo_sender: r.remetente === 'iana' ? 'iana' : 'usuario',
+            conteudo: r.conteudo,
+            tipo_sender: r.tipo_sender === 'iana' ? 'iana' : 'usuario',
             criado_em: r.criado_em
         }));
     } catch (err) {
@@ -544,7 +544,7 @@ async function garantirConversa(idUsuario, idConversa, mensagem) {
 
     try {
         await pool.query(
-            'INSERT INTO conversas (id,usuario_id,titulo) VALUES (?,?,?) ON DUPLICATE KEY UPDATE titulo=titulo',
+            'INSERT INTO conversas (id_conversa,id_usuario,titulo) VALUES (?,?,?) ON DUPLICATE KEY UPDATE titulo=titulo',
             [idFinal, idUsuario, titulo]
         );
     } catch (e) {
@@ -617,7 +617,7 @@ app.post('/chat/conversas', autenticado, async (req, res) => {
     const { titulo } = req.body;
     const idConversa = `conversa_${req.user.id}_${Date.now()}`;
     try {
-        await pool.query('INSERT INTO conversas (id,usuario_id,titulo) VALUES (?,?,?)', [idConversa, req.user.id, titulo || 'Nova Conversa']);
+        await pool.query('INSERT INTO conversas (id_conversa,id_usuario,titulo) VALUES (?,?,?)', [idConversa, req.user.id, titulo || 'Nova Conversa']);
         res.json({ idConversa });
     } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -635,7 +635,7 @@ app.put('/chat/conversas/:id', autenticado, async (req, res) => {
     const { novoTitulo } = req.body;
     if (!novoTitulo?.trim()) return res.status(400).json({ erro: 'Título obrigatório.' });
     try {
-        await pool.query('UPDATE conversas SET titulo=? WHERE id=? AND usuario_id=?', [novoTitulo.trim(), req.params.id, req.user.id]);
+        await pool.query('UPDATE conversas SET titulo=? WHERE id_conversa=? AND id_usuario=?', [novoTitulo.trim(), req.params.id, req.user.id]);
         res.json({ message: 'Conversa renomeada.' });
     } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -643,15 +643,15 @@ app.put('/chat/conversas/:id', autenticado, async (req, res) => {
 app.patch('/chat/conversas/:id/fixar', autenticado, async (req, res) => {
     const { fixada } = req.body;
     try {
-        await pool.query('UPDATE conversas SET fixada=? WHERE id=? AND usuario_id=?', [fixada ? 1 : 0, req.params.id, req.user.id]);
+        await pool.query('UPDATE conversas SET fixada=? WHERE id_conversa=? AND id_usuario=?', [fixada ? 1 : 0, req.params.id, req.user.id]);
         res.json({ message: 'Conversa atualizada.' });
     } catch (err) { res.status(500).json({ erro: err.message }); }
 });
 
 app.delete('/chat/conversas/:id', autenticado, async (req, res) => {
     try {
-        await pool.query('DELETE FROM mensagens WHERE conversa_id=?', [req.params.id]);
-        await pool.query('DELETE FROM conversas WHERE id=? AND usuario_id=?', [req.params.id, req.user.id]);
+        await pool.query('DELETE FROM mensagens_chat WHERE id_conversa=?', [req.params.id]);
+        await pool.query('DELETE FROM conversas WHERE id_conversa=? AND id_usuario=?', [req.params.id, req.user.id]);
         res.json({ message: 'Conversa deletada.' });
     } catch (err) { res.status(500).json({ erro: err.message }); }
 });
@@ -659,7 +659,7 @@ app.delete('/chat/conversas/:id', autenticado, async (req, res) => {
 app.get('/historico', async (req, res) => {
     if (!req.isAuthenticated()) return res.json([]);
     try {
-        const [rows] = await pool.query('SELECT * FROM conversas WHERE usuario_id=? ORDER BY fixada DESC, id DESC', [req.user.id]);
+        const [rows] = await pool.query('SELECT * FROM conversas WHERE id_usuario=? ORDER BY fixada DESC, criado_em DESC', [req.user.id]);
         res.json(rows);
     } catch (err) { res.status(500).json({ erro: err.message }); }
 });

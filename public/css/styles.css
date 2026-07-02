@@ -315,10 +315,14 @@ body{
 #history-container{
     flex:1;
     overflow-y:auto;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    padding-bottom:10px;
 }
 
 #history-container::-webkit-scrollbar{
-    width:4px;
+    width:8px;
 }
 
 #history-container::-webkit-scrollbar-thumb{
@@ -661,6 +665,16 @@ body{
     gap:10px;
 }
 
+.conversation-title{
+    font-size:1.05rem;
+    font-weight:700;
+    color:#e3e3e3;
+    max-width:100%;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+
 .brand-name-header{
     font-size:1.3rem;
     font-weight:700;
@@ -692,10 +706,13 @@ body{
     flex-direction:column;
     align-items:center;
     justify-content:center;
+    transition:align-items .35s ease, justify-content .35s ease, padding .35s ease;
 }
 
 #chat-box.has-messages{
+    align-items:flex-start;
     justify-content:flex-start;
+    padding-top:20px;
 }
 
 .welcome-container{

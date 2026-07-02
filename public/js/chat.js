@@ -201,7 +201,12 @@ async function mudarSenha() {
 }
 
 /* ── HISTÓRICO ────────────────────────────────────────────────── */
-async function carregarHistorico() {
+async function atualizarTituloConversa(titulo) {
+    const el = document.getElementById('conversation-title');
+    if (el) el.textContent = titulo ? `${titulo}` : 'Novo chat';
+}
+
+function carregarHistorico() {
     const container = document.getElementById('history-container');
     if (!container) return;
     try {
@@ -231,7 +236,7 @@ async function carregarHistorico() {
                     </div>
                 </div>`;
 
-            item.querySelector('.chat-titulo').onclick = () => ativarConversa(c.id_conversa);
+            item.querySelector('.chat-titulo').onclick = () => ativarConversa(c.id_conversa, c.titulo);
             container.appendChild(item);
         });
     } catch (e) { console.error('Histórico:', e); }
@@ -288,8 +293,9 @@ function acaoExcluir(id) {
     mostrarTela('tela-confirmacao');
 }
 
-async function ativarConversa(id) {
+async function ativarConversa(id, titulo) {
     idConversaAtiva = id;
+    atualizarTituloConversa(titulo || 'Conversa');
     const chatBox = document.getElementById('chat-box');
 
     chatBox.querySelectorAll('.iana-response-container, .user-msg-bubble').forEach(el => el.remove());
@@ -347,6 +353,7 @@ async function ativarConversa(id) {
 
 function resetarChat() {
     idConversaAtiva = null;
+    atualizarTituloConversa('Novo chat');
     const chatBox = document.getElementById('chat-box');
     chatBox.querySelectorAll('.iana-response-container, .user-msg-bubble').forEach(el => el.remove());
     chatBox.classList.remove('has-messages');
@@ -606,6 +613,7 @@ async function processarEnvioIA(mensagem) {
         const data = await res.json();
         if (data.idConversa && !idConversaAtiva) {
             idConversaAtiva = data.idConversa;
+            atualizarTituloConversa(mensagem.length > 40 ? mensagem.slice(0, 40) + '...' : mensagem);
             carregarHistorico();
         }
         adicionarRespostaIA(data.resposta || 'Hmm, sem resposta. Tente novamente.');

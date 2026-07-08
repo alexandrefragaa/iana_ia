@@ -146,7 +146,6 @@ async function askGemini(mensagem, historico = [], instrucaoEmocional = '', conf
 }
 
 function respostaSistema(mensagem) {
-    const sp = process.env.SYSTEM_PROMPT || '';
     const msg = mensagem.toLowerCase();
     if (/oi|olá|ola|hey|bom dia|boa tarde|boa noite/.test(msg))
         return `Oi! 👋 Que bom te ver aqui! Sou a Iana, sua parceira gamer. Como posso te ajudar hoje? 🎮`;
@@ -200,7 +199,8 @@ passport.deserializeUser(async (id, done) => {
 
 const auth = (req, res, next) => req.isAuthenticated() ? next() : res.status(401).json({ erro: 'Login necessário.' });
 
-/* ── PÁGINAS ──────────────────────────────────────────────────── */
+/* ── PÁGINAS (CORRIGIDO) ──────────────────────────────────────── */
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/chat', (req, res) => res.sendFile(path.join(__dirname, 'public', 'chat.html')));
 app.get('/configuracoes', (req, res) => res.sendFile(path.join(__dirname, 'public', 'configuracoes.html')));
 
@@ -248,7 +248,6 @@ app.post('/auth/esqueci-senha', async (req, res) => {
     if (!email) return res.status(400).json({ erro: 'E-mail obrigatório.' });
     try {
         const [r] = await pool.query('SELECT id FROM usuarios WHERE email=?', [email]);
-        // Sempre responde igual para não revelar se email existe
         if (r.length) {
             const codigo = Math.floor(100000 + Math.random() * 900000).toString();
             codigos.set(email, { codigo, exp: Date.now() + 15 * 60 * 1000 });

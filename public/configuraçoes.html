@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configurações — Iana</title>
+    <link rel="icon" type="image/png" href="/img/iana-avatar.png">
+    
+    <!-- Seus estilos gerais já existentes -->
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/buttons.css">
+    <!-- Novo arquivo CSS específico para esta página -->
+    <link rel="stylesheet" href="/css/config.css">
+</head>
+<body>
+
+<div class="config-wrapper">
+
+    <!-- SIDEBAR -->
+    <aside class="config-sidebar">
+        <div class="config-sidebar-brand">
+            <img src="/img/iana-avatar.png" alt="Iana">
+            <span>Iana</span>
+        </div>
+
+        <button class="config-voltar" onclick="window.location.href='/'">
+            ← Voltar ao chat
+        </button>
+
+        <span class="config-nav-titulo">Configurações</span>
+        <button class="config-nav-item ativo" onclick="irPara('personalidade', this)">🎮 Personalidade</button>
+        <button class="config-nav-item" onclick="irPara('instrucoes', this)">📝 Instruções</button>
+        <button class="config-nav-item" onclick="irPara('foco', this)">🎯 Foco e temas</button>
+        <button class="config-nav-item" onclick="irPara('voz', this)">🔊 Estilo de voz</button>
+        <button class="config-nav-item" onclick="irPara('comportamento', this)">🧠 Comportamento</button>
+    </aside>
+
+    <!-- MAIN -->
+    <main class="config-main">
+
+        <header class="config-header">
+            <span class="config-header-titulo">⚙️ Configurações da Iana</span>
+        </header>
+
+        <div class="config-scroll">
+
+            <!-- PERSONALIDADE -->
+            <div class="config-secao ativa" id="secao-personalidade">
+                <div class="config-card">
+                    <div class="avatar-preview">
+                        <img src="/img/iana-avatar.png" class="avatar-img" alt="Iana">
+                        <div>
+                            <div class="avatar-nome">Iana</div>
+                            <div class="avatar-sub">Assistente de Games & Conquistas</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="config-card">
+                    <span class="config-card-titulo">🎮 Estilo de personalidade</span>
+                    <p class="config-card-desc">Como a Iana deve se comunicar com você. Pode selecionar mais de um.</p>
+                    <div class="config-chips" id="chips-personalidade">
+                        <button class="config-chip ativo" data-valor="gamer">🎮 Gamer raiz</button>
+                        <button class="config-chip" data-valor="nerd">🤓 Nerd técnica</button>
+                        <button class="config-chip" data-valor="descontraida">😎 Descontraída</button>
+                        <button class="config-chip" data-valor="direta">⚡ Direta e objetiva</button>
+                        <button class="config-chip" data-valor="professora">📚 Didática</button>
+                        <button class="config-chip" data-valor="hype">🔥 Hype e animada</button>
+                        <button class="config-chip" data-valor="epica">🗡️ Épica e dramática</button>
+                        <button class="config-chip" data-valor="humor">😂 Com humor</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- INSTRUÇÕES -->
+            <div class="config-secao" id="secao-instrucoes">
+                <div class="config-card">
+                    <span class="config-card-titulo">📝 Instruções personalizadas</span>
+                    <p class="config-card-desc">Diga à Iana como você quer ser tratado e o que é importante pra você.</p>
+                    <textarea class="config-textarea" id="config-instrucoes"
+                        placeholder="Ex: Me chame de capitão. Sempre dê dicas de platina primeiro. Seja direto nas respostas sobre builds..."
+                        maxlength="800"></textarea>
+                    <span class="config-contador" id="config-contador">0/800</span>
+                </div>
+
+                <div class="config-card">
+                    <span class="config-card-titulo">👤 Sobre você</span>
+                    <p class="config-card-desc">O que a Iana deve saber sobre você pra te ajudar melhor?</p>
+                    <textarea class="config-textarea" id="config-sobre-voce"
+                        placeholder="Ex: Jogo no PS5. Prefiro RPG e ação. Já platinei mais de 30 jogos. Tenho dificuldade com chefões..."
+                        maxlength="400"></textarea>
+                    <span class="config-contador" id="config-contador-voce">0/400</span>
+                </div>
+            </div>
+
+            <!-- FOCO -->
+            <div class="config-secao" id="secao-foco">
+                <div class="config-card">
+                    <span class="config-card-titulo">🎯 Foco principal</span>
+                    <p class="config-card-desc">Em quais assuntos a Iana deve ser especialista e priorizar?</p>
+                    <div class="config-chips" id="chips-foco">
+                        <button class="config-chip ativo" data-valor="platinas">🏆 Platinas e troféus</button>
+                        <button class="config-chip ativo" data-valor="builds">⚔️ Builds e estratégias</button>
+                        <button class="config-chip" data-valor="itens">🗺️ Localização de itens</button>
+                        <button class="config-chip" data-valor="boss">💀 Chefões e vilões</button>
+                        <button class="config-chip" data-valor="lore">📖 Lore e história</button>
+                        <button class="config-chip" data-valor="competitivo">🥇 Competitivo</button>
+                        <button class="config-chip" data-valor="rpg">🧙 RPGs</button>
+                        <button class="config-chip" data-valor="horror">👻 Horror</button>
+                        <button class="config-chip" data-valor="series">🎬 Séries e filmes</button>
+                        <button class="config-chip" data-valor="tecnologia">💻 Tecnologia</button>
+                        <button class="config-chip" data-valor="dbd">🪝 Dead by Daylight</button>
+                        <button class="config-chip" data-valor="batman">🦇 Batman Arkham</button>
+                        <button class="config-chip" data-valor="re">🧟 Resident Evil</button>
+                        <button class="config-chip" data-valor="gta">🚗 GTA / GTA RP</button>
+                    </div>
+                </div>
+
+                <div class="config-card">
+                    <span class="config-card-titulo">🎮 Plataforma preferida</span>
+                    <p class="config-card-desc">Em qual plataforma você joga?</p>
+                    <div class="config-chips" id="chips-plataforma">
+                        <button class="config-chip" data-valor="ps5">PlayStation 5</button>
+                        <button class="config-chip" data-valor="ps4">PlayStation 4</button>
+                        <button class="config-chip" data-valor="xbox">Xbox</button>
+                        <button class="config-chip" data-valor="pc">PC</button>
+                        <button class="config-chip" data-valor="switch">Nintendo Switch</button>
+                        <button class="config-chip" data-valor="mobile">Mobile</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VOZ -->
+            <div class="config-secao" id="secao-voz">
+                <div class="config-card">
+                    <span class="config-card-titulo">🔊 Estilo de escrita</span>
+                    <p class="config-card-desc">Como a Iana deve soar quando responder.</p>
+                    <div class="config-chips" id="chips-voz">
+                        <button class="config-chip ativo" data-valor="animada">⚡ Animada</button>
+                        <button class="config-chip" data-valor="calma">🌊 Calma</button>
+                        <button class="config-chip" data-valor="epica">🎯 Épica</button>
+                        <button class="config-chip" data-valor="humor">😂 Com humor</button>
+                    </div>
+                </div>
+
+                <div class="config-card">
+                    <span class="config-card-titulo">📏 Tamanho das respostas</span>
+                    <p class="config-card-desc">Prefere respostas curtas ou completas?</p>
+                    <select class="config-select" id="config-tamanho">
+                        <option value="curta">Curta e direta</option>
+                        <option value="media" selected>Média — equilíbrio</option>
+                        <option value="completa">Completa — passo a passo</option>
+                    </select>
+                </div>
+
+                <div class="config-card">
+                    <span class="config-card-titulo">😄 Emojis nas respostas</span>
+                    <select class="config-select" id="config-emojis">
+                        <option value="muito">Muitos emojis</option>
+                        <option value="moderado" selected>Moderado</option>
+                        <option value="nenhum">Sem emojis</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- COMPORTAMENTO -->
+            <div class="config-secao" id="secao-comportamento">
+                <div class="config-card">
+                    <span class="config-card-titulo">🧠 Comportamento</span>
+
+                    <div class="config-toggle-row">
+                        <div class="config-toggle-info">
+                            <span class="config-toggle-label">Fazer perguntas ao final</span>
+                            <span class="config-toggle-sub">A Iana encerra cada resposta com uma pergunta relacionada</span>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-perguntas" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="config-toggle-row">
+                        <div class="config-toggle-info">
+                            <span class="config-toggle-label">Detectar humor e adaptar tom</span>
+                            <span class="config-toggle-sub">Se você estiver estressado, a Iana acalma o tom automaticamente</span>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-humor" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="config-toggle-row">
+                        <div class="config-toggle-info">
+                            <span class="config-toggle-label">Criatividade quando não sabe</span>
+                            <span class="config-toggle-sub">A Iana cria respostas criativas em vez de dizer que não sabe</span>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-criatividade" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="config-toggle-row">
+                        <div class="config-toggle-info">
+                            <span class="config-toggle-label">Salvar contexto do chat</span>
+                            <span class="config-toggle-sub">A Iana lembra o que você disse anteriormente na conversa</span>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="toggle-contexto" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- fim config-scroll -->
+    </main>
+</div>
+
+<!-- BARRA SALVAR FIXA -->
+<div class="config-salvar-bar">
+    <button class="btn-salvar-config" id="btn-salvar">Salvar configurações</button>
+</div>
+
+<!-- Script externo da página -->
+<script src="/js/config.js"></script>
+
+</body>
+</html>

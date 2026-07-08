@@ -1,0 +1,18 @@
+# O que NUNCA deve ir para o GitHub:
+__pycache__/
+*.pyc
+.env
+data/chromadb/
+titulos_concluidos.txt
+iana_database/
+.vscode/
+.DS_Store
+
+# Dados e Bancos Locais (Não sobe o que a Iana gerou/salvou)
+/crawler/*.txt
+/data/*.txt
+memory.json
+/iana_database/
+node_modules/
+mysql.js
+schema.sql

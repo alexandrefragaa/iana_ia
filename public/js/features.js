@@ -52,7 +52,10 @@ function iniciarFeatures() {
     const textarea = document.getElementById('chat-input');
     if (!textarea) return;
     textarea.addEventListener('keydown', detectarCapsLock);
-    textarea.addEventListener('blur',    esconderAvisoCaps);
+    // keyup extra: alguns navegadores só atualizam o estado do modifier
+    // de forma confiável depois que a tecla é solta
+    textarea.addEventListener('keyup', detectarCapsLock);
+    textarea.addEventListener('blur', esconderAvisoCaps);
 }
 
 if (document.readyState === 'loading') {

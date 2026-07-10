@@ -10,6 +10,14 @@ import time
 DIRETORIO_RAIZ = Path(__file__).parent.resolve()
 PASTA_DATA = DIRETORIO_RAIZ / "data"
 
+# FIX: muitos sites bloqueiam requests sem User-Agent de navegador.
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; IanaBot/1.0; +mineracao-conhecimento)"}
+
+# FIX: 'time' estava importado mas nunca usado — sem pausa entre requests,
+# o script martela vários hosts em sequência rápida e corre risco de
+# rate-limit/bloqueio. Ajuste o valor conforme a necessidade.
+DELAY_ENTRE_REQUESTS = 1  # segundos
+
 
 def id_estavel(prefixo, texto):
     # FIX: hash() nativo do Python é randomizado por processo (PYTHONHASHSEED),
@@ -22,7 +30,7 @@ def id_estavel(prefixo, texto):
 def scrape_and_learn(url, game=None):
     """Extrai e aprende em um passo"""
     try:
-        r = requests.get(url, timeout=6)
+        r = requests.get(url, headers=HEADERS, timeout=6)
         soup = BeautifulSoup(r.text, "html.parser")
 
         title = soup.title.text if soup.title else "sem título"
@@ -39,6 +47,9 @@ def scrape_and_learn(url, game=None):
             return True
     except Exception as e:
         print(f"⚠️ Erro ao minerar {url}: {e}")
+    finally:
+        # Pausa entre requests independente de sucesso ou erro
+        time.sleep(DELAY_ENTRE_REQUESTS)
     return False
 
 

@@ -1,13 +1,11 @@
-
 //scraper.js
 
 import axios from "axios";
 import * as cheerio from "cheerio";
-import fs from "fs";
 
 export async function scrape(url) {
     try {
-        const { data } = await axios.get(url);
+        const { data } = await axios.get(url, { timeout: 8000 });
         const $ = cheerio.load(data);
 
         const title = $("title").text();

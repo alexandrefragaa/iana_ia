@@ -1,4 +1,3 @@
-
 import sys
 import os
 import requests
@@ -151,8 +150,8 @@ if not chave:
     texto_final = 'Minha chave de acesso da API sumiu! 🔑 Avise o desenvolvedor!'
     print(texto_final)
     sys.exit(0)
-    
-    
+
+
 # =========================================================
 # REQUEST (RESPOSTA DO CHAT + MINERAÇÃO NO IANA_DATABASE)
 # =========================================================
@@ -172,27 +171,41 @@ try:
     )
     resposta_api.raise_for_status()
     dados = resposta_api.json()
-    
-    texto_final = (
-        dados.get('candidates', [{}])
-        .get('content', {})
-        .get('parts', [{}])
-        .get('text', '')
-    )
+
+    # FIX: 'candidates' e 'parts' são LISTAS na resposta do Gemini, não dicts.
+    # O código original fazia dados.get('candidates', [{}]).get('content', {})...
+    # e isso lança AttributeError: 'list' object has no attribute 'get',
+    # caindo sempre no except genérico — por isso a Iana nunca respondia de verdade.
+    candidatos = dados.get('candidates') or []
+    partes = candidatos[0].get('content', {}).get('parts', []) if candidatos else []
+    texto_final = partes[0].get('text', '') if partes else ''
+
+    if not texto_final.strip():
+        # resposta vazia: bloqueio de segurança do Gemini, filtro de conteúdo, etc.
+        motivo_bloqueio = candidatos[0].get('finishReason', '') if candidatos else 'sem candidatos'
+        sys.stderr.write(f'[AVISO] Resposta vazia do Gemini (finishReason={motivo_bloqueio})\n')
+        texto_final = 'Hmm, não consegui gerar uma resposta agora. Pode reformular a pergunta?'
+
     print(texto_final)
+
+    # Salva na memória só quando deu tudo certo (estava faltando essa chamada no original)
+    salvar_conversa(msg_final, texto_final, id_conversa)
 
 except requests.exceptions.Timeout:
     sys.stderr.write('[AVISO] Timeout na API Gemini\n')
-    texto_final = 'Ops! Meus circuitos falharam e a conexão com os servidores demorou demais! 🤯 Manda a mensagem de novo?'
+    fallback = resposta_do_banco_local(contexto_banco)
+    texto_final = fallback or 'Ops! Meus circuitos falharam e a conexão com os servidores demorou demais! 🤯 Manda a mensagem de novo?'
     print(texto_final)
 
 except requests.exceptions.HTTPError as e:
     status = e.response.status_code if e.response is not None else 0
     sys.stderr.write(f'[AVISO] Gemini retornou status {status}\n')
-    texto_final = 'Ops! Meus circuitos falharam ou a conexão externa caiu! 🤯 Manda a mensagem de novo?'
+    fallback = resposta_do_banco_local(contexto_banco)
+    texto_final = fallback or 'Ops! Meus circuitos falharam ou a conexão externa caiu! 🤯 Manda a mensagem de novo?'
     print(texto_final)
 
 except Exception as e:
     sys.stderr.write(f'[AVISO] Erro inesperado: {e}\n')
-    texto_final = 'Ops! Deu um curto-circuito interno aqui! 🤯 Manda a mensagem de novo?'
+    fallback = resposta_do_banco_local(contexto_banco)
+    texto_final = fallback or 'Ops! Deu um curto-circuito interno aqui! 🤯 Manda a mensagem de novo?'
     print(texto_final)

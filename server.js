@@ -6,6 +6,7 @@ import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -28,9 +29,15 @@ app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.set('trust proxy', 1);
 
-const origensPermitidas = (process.env.ALLOWED_ORIGINS || 'http://localhost:3333').split(',');
+// FIX: removido o "|| true" que anulava a whitelist de origens (falha de segurança grave,
+// permitia qualquer site chamar suas rotas autenticadas com credentials:true)
+const origensPermitidas = (process.env.ALLOWED_ORIGINS || 'http://localhost:3333').split(',').map(o => o.trim());
 app.use(cors({
-    origin: (origin, cb) => cb(null, !origin || origensPermitidas.includes(origin) || true),
+    origin: (origin, cb) => {
+        if (!origin || origensPermitidas.includes(origin)) return cb(null, true);
+        console.warn(`[CORS] Origem bloqueada: ${origin}`);
+        return cb(new Error('Origem não permitida por CORS'));
+    },
     credentials: true
 }));
 
@@ -47,6 +54,11 @@ app.use(session({
         sameSite: 'lax',
         maxAge: 7 * 24 * 60 * 60 * 1000
     }
+    // ATENÇÃO: sem "store" configurado, isto usa MemoryStore.
+    // Funciona para teste, mas em produção real no Render:
+    // - todo mundo é deslogado a cada deploy/restart
+    // - quebra se você escalar para mais de 1 instância
+    // Recomendo trocar por connect-mysql2/express-mysql-session usando o pool abaixo.
 }));
 app.use(passport.initialize());
 app.use(passport.session());
@@ -96,13 +108,13 @@ function detectarHumor(texto) {
 
 function instrucaoHumor(humor) {
     return {
-        raiva:      'O usuário está irritado. Responda com empatia, calma, sem ser seco.',
+        raiva:      'O usuário está irritado. Mandando varios CAPSLOCK CAPS LOCK, varios !! ??!!. Responda com empatia, calma, sem ser seco.',
         estressado: 'O usuário está estressado. Responda com leveza e tranquilidade.',
-        normal:     ''
+        normal:     'Está respondendo normalmente, sem tom de raiva ou estresse. Seja amigável e prestativa.'
     }[humor] || '';
 }
 
-const MODELOS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+const MODELOS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
 
 async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
     const m = genAI.getGenerativeModel({ model: modelo, systemInstruction: systemPrompt });
@@ -199,12 +211,29 @@ passport.deserializeUser(async (id, done) => {
 
 const auth = (req, res, next) => req.isAuthenticated() ? next() : res.status(401).json({ erro: 'Login necessário.' });
 
-/* ── PÁGINAS (CORRIGIDO) ──────────────────────────────────────── */
+/* ── RATE LIMIT (protege sua chave do Gemini e login de brute-force) ── */
+const chatLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erro: 'Muitas mensagens em pouco tempo. Aguarde um instante.' }
+});
+
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erro: 'Muitas tentativas de login. Tente novamente mais tarde.' }
+});
+
+/* ── PÁGINAS ──────────────────────────────────────────────────── */
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/configuracoes', (req, res) => res.sendFile(path.join(__dirname, 'public', 'configuracoes.html')));
 
 /* ── AUTH ─────────────────────────────────────────────────────── */
-app.post('/auth/registro', async (req, res) => {
+app.post('/auth/registro', loginLimiter, async (req, res) => {
     const { nome, email, senha } = req.body;
     if (!nome || !email || !senha) return res.status(400).json({ erro: 'Preencha todos os campos.' });
     if (senha.length < 8) return res.status(400).json({ erro: 'Senha mínima: 8 caracteres.' });
@@ -222,7 +251,7 @@ app.post('/auth/registro', async (req, res) => {
     } catch (e) { console.error('[REGISTRO]', e.message); res.status(500).json({ erro: 'Erro interno.' }); }
 });
 
-app.post('/auth/login', (req, res, next) => {
+app.post('/auth/login', loginLimiter, (req, res, next) => {
     passport.authenticate('local', (err, usuario, info) => {
         if (err) return res.status(500).json({ erro: 'Erro interno.' });
         if (!usuario) return res.status(401).json({ erro: info?.message || 'Falha no login.' });
@@ -242,7 +271,7 @@ app.get('/auth/me', (req, res) => {
     res.json({ logado: true, usuario: { id: req.user.id, nome: req.user.nome, email: req.user.email } });
 });
 
-app.post('/auth/esqueci-senha', async (req, res) => {
+app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
     const email = req.body.email?.trim().toLowerCase();
     if (!email) return res.status(400).json({ erro: 'E-mail obrigatório.' });
     try {
@@ -275,6 +304,7 @@ app.post('/auth/mudar-senha', async (req, res) => {
     const token = codigos.get(email);
     if (!token || token.codigo !== codigo.trim() || Date.now() > token.exp)
         return res.status(400).json({ erro: 'Código inválido ou expirado.' });
+    if (nova_senha.trim().length < 8) return res.status(400).json({ erro: 'Senha mínima: 8 caracteres.' });
     try {
         const hash = await bcrypt.hash(nova_senha.trim(), 12);
         await pool.query('UPDATE usuarios SET senha=? WHERE email=?', [hash, email]);
@@ -351,7 +381,7 @@ app.delete('/chat/conversas/:id', auth, async (req, res) => {
 });
 
 /* ── CHAT STREAM ──────────────────────────────────────────────── */
-app.post('/chat/stream', async (req, res) => {
+app.post('/chat/stream', chatLimiter, async (req, res) => {
     const nome    = req.user?.nome || 'Visitante';
     const idUser  = req.user?.id || null;
     const msg     = req.body.mensagem?.trim();
@@ -399,4 +429,15 @@ app.post('/chat/stream', async (req, res) => {
 /* ── 404 ──────────────────────────────────────────────────────── */
 app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.' }));
 
-app.listen(process.env.PORT || 3333, () => console.log(`🚀 Iana: http://127.0.0.1:${process.env.PORT || 3333}`));
+/* ── ERROR HANDLER GLOBAL (FIX: antes não existia, erros viravam HTML cru) ── */
+app.use((err, req, res, next) => {
+    console.error('[ERRO NÃO TRATADO]', err.message);
+    if (err.message === 'Origem não permitida por CORS') {
+        return res.status(403).json({ erro: 'Origem não permitida.' });
+    }
+    res.status(500).json({ erro: 'Erro interno no servidor.' });
+});
+
+/* ── START (FIX: bind explícito em 0.0.0.0, necessário em alguns PaaS) ── */
+const PORT = process.env.PORT || 3333;
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Iana rodando na porta ${PORT}`));

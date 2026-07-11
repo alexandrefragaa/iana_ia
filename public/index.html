@@ -71,10 +71,7 @@
             </div>
         </header>
 
-        <!-- CHAT BOX -->
         <div class="chatbox" id="chatbox">
-
-            <!-- WELCOME -->
             <div class="welcome" id="welcome">
                 <div class="welcome-avatar-wrap">
                     <img src="/img/iana-avatar.png" class="welcome-avatar" alt="Iana">
@@ -83,7 +80,6 @@
                     <span class="g-text">Olá! Que bom que chegou 👋</span>
                 </h1>
                 <p class="welcome-sub" id="welcome-sub">Como posso te ajudar hoje?</p>
-
                 <div class="sugestoes" id="sugestoes">
                     <button class="sugestao-chip" onclick="usarSugestao('Como conseguir platina em Dead by Daylight?')">🏆 Platina em DBD</button>
                     <button class="sugestao-chip" onclick="usarSugestao('Melhores builds para Batman Arkham Knight')">🦇 Builds Arkham Knight</button>
@@ -91,44 +87,28 @@
                     <button class="sugestao-chip" onclick="usarSugestao('Como evoluir rápido no GTA RP?')">🚗 GTA RP Dicas</button>
                 </div>
             </div>
-
-            <!-- MENSAGENS (injetadas via JS) -->
             <div class="msgs" id="msgs"></div>
-
         </div>
 
-        <!-- INPUT -->
         <div class="input-wrap">
             <div class="input-pill" id="input-pill">
-
                 <button class="pill-btn btn-mais" id="btn-mais" title="Anexar">
-                    <img src="/img/mais.png" style="width:22px;">
+                    <img src="/img/mais.png" style="width:22px;filter:invert(.7);">
                 </button>
                 <input type="file" id="file-input" style="display:none;" accept="image/*,.pdf,.txt,audio/*,.doc,.docx">
-
-                <textarea
-                    id="chat-input"
-                    class="chat-textarea"
-                    placeholder="Peça à Iana..."
-                    rows="1"
-                ></textarea>
-
+                <textarea id="chat-input" class="chat-textarea" placeholder="Peça à Iana..." rows="1"></textarea>
                 <button class="pill-btn btn-mic" id="btn-mic" title="Gravar áudio">
-                    <img src="/img/microfone.png" style="width:20px;">
+                    <img src="/img/microfone.png" style="width:20px;filter:invert(.7);">
                 </button>
-
                 <button class="pill-btn btn-voz-call" id="btn-voz-call" title="Chamada de voz">
-                    <img src="/img/balao-de-fala.png" style="width:20px;">
+                    <img src="/img/balao-de-fala.png" style="width:20px;filter:invert(.7);">
                 </button>
-
                 <button class="pill-btn btn-stop" id="btn-stop" style="display:none;" title="Parar">
                     <img src="/img/seta-para-cima.png" style="width:18px;filter:invert(1);">
                 </button>
-
                 <button class="btn-send" id="btn-send" title="Enviar">
-                    <img src="/img/send-message.svg" style="width:20px;filter:invert(1);">
+                    <img src="/img/send-message.png" style="width:20px;filter:invert(1);">
                 </button>
-
             </div>
             <p class="disclaimer">Iana é uma IA e pode cometer erros. Verifique as respostas.</p>
         </div>
@@ -139,7 +119,9 @@
 <!-- MENU UPLOAD -->
 <div class="upload-menu" id="upload-menu" style="display:none;">
     <button class="upload-item" id="up-foto">📷 Câmera / Foto</button>
-    <button class="upload-item" id="up-arquivo">Enviar Arquivos</button>
+    <button class="upload-item" id="up-imagem">🖼️ Imagem</button>
+    <button class="upload-item" id="up-arquivo">📄 Arquivo</button>
+    <button class="upload-item" id="up-audio">🎵 Áudio</button>
     <button class="upload-item" id="up-tela">🖥️ Compartilhar Tela</button>
 </div>
 
@@ -169,7 +151,7 @@
         <p class="voz-status" id="voz-status">Fale sua pergunta</p>
         <p class="voz-transcript" id="voz-transcript"></p>
         <div class="voz-acoes">
-            <button class="btn-voz-mute" id="btn-voz-mute" title="Mudo">🎙️</button>
+            <button class="btn-voz-mute" id="btn-voz-mute">🎙️</button>
             <button class="btn-voz-encerrar" id="btn-voz-encerrar">Encerrar chamada</button>
         </div>
     </div>
@@ -179,7 +161,6 @@
 <div class="overlay" id="overlay-auth" style="display:none;">
     <div class="modal-auth">
 
-        <!-- LOGIN -->
         <div id="tela-login" style="display:none;">
             <button class="modal-close" onclick="fecharAuth()">✕</button>
             <h2 class="modal-titulo">Entrar</h2>
@@ -193,7 +174,6 @@
             </div>
         </div>
 
-        <!-- CADASTRO -->
         <div id="tela-cadastro" style="display:none;">
             <button class="modal-close" onclick="fecharAuth()">✕</button>
             <h2 class="modal-titulo">Criar Conta</h2>
@@ -207,7 +187,6 @@
             </div>
         </div>
 
-        <!-- ESQUECI -->
         <div id="tela-esqueci" style="display:none;">
             <button class="modal-close" onclick="fecharAuth()">✕</button>
             <h2 class="modal-titulo">Recuperar Senha</h2>
@@ -219,10 +198,9 @@
             </div>
         </div>
 
-        <!-- CÓDIGO -->
         <div id="tela-codigo" style="display:none;">
             <button class="modal-close" onclick="fecharAuth()">✕</button>
-            <h2 class="modal-titulo">Novo Código</h2>
+            <h2 class="modal-titulo">Alterar Senha</h2>
             <p class="modal-sub" id="cod-label">Código enviado para seu e-mail.</p>
             <input type="text" id="cod-input" placeholder="000000" class="modal-input cod-input" maxlength="6">
             <input type="password" id="cod-nova-senha" placeholder="Nova senha" class="modal-input">
@@ -230,15 +208,13 @@
             <button class="btn-modal-acao" id="btn-mudar-senha">Alterar Senha</button>
         </div>
 
-        <!-- PESQUISA -->
         <div id="tela-pesquisa" style="display:none;">
             <button class="modal-close" onclick="fecharAuth()">✕</button>
-            <h2 class="modal-titulo">🔍 Buscar Histórico</h2>
+            <h2 class="modal-titulo">Buscar Conversas</h2>
             <input type="text" id="pesquisa-input" placeholder="Buscar conversa..." class="modal-input">
             <div id="pesquisa-resultados"></div>
         </div>
 
-        <!-- FEEDBACK -->
         <div id="tela-feedback" style="display:none;">
             <button class="modal-close" onclick="fecharAuth()">✕</button>
             <h2 class="modal-titulo">Enviar Feedback</h2>
@@ -250,7 +226,6 @@
             <button class="btn-modal-acao" id="btn-fb-enviar">Enviar</button>
         </div>
 
-        <!-- RENOMEAR -->
         <div id="tela-renomear" style="display:none;">
             <button class="modal-close" onclick="fecharAuth()">✕</button>
             <h2 class="modal-titulo">Renomear Conversa</h2>
@@ -258,9 +233,8 @@
             <button class="btn-modal-acao" id="btn-salvar-rename">Salvar</button>
         </div>
 
-        <!-- CONFIRMAR EXCLUSÃO -->
         <div id="tela-confirmar" style="display:none;">
-            <h2 class="modal-titulo">⚠️ Excluir conversa</h2>
+            <h2 class="modal-titulo">Excluir conversa</h2>
             <p class="modal-sub">Essa ação não pode ser desfeita.</p>
             <div style="display:flex;gap:10px;margin-top:8px;">
                 <button class="btn-modal-sec" onclick="fecharAuth()">Cancelar</button>

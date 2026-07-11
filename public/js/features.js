@@ -1,11 +1,10 @@
 /* ================================================================
    IANA — features.js
-   Detecção emocional, caps lock, respiração
+   Detecção emocional, caps lock
    ================================================================ */
 
 'use strict';
 
-/* ── DETECÇÃO DE ESTADO EMOCIONAL ─────────────────────────────── */
 function detectarEstadoEmocional(texto) {
     if (!texto) return 'normal';
     const letras  = (texto.match(/[A-Za-z]/g) || []).length;
@@ -17,7 +16,6 @@ function detectarEstadoEmocional(texto) {
     return 'normal';
 }
 
-/* ── AVISO CAPS LOCK ──────────────────────────────────────────── */
 function detectarCapsLock(e) {
     if (e.getModifierState?.('CapsLock')) mostrarAvisoCaps();
     else esconderAvisoCaps();
@@ -47,15 +45,12 @@ function esconderAvisoCaps() {
     if (el) el.style.display = 'none';
 }
 
-/* ── INIT ─────────────────────────────────────────────────────── */
 function iniciarFeatures() {
     const textarea = document.getElementById('chat-input');
     if (!textarea) return;
     textarea.addEventListener('keydown', detectarCapsLock);
-    // keyup extra: alguns navegadores só atualizam o estado do modifier
-    // de forma confiável depois que a tecla é solta
-    textarea.addEventListener('keyup', detectarCapsLock);
-    textarea.addEventListener('blur', esconderAvisoCaps);
+    textarea.addEventListener('keyup',   detectarCapsLock);
+    textarea.addEventListener('blur',    esconderAvisoCaps);
 }
 
 if (document.readyState === 'loading') {
@@ -64,5 +59,4 @@ if (document.readyState === 'loading') {
     iniciarFeatures();
 }
 
-/* ── EXPORTS GLOBAIS ──────────────────────────────────────────── */
 window.detectarEstadoEmocional = detectarEstadoEmocional;

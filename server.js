@@ -15,6 +15,8 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
+console.log('[DEBUG] ALLOWED_ORIGINS =', JSON.stringify(process.env.ALLOWED_ORIGINS));
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const app        = express();
@@ -108,13 +110,13 @@ function detectarHumor(texto) {
 
 function instrucaoHumor(humor) {
     return {
-        raiva:      'O usuário está irritado. Mandando varios CAPSLOCK CAPS LOCK, varios !! ??!!. Responda com empatia, calma, sem ser seco.',
+        raiva:      'O usuário está irritado. Responda com empatia, calma, sem ser seco.',
         estressado: 'O usuário está estressado. Responda com leveza e tranquilidade.',
-        normal:     'Está respondendo normalmente, sem tom de raiva ou estresse. Seja amigável e prestativa.'
+        normal:     ''
     }[humor] || '';
 }
 
-const MODELOS = ['gemini-2.5-flash', 'gemini-2.0-flash'];
+const MODELOS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
 
 async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
     const m = genAI.getGenerativeModel({ model: modelo, systemInstruction: systemPrompt });

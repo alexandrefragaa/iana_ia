@@ -129,11 +129,11 @@ if not system_prompt:
         '5. Mantenha o estilo gamer, use emojis e seja prestativa.'
     )
 
-# =========================================================
 # CONTEXTO — Busca melhorada
-# =========================================================
-# Busca por palavras-chave específicas da mensagem para garantir que tragamos o que importa
 fatos_persistentes = memory.get_memory(msg_final, id_usuario_numerico=id_usuario_numerico, limit=10)
+# --- ADICIONE ESTA LINHA ABAIXO ---
+sys.stderr.write(f"[DEBUG] Iana buscando memória para ID {id_usuario_numerico}. Fatos encontrados: {len(fatos_persistentes)}\n")
+# ----------------------------------
 contexto_semantico = consultar_memoria_semantica(msg_final, id_conversa)
 
 blocos = []

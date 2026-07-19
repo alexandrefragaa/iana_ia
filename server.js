@@ -114,7 +114,11 @@ function instrucaoHumor(humor) {
     }[humor] || '';
 }
 
-const MODELOS = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+const MODELOS = [
+    process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
+    'gemini-2.5-flash-lite',
+    'gemini-3.1-flash-lite', // substitui os 1.5 mortos
+];
 
 async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
     const m = genAI.getGenerativeModel({ model: modelo, systemInstruction: systemPrompt });
@@ -407,16 +411,16 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
     const idUser  = req.user?.id || null;
     const msg     = req.body.mensagem?.trim();
     const config  = req.body.configPrompt || '';
-
+ 
     if (!msg) return res.status(400).json({ erro: 'Mensagem vazia.' });
     if (msg.length > 8000) return res.status(400).json({ erro: 'Mensagem muito longa.' });
-
+ 
     const idConv = await garantirConversa(idUser, req.body.idConversa, msg);
-
+ 
     if (idUser && idConv) {
         pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'user', msg]).catch(e => console.error('[DB msg user]', e.message));
     }
-
+ 
     let historico = [];
     if (idUser && idConv) {
         try {
@@ -427,23 +431,42 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
             historico = r.reverse();
         } catch (e) { console.error('[DB historico]', e.message); }
     }
-
+ 
     const humor = req.body.estadoEmocional || detectarHumor(msg);
-    let resposta = await askGemini(msg, historico, instrucaoHumor(humor), config);
-
-    if (!resposta && process.env.ENABLE_PYTHON === 'true') {
-        try { resposta = await askPython(nome, idConv || 'geral', msg); } catch (e) { console.error('[Python]', e.message); }
+    let resposta = null;
+    let origem = null;
+ 
+    // 1) CAMINHO PRINCIPAL: Python — tem memória (ChromaDB) e a
+    //    personalidade completa (REGRA 1-6). ENABLE_PYTHON=false só
+    //    deve ser usado se você quiser desligar isso de propósito.
+    if (process.env.ENABLE_PYTHON !== 'false') {
+        try {
+            resposta = await askPython(nome, idConv || 'geral', msg);
+            origem = 'python';
+        } catch (e) {
+            console.error('[Python] falhou, caindo pro Gemini via Node:', e.message);
+        }
     }
-
+ 
+    // 2) FALLBACK: Gemini via SDK do Node (sem memória, prompt simples)
+    if (!resposta) {
+        resposta = await askGemini(msg, historico, instrucaoHumor(humor), config);
+        origem = resposta ? 'gemini-node' : origem;
+    }
+ 
+    // 3) ÚLTIMO RECURSO: resposta fixa do sistema
     if (!resposta) {
         resposta = respostaSistema(msg);
-        console.warn('[AVISO] Gemini e Python falharam. Usando resposta do sistema.');
+        origem = 'sistema-fixo';
+        console.warn('[AVISO] Python e Gemini falharam. Usando resposta do sistema.');
     }
-
+ 
+    console.log(`[CHAT] origem=${origem}`);
+ 
     if (idUser && idConv) {
         pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'iana', resposta]).catch(e => console.error('[DB msg iana]', e.message));
     }
-
+ 
     res.json({ resposta, idConversa: idConv });
 });
 

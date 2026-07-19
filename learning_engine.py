@@ -8,11 +8,25 @@ from pathlib import Path
 # =========================================================
 # 1. CONEXÃO COM O CÉREBRO DA IANA (ChromaDB)
 # =========================================================
-# Buscando o caminho do banco exatamente como está na sua arquitetura
-path_banco = ( Path(os.getenv('LOCALAPPDATA', str(Path.home()))) / 'iana_database' / 'chromadb' )
+# FIX: antes usava sempre LOCALAPPDATA (só existe no Windows), o que no
+# Render caía silenciosamente no fallback Path.home() — e podia ser uma
+# pasta DIFERENTE da que o iana.py usa, fazendo o que o scraper aprende
+# nunca aparecer nas respostas do chat. Agora usa a MESMA lógica do
+# iana.py: respeita IANA_DB_PATH se definido, senão detecta o SO certo.
+def obter_pasta_banco():
+    override = os.getenv('IANA_DB_PATH')
+    if override:
+        return Path(override)
+    if os.name == 'nt':
+        base = Path(os.getenv('LOCALAPPDATA', str(Path.home())))
+    else:
+        base = Path(os.getenv('XDG_DATA_HOME', str(Path.home() / '.local' / 'share')))
+    return base / 'iana_database' / 'chromadb'
+
+path_banco = obter_pasta_banco()
 path_banco.mkdir(parents=True, exist_ok=True)
 
-print("🧠 Ligando os motores neurais da Iana...")
+print(f"🧠 Ligando os motores neurais da Iana... (banco em: {path_banco})")
 try:
     cliente = chromadb.PersistentClient(path=str(path_banco))
     # Conectando na mesma coleção que a Iana usa para o chat
@@ -33,21 +47,14 @@ def learn(titulo, conteudo, categoria="mining", id_documento=None):
     """
     try:
         if not id_documento:
-            # FIX: hash() nativo do Python é randomizado por processo (PYTHONHASHSEED),
-            # então o mesmo título gerava um ID diferente a cada execução, causando
-            # duplicação infinita do mesmo conteúdo no banco a cada re-mineração.
-            # hashlib.md5 é determinístico: mesmo título -> sempre o mesmo ID.
+            # ID determinístico: mesmo título -> sempre o mesmo ID (evita duplicação).
             id_documento = "doc_" + hashlib.md5(titulo.strip().lower().encode('utf-8')).hexdigest()
 
-        # Formatando o texto para a Iana entender o contexto depois
         texto_para_aprender = f"Guia/Conhecimento - {titulo}\n{conteudo}"
-
-        # A mágica: Transformando o texto do jogo em Vetor (Embedding)
         vetor = modelo.encode(texto_para_aprender).tolist()
 
-        # FIX: colecao.add() lança exceção se o ID já existir no banco (não faz update).
-        # Como agora o ID é estável por título, rodar a mineração de novo sobre o mesmo
-        # conteúdo precisa ATUALIZAR o registro em vez de falhar. upsert() faz add-ou-update.
+        # upsert() em vez de add(): permite ATUALIZAR quando o ID já existe,
+        # em vez de lançar exceção.
         colecao.upsert(
             documents=[texto_para_aprender],
             embeddings=[vetor],
@@ -64,7 +71,6 @@ def learn(titulo, conteudo, categoria="mining", id_documento=None):
 # =========================================================
 # 3. USO VIA LINHA DE COMANDO (opcional, para o scraper chamar direto)
 # =========================================================
-# Exemplo: python3 learning_engine.py "Titulo do guia" "conteudo completo aqui" mining
 if __name__ == "__main__":
     if len(sys.argv) > 2:
         titulo_cli = sys.argv[1]

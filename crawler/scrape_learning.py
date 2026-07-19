@@ -1,82 +1,133 @@
-# scrape_learning.py - Pipeline direto e eficiente
+# scrape_learning.py - Pipeline único de mineração (consolidado)
+#
+# Substitui mine.py + scrape_learning.py antigos.
+# Motivo da consolidação: os dois faziam a mesma coisa (extrair conteúdo
+# de links/tópicos e chamar learn()), com fixes diferentes cada um —
+# risco real de bug corrigido em um lado e esquecido no outro (já
+# aconteceu com o hash() não-determinístico).
+#
+# O que foi puxado de cada um:
+#   - de scrape_learning.py: headers de navegador, delay entre requests,
+#     id_estavel() com hashlib (determinístico), caminhos relativos ao
+#     script (não quebra em cron/deploy)
+#   - de mine.py: controle "já aprendeu" via arquivo (evita reprocessar
+#     URLs/tópicos que não mudaram, economiza tempo e banda)
 
 import requests
 import hashlib
-from bs4 import BeautifulSoup
-from learning_engine import learn
-from pathlib import Path
 import time
+from bs4 import BeautifulSoup
+from pathlib import Path
+from learning_engine import learn
 
 DIRETORIO_RAIZ = Path(__file__).parent.resolve()
 PASTA_DATA = DIRETORIO_RAIZ / "data"
+ARQUIVO_APRENDIDOS = PASTA_DATA / "aprendidos.txt"
 
-# FIX: muitos sites bloqueiam requests sem User-Agent de navegador.
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; IanaBot/1.0; +mineracao-conhecimento)"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": "https://www.google.com/",
+    "Connection": "keep-alive",
+}
 
-# FIX: 'time' estava importado mas nunca usado — sem pausa entre requests,
-# o script martela vários hosts em sequência rápida e corre risco de
-# rate-limit/bloqueio. Ajuste o valor conforme a necessidade.
-DELAY_ENTRE_REQUESTS = 1  # segundos
+DELAY_ENTRE_REQUESTS = 1  # segundos, evita rate-limit/bloqueio
+LIMITE_CARACTERES = 2000  # tamanho do texto salvo por item
 
 
 def id_estavel(prefixo, texto):
-    # FIX: hash() nativo do Python é randomizado por processo (PYTHONHASHSEED),
-    # então a mesma URL/tópico gerava um ID diferente a cada execução do script,
-    # causando duplicação infinita do mesmo conteúdo no ChromaDB.
-    # hashlib.md5 é determinístico: mesmo texto -> sempre o mesmo ID.
+    """ID determinístico (mesmo texto -> mesmo ID sempre), pra upsert funcionar certo."""
     return f"{prefixo}_" + hashlib.md5(texto.strip().lower().encode('utf-8')).hexdigest()
 
 
-def scrape_and_learn(url, game=None):
-    """Extrai e aprende em um passo"""
+# =========================================================
+# CONTROLE "JÁ APRENDEU" (evita reprocessar o que não mudou)
+# =========================================================
+def ja_aprendeu(chave):
+    if not ARQUIVO_APRENDIDOS.exists():
+        return False
+    with open(ARQUIVO_APRENDIDOS, 'r', encoding='utf-8') as f:
+        return chave in f.read().splitlines()
+
+def registrar_aprendizado(chave):
+    ARQUIVO_APRENDIDOS.parent.mkdir(parents=True, exist_ok=True)
+    with open(ARQUIVO_APRENDIDOS, 'a', encoding='utf-8') as f:
+        f.write(chave + "\n")
+
+
+# =========================================================
+# EXTRAÇÃO E APRENDIZADO
+# =========================================================
+def scrape_and_learn(url):
+    """Extrai o conteúdo de uma URL e manda pro learning_engine."""
+    if ja_aprendeu(url):
+        print(f"  ⏩ [PULANDO] Já sei isso: {url}")
+        return None  # None = pulado (diferente de False = falhou)
+
     try:
-        r = requests.get(url, headers=HEADERS, timeout=6)
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
-        title = soup.title.text if soup.title else "sem título"
-
-        # Remove lixo
-        for el in soup(["script", "style", "nav", "footer"]):
+        for el in soup(["script", "style", "nav", "footer", "header"]):
             el.decompose()
 
-        # Extrai texto
-        content = soup.get_text(separator="\n", strip=True)[:1000]
+        title = soup.title.text.strip() if soup.title else url.split("/")[-1]
+        content = soup.get_text(separator="\n", strip=True)[:LIMITE_CARACTERES]
 
-        if len(content) > 50:
-            learn(title, content, "mining", id_estavel("url", url))
-            return True
+        if len(content) <= 50:
+            print(f"  ⚠️ Conteúdo insuficiente, ignorando: {url}")
+            return False
+
+        ok = learn(title, content, "mining", id_estavel("url", url))
+        if ok:
+            registrar_aprendizado(url)
+        return ok
+
     except Exception as e:
-        print(f"⚠️ Erro ao minerar {url}: {e}")
+        print(f"  ❌ Erro ao minerar {url}: {e}")
+        return False
     finally:
-        # Pausa entre requests independente de sucesso ou erro
         time.sleep(DELAY_ENTRE_REQUESTS)
-    return False
 
 
 def learn_topics(filepath):
-    """Aprende tópicos direto como conhecimento estruturado"""
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            topics = [line.strip() for line in f if line.strip()]
+    """Aprende tópicos direto como conhecimento estruturado (sem scraping)."""
+    if not filepath.exists():
+        print(f"⚠️ Arquivo não encontrado: {filepath}")
+        return 0, 0
 
-        for topic in topics:
-            learn(f"Tópico: {topic}", f"Informação sobre: {topic}", "mining", id_estavel("topic", topic))
+    with open(filepath, 'r', encoding='utf-8') as f:
+        topics = [line.strip() for line in f if line.strip()]
 
-        return len(topics)
-    except Exception as e:
-        print(f"⚠️ Erro ao processar tópicos ({filepath}): {e}")
-        return 0
+    sucesso, ignorados = 0, 0
+    for topic in topics:
+        if ja_aprendeu(topic):
+            ignorados += 1
+            continue
+        ok = learn(f"Tópico: {topic}", f"Guia sobre: {topic}", "topics", id_estavel("topic", topic))
+        if ok:
+            registrar_aprendizado(topic)
+            sucesso += 1
+
+    return sucesso, ignorados
 
 
+# =========================================================
+# EXECUÇÃO
+# =========================================================
 def run():
-    print("⚡ Mineração Turbo Iniciada!\n")
+    print("=" * 50)
+    print("⚡ MINERAÇÃO")
+    print("=" * 50 + "\n")
 
-    # FIX: caminhos agora são relativos à pasta do script (DIRETORIO_RAIZ),
-    # não ao diretório de onde o script é executado — evita quebrar em cron/deploy.
     arquivo_links = PASTA_DATA / "links_para_mineracao.txt"
     arquivo_topicos = PASTA_DATA / "titulos_para_buscar.txt"
 
-    # 1. Minerar TODOS os links
+    # FASE 1: links
+    print("📥 FASE 1: Extraindo conteúdo dos links\n")
     if not arquivo_links.exists():
         print(f"⚠️ Arquivo não encontrado: {arquivo_links}")
         urls = []
@@ -84,19 +135,25 @@ def run():
         with open(arquivo_links, encoding='utf-8') as f:
             urls = [line.strip() for line in f if line.strip().startswith("http")]
 
-    print(f"🔗 {len(urls)} links → minerando...")
-    success = sum(scrape_and_learn(url) for url in urls)
-    print(f"✅ {success}/{len(urls)} links aprendidos\n")
+    print(f"🔗 {len(urls)} links no arquivo\n")
+    novos, ignorados, falhas = 0, 0, 0
+    for url in urls:
+        resultado = scrape_and_learn(url)
+        if resultado is None:
+            ignorados += 1
+        elif resultado:
+            novos += 1
+        else:
+            falhas += 1
 
-    # 2. Aprender TODOS os tópicos
-    print(f"📚 Tópicos → processando...")
-    topics = learn_topics(arquivo_topicos) if arquivo_topicos.exists() else 0
-    if not arquivo_topicos.exists():
-        print(f"⚠️ Arquivo não encontrado: {arquivo_topicos}")
-    print(f"✅ {topics} tópicos aprendidos\n")
+    print(f"\n✅ FASE 1 CONCLUÍDA: {novos} novos, {ignorados} repetidos pulados, {falhas} falharam.\n")
 
-    # 3. Resultado final
-    print(f"🎉 Total: {success + topics} itens integrados ao conhecimento!")
+    # FASE 2: tópicos
+    print("📚 FASE 2: Processando tópicos\n")
+    topicos_novos, topicos_ignorados = learn_topics(arquivo_topicos)
+    print(f"✅ FASE 2 CONCLUÍDA: {topicos_novos} tópicos novos, {topicos_ignorados} já conhecidos ignorados.\n")
+
+    print(f"🎉 Total: {novos + topicos_novos} itens novos integrados ao conhecimento!")
 
 
 if __name__ == "__main__":

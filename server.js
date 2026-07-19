@@ -10,8 +10,8 @@ import rateLimit from 'express-rate-limit';
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import nodemailer from 'nodemailer';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { Resend } from 'resend';
 
 dotenv.config();
 
@@ -96,6 +96,15 @@ try {
     }
 } catch (e) { console.error('❌ Gemini erro:', e.message); }
 
+/* ── RESEND ───────────────────────────────────────────────────── */
+let resend = null;
+if (process.env.RESEND_API_KEY) {
+    resend = new Resend(process.env.RESEND_API_KEY);
+    console.log('✅ Resend inicializado');
+} else {
+    console.warn('⚠️ RESEND_API_KEY ausente — envio de e-mail desativado');
+}
+
 function detectarHumor(texto) {
     if (!texto) return 'normal';
     const letras = (texto.match(/[A-Za-z]/g) || []).length;
@@ -175,32 +184,37 @@ async function askPython(nome, conversa, mensagem) {
         const py = process.env.IANA_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
         const proc = spawn(py, [path.join(__dirname, 'iana.py'), nome, conversa, mensagem]);
         let out = '', err = '';
+        let finalizado = false;
+
+        // FIX: sem timeout, se o processo Python travar (ex: ChromaDB
+        // preso, modelo de embeddings demorando pra carregar, rede lenta
+        // na chamada do Gemini de dentro do Python), a requisição HTTP
+        // fica pendurada pra sempre — o usuário nunca recebe resposta
+        // nem erro. 25s dá folga pro cold start do modelo + chamada da API.
+        const timeout = setTimeout(() => {
+            if (finalizado) return;
+            finalizado = true;
+            proc.kill();
+            reject(new Error('Timeout: processo Python demorou demais (25s)'));
+        }, 25000);
+
         proc.stdout.on('data', d => out += d.toString());
         proc.stderr.on('data', d => err += d.toString());
         proc.on('close', code => {
+            if (finalizado) return;
+            finalizado = true;
+            clearTimeout(timeout);
             if (code !== 0 || !out.trim()) return reject(new Error(err || `exit ${code}`));
             resolve(out.trim());
         });
-        proc.on('error', reject);
+        proc.on('error', e => {
+            if (finalizado) return;
+            finalizado = true;
+            clearTimeout(timeout);
+            reject(e);
+        });
     });
 }
-
-/* ── NODEMAILER ───────────────────────────────────────────────── */
-const mailer = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-});
-
-// FIX: verifica a conexão/autenticação SMTP já na subida do servidor,
-// assim o erro (ex: senha de app inválida) aparece nos logs do Render
-// imediatamente, em vez de só quando alguém tentar "esqueci senha".
-mailer.verify()
-    .then(() => console.log('✅ Nodemailer (Gmail) autenticado com sucesso'))
-    .catch(e => console.error('❌ Nodemailer falhou ao autenticar:', {
-        message: e.message,
-        code: e.code,
-        response: e.response
-    }));
 
 /* ── PASSPORT ─────────────────────────────────────────────────── */
 passport.use(new LocalStrategy(
@@ -294,30 +308,38 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
         if (r.length) {
             const codigo = Math.floor(100000 + Math.random() * 900000).toString();
             codigos.set(email, { codigo, exp: Date.now() + 15 * 60 * 1000 });
-            await mailer.sendMail({
-                from: `"Iana 🎮" <${process.env.EMAIL_USER}>`,
-                to: email,
-                subject: 'Código de recuperação — Iana',
-                html: `<div style="font-family:sans-serif;background:#111;color:#fff;padding:30px;border-radius:12px;max-width:400px;margin:auto">
-                    <h2 style="color:#a855f7">🎮 Iana</h2>
-                    <p>Seu código:</p>
-                    <div style="background:#1e1f20;border-radius:8px;padding:20px;text-align:center;margin:20px 0">
-                        <span style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#a855f7">${codigo}</span>
-                    </div>
-                    <p style="color:#aaa;font-size:13px">Expira em 15 minutos.</p>
-                </div>`
-            });
+
+            if (resend) {
+                const { error } = await resend.emails.send({
+                    // FIX: precisa ser um remetente de domínio verificado no Resend.
+                    // Enquanto não verificar seu domínio, use 'onboarding@resend.dev'
+                    // (funciona, mas só entrega pro seu próprio e-mail de teste).
+                    from: process.env.EMAIL_FROM || 'Iana <onboarding@resend.dev>',
+                    to: email,
+                    subject: 'Código de recuperação — Iana',
+                    html: `<div style="font-family:sans-serif;background:#111;color:#fff;padding:30px;border-radius:12px;max-width:400px;margin:auto">
+                        <h2 style="color:#a855f7">🎮 Iana</h2>
+                        <p>Seu código:</p>
+                        <div style="background:#1e1f20;border-radius:8px;padding:20px;text-align:center;margin:20px 0">
+                            <span style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#a855f7">${codigo}</span>
+                        </div>
+                        <p style="color:#aaa;font-size:13px">Expira em 15 minutos.</p>
+                    </div>`
+                });
+                if (error) {
+                    // FIX: SDK do Resend não lança exceção em erro de API — retorna
+                    // { error } no objeto de resposta. Se não checar isso aqui, o
+                    // catch abaixo nunca pega e você acha que o e-mail foi enviado
+                    // quando na verdade falhou silenciosamente.
+                    console.error('[ESQUECI] Resend recusou o envio:', error);
+                }
+            } else {
+                console.warn(`[ESQUECI] Código gerado para ${email}, mas RESEND_API_KEY não está configurada.`);
+            }
         }
         res.json({ ok: true, msg: 'Se o e-mail existir, um código foi enviado.' });
     } catch (e) {
-        // FIX: log detalhado (só no console do Render, nunca exposto ao usuário).
-        // "code" e "response" do Nodemailer ajudam a identificar a causa exata
-        // (ex: EAUTH = credenciais/senha de app inválida no Gmail).
-        console.error('[ESQUECI] Falha ao enviar e-mail:', {
-            message: e.message,
-            code: e.code,
-            response: e.response
-        });
+        console.error('[ESQUECI] Falha ao enviar e-mail:', e.message);
         res.status(500).json({ erro: 'Erro ao enviar.' });
     }
 });
@@ -411,16 +433,16 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
     const idUser  = req.user?.id || null;
     const msg     = req.body.mensagem?.trim();
     const config  = req.body.configPrompt || '';
- 
+
     if (!msg) return res.status(400).json({ erro: 'Mensagem vazia.' });
     if (msg.length > 8000) return res.status(400).json({ erro: 'Mensagem muito longa.' });
- 
+
     const idConv = await garantirConversa(idUser, req.body.idConversa, msg);
- 
+
     if (idUser && idConv) {
         pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'user', msg]).catch(e => console.error('[DB msg user]', e.message));
     }
- 
+
     let historico = [];
     if (idUser && idConv) {
         try {
@@ -431,11 +453,11 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
             historico = r.reverse();
         } catch (e) { console.error('[DB historico]', e.message); }
     }
- 
+
     const humor = req.body.estadoEmocional || detectarHumor(msg);
     let resposta = null;
     let origem = null;
- 
+
     // 1) CAMINHO PRINCIPAL: Python — tem memória (ChromaDB) e a
     //    personalidade completa (REGRA 1-6). ENABLE_PYTHON=false só
     //    deve ser usado se você quiser desligar isso de propósito.
@@ -447,26 +469,26 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
             console.error('[Python] falhou, caindo pro Gemini via Node:', e.message);
         }
     }
- 
+
     // 2) FALLBACK: Gemini via SDK do Node (sem memória, prompt simples)
     if (!resposta) {
         resposta = await askGemini(msg, historico, instrucaoHumor(humor), config);
         origem = resposta ? 'gemini-node' : origem;
     }
- 
+
     // 3) ÚLTIMO RECURSO: resposta fixa do sistema
     if (!resposta) {
         resposta = respostaSistema(msg);
         origem = 'sistema-fixo';
         console.warn('[AVISO] Python e Gemini falharam. Usando resposta do sistema.');
     }
- 
+
     console.log(`[CHAT] origem=${origem}`);
- 
+
     if (idUser && idConv) {
         pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'iana', resposta]).catch(e => console.error('[DB msg iana]', e.message));
     }
- 
+
     res.json({ resposta, idConversa: idConv });
 });
 

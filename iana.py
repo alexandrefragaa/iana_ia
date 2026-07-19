@@ -25,17 +25,45 @@ if not msg_final:
 # =========================================================
 # CHROMADB
 # =========================================================
-path_banco = (
-    Path(os.getenv('LOCALAPPDATA', str(Path.home())))
-    / 'iana_database'
-    / 'chromadb'
-)
+def obter_pasta_banco():
+    """
+    FIX: o código original usava sempre LOCALAPPDATA, que só existe no
+    Windows. Em produção (Render/Linux) isso sempre caía no fallback
+    Path.home(), silenciosamente — funcionava, mas sem ninguém perceber
+    que o caminho não era o pretendido.
+
+    Agora:
+    1. Se IANA_DB_PATH estiver definida (ex: apontando pra um disco
+       persistente do Render), usa ela.
+    2. Senão, detecta o SO corretamente (Windows -> LOCALAPPDATA,
+       demais -> XDG_DATA_HOME ou ~/.local/share).
+
+    ATENÇÃO: no Render, sem um "Persistent Disk" configurado (recurso
+    pago), o sistema de arquivos é efêmero — ou seja, mesmo com o
+    caminho corrigido, essa memória local ainda será apagada a cada
+    deploy/restart, assim como o MemoryStore das sessões. Se isso
+    importa pra você, ou usa um Persistent Disk, ou migra essa memória
+    pro MySQL que você já usa no server.js.
+    """
+    override = os.getenv('IANA_DB_PATH')
+    if override:
+        return Path(override)
+
+    if os.name == 'nt':
+        base = Path(os.getenv('LOCALAPPDATA', str(Path.home())))
+    else:
+        base = Path(os.getenv('XDG_DATA_HOME', str(Path.home() / '.local' / 'share')))
+
+    return base / 'iana_database' / 'chromadb'
+
+path_banco = obter_pasta_banco()
 
 banco_ok = False
 colecao = None
 modelo = None
 
 try:
+    path_banco.mkdir(parents=True, exist_ok=True)
     cliente = chromadb.PersistentClient(path=str(path_banco))
     colecao = cliente.get_or_create_collection(name='memoria_iana')
     modelo = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')

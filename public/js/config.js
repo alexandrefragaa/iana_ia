@@ -88,5 +88,51 @@ function salvarConfig() {
     }, 2000);
 }
 
-document.getElementById('btn-salvar').addEventListener('click', salvarConfig);
+document.getElementById('btn-salvar')?.addEventListener('click', salvarConfig);
 aplicarConfig(carregarConfig());
+
+/* ── SEGURANÇA: TROCAR SENHA ──────────────────────────────────── */
+function mostrarMsgSeguranca(texto, tipo) {
+    const msgEl = document.getElementById('seguranca-msg');
+    if (!msgEl) return;
+    msgEl.textContent = texto;
+    msgEl.className = `config-seguranca-msg ${tipo}`;
+}
+
+async function trocarSenha() {
+    const atual     = document.getElementById('senha-atual')?.value;
+    const nova      = document.getElementById('senha-nova')?.value;
+    const confirmar = document.getElementById('senha-nova-confirmar')?.value;
+    const btn       = document.getElementById('btn-trocar-senha');
+    if (!btn) return;
+
+    if (!atual || !nova || !confirmar) { mostrarMsgSeguranca('Preencha todos os campos.', 'erro'); return; }
+    if (nova.length < 8) { mostrarMsgSeguranca('A nova senha precisa ter no mínimo 8 caracteres.', 'erro'); return; }
+    if (nova !== confirmar) { mostrarMsgSeguranca('As senhas novas não coincidem.', 'erro'); return; }
+
+    const orig = btn.textContent;
+    btn.textContent = 'Trocando...'; btn.disabled = true;
+    try {
+        const res = await fetch('/auth/trocar-senha', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ senhaAtual: atual, novaSenha: nova })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            mostrarMsgSeguranca(data.erro || 'Não foi possível trocar a senha.', 'erro');
+        } else {
+            mostrarMsgSeguranca('✅ Senha alterada com sucesso!', 'sucesso');
+            document.getElementById('senha-atual').value = '';
+            document.getElementById('senha-nova').value = '';
+            document.getElementById('senha-nova-confirmar').value = '';
+        }
+    } catch (e) {
+        mostrarMsgSeguranca('Erro de conexão.', 'erro');
+    } finally {
+        btn.textContent = orig; btn.disabled = false;
+    }
+}
+
+document.getElementById('btn-trocar-senha')?.addEventListener('click', trocarSenha);

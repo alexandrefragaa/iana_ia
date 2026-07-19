@@ -35,6 +35,38 @@ function sanitizarHTML(html) {
     return typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(html) : html;
 }
 
+/* ── CONFIGURAÇÕES (lidas do localStorage salvo em /configuracoes) ── */
+const CONFIG_KEY = 'iana_config';
+
+function obterConfigSalva() {
+    try { return JSON.parse(localStorage.getItem(CONFIG_KEY)) || {}; }
+    catch { return {}; }
+}
+
+function montarConfigPrompt() {
+    const c = obterConfigSalva();
+    if (!Object.keys(c).length) return '';
+
+    const linhas = [];
+    if (c.personalidade?.length) linhas.push(`Estilo de personalidade: ${c.personalidade.join(', ')}.`);
+    if (c.foco?.length)          linhas.push(`Foco principal (priorize esses assuntos): ${c.foco.join(', ')}.`);
+    if (c.plataforma?.length)    linhas.push(`Plataforma do usuário: ${c.plataforma.join(', ')}.`);
+    if (c.voz?.length)           linhas.push(`Estilo de escrita/voz: ${c.voz.join(', ')}.`);
+    if (c.tamanho)                linhas.push(`Tamanho preferido das respostas: ${c.tamanho}.`);
+    if (c.emojis)                 linhas.push(`Uso de emojis: ${c.emojis}.`);
+    if (c.instrucoes)             linhas.push(`Instruções específicas do usuário: ${c.instrucoes}`);
+    if (c.sobreVoce)              linhas.push(`Sobre o usuário: ${c.sobreVoce}`);
+
+    const comportamentos = [];
+    if (c.perguntas === false)    comportamentos.push('NÃO termine a resposta com uma pergunta.');
+    if (c.humor === false)        comportamentos.push('NÃO precisa adaptar o tom ao humor do usuário.');
+    if (c.criatividade === false) comportamentos.push('NÃO invente/crie conteúdo quando não souber a resposta — diga que não sabe.');
+    if (c.contexto === false)     comportamentos.push('NÃO dependa do contexto de mensagens anteriores.');
+    if (comportamentos.length) linhas.push(comportamentos.join(' '));
+
+    return linhas.join('\n');
+}
+
 /* ── TTS (TEXT-TO-SPEECH) ─────────────────────────────────────── */
 function getVoicesTTS() {
     return typeof speechSynthesis !== 'undefined' ? speechSynthesis.getVoices() : [];
@@ -535,15 +567,90 @@ function mostrarWelcome(mostrar) {
     if (chatbox) chatbox.classList.toggle('has-messages', !mostrar);
 }
 
+/* Botão de copiar — usado tanto na bolha do usuário quanto na da Iana.
+   Recebe uma função () => texto pra sempre pegar o conteúdo mais atual. */
+function criarBotaoCopiar(getTexto) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'msg-action-btn';
+    btn.title = 'Copiar';
+    btn.innerHTML = '📋';
+    btn.addEventListener('click', () => {
+        const texto = getTexto();
+        navigator.clipboard?.writeText(texto).then(() => {
+            const original = btn.innerHTML;
+            btn.innerHTML = '✅';
+            setTimeout(() => { btn.innerHTML = original; }, 1200);
+        }).catch(() => {});
+    });
+    return btn;
+}
+
+/* Botão de editar — só faz sentido nas mensagens do usuário: joga o
+   texto de volta pro campo de digitação. */
+function criarBotaoEditar(texto) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'msg-action-btn';
+    btn.title = 'Editar mensagem';
+    btn.innerHTML = '✏️';
+    btn.addEventListener('click', () => {
+        const input = document.getElementById('chat-input');
+        if (!input) return;
+        input.value = texto;
+        input.focus();
+        input.style.height = 'auto';
+        input.style.height = input.scrollHeight + 'px';
+    });
+    return btn;
+}
+
+/* Aplica o "clamp" de 3 linhas na bolha e, SE o conteúdo realmente
+   ultrapassar isso, adiciona um botão de Expandir/Recolher na linha
+   de ações. Se o texto for curto, não faz nada (sem botão desnecessário). */
+function configurarExpandir(bubble, linhaAcoes) {
+    bubble.classList.add('msg-clamped');
+    // Precisa já estar no DOM pra scrollHeight/clientHeight serem confiáveis.
+    const ultrapassou = bubble.scrollHeight > bubble.clientHeight + 1;
+    if (!ultrapassou) {
+        bubble.classList.remove('msg-clamped');
+        return;
+    }
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'msg-expand-btn';
+    btn.textContent = '▼ Expandir';
+    let expandido = false;
+    btn.addEventListener('click', () => {
+        expandido = !expandido;
+        bubble.classList.toggle('msg-clamped', !expandido);
+        btn.textContent = expandido ? '▲ Recolher' : '▼ Expandir';
+    });
+    linhaAcoes.appendChild(btn);
+}
+
 function adicionarBolhaUsuario(texto) {
     const msgs = document.getElementById('msgs');
     if (!msgs) return;
     mostrarWelcome(false);
 
+    const wrap = document.createElement('div');
+    wrap.className = 'user-msg-wrap';
+
     const bubble = document.createElement('div');
     bubble.className = 'user-msg-bubble';
     bubble.textContent = texto;
-    msgs.appendChild(bubble);
+    wrap.appendChild(bubble);
+
+    const acoes = document.createElement('div');
+    acoes.className = 'msg-actions user-actions';
+    acoes.appendChild(criarBotaoEditar(texto));
+    acoes.appendChild(criarBotaoCopiar(() => texto));
+    wrap.appendChild(acoes);
+
+    msgs.appendChild(wrap);
+    configurarExpandir(bubble, acoes);
     scrollParaFim();
 }
 
@@ -571,13 +678,23 @@ function adicionarRespostaIA(texto) {
     av.className = 'iana-avatar-img';
     container.appendChild(av);
 
+    const wrapConteudo = document.createElement('div');
+    wrapConteudo.style.cssText = 'display:flex;flex-direction:column;flex:1;min-width:0;';
+
     const bubble = document.createElement('div');
     bubble.className = 'iana-message-bubble';
     const html = (typeof marked !== 'undefined') ? marked.parse(texto) : texto.replace(/\n/g, '<br>');
     bubble.innerHTML = sanitizarHTML(html);
+    wrapConteudo.appendChild(bubble);
 
-    container.appendChild(bubble);
+    const acoes = document.createElement('div');
+    acoes.className = 'msg-actions';
+    acoes.appendChild(criarBotaoCopiar(() => bubble.innerText || bubble.textContent || ''));
+    wrapConteudo.appendChild(acoes);
+
+    container.appendChild(wrapConteudo);
     msgs.appendChild(container);
+    configurarExpandir(bubble, acoes);
     scrollParaFim();
 
     if (ttsNextResponse) { falar(texto); ttsNextResponse = false; }
@@ -588,15 +705,20 @@ function scrollParaFim() {
     if (chatbox) chatbox.scrollTop = chatbox.scrollHeight;
 }
 
+/* FIX: essas duas funções eram chamadas em processarEnvioIA() mas nunca
+   tinham sido definidas nesse arquivo — o "ReferenceError" travava o
+   envio antes mesmo do fetch. Agora usam a "thinking-bubble" (ver CSS). */
 function mostrarTypingIndicator() {
     const msgs = document.getElementById('msgs');
     if (!msgs) return;
     const typing = document.createElement('div');
     typing.id = 'typing-indicator';
-    typing.className = 'iana-response-container iana-thinking-clean';
+    typing.className = 'iana-response-container';
     typing.innerHTML = `
         <img src="/img/iana-avatar.png" class="iana-avatar-img">
-        <div class="typing-dots"><span></span><span></span><span></span></div>`;
+        <div class="thinking-bubble">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        </div>`;
     msgs.appendChild(typing);
     scrollParaFim();
 }

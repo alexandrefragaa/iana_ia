@@ -31,8 +31,6 @@ app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.set('trust proxy', 1);
 
-// FIX: removido o "|| true" que anulava a whitelist de origens (falha de segurança grave,
-// permitia qualquer site chamar suas rotas autenticadas com credentials:true)
 const origensPermitidas = (process.env.ALLOWED_ORIGINS || 'http://localhost:3333').split(',').map(o => o.trim());
 app.use(cors({
     origin: (origin, cb) => {
@@ -189,6 +187,17 @@ const mailer = nodemailer.createTransport({
     auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
 });
 
+// FIX: verifica a conexão/autenticação SMTP já na subida do servidor,
+// assim o erro (ex: senha de app inválida) aparece nos logs do Render
+// imediatamente, em vez de só quando alguém tentar "esqueci senha".
+mailer.verify()
+    .then(() => console.log('✅ Nodemailer (Gmail) autenticado com sucesso'))
+    .catch(e => console.error('❌ Nodemailer falhou ao autenticar:', {
+        message: e.message,
+        code: e.code,
+        response: e.response
+    }));
+
 /* ── PASSPORT ─────────────────────────────────────────────────── */
 passport.use(new LocalStrategy(
     { usernameField: 'email', passwordField: 'senha' },
@@ -296,7 +305,17 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
             });
         }
         res.json({ ok: true, msg: 'Se o e-mail existir, um código foi enviado.' });
-    } catch (e) { console.error('[ESQUECI]', e.message); res.status(500).json({ erro: 'Erro ao enviar.' }); }
+    } catch (e) {
+        // FIX: log detalhado (só no console do Render, nunca exposto ao usuário).
+        // "code" e "response" do Nodemailer ajudam a identificar a causa exata
+        // (ex: EAUTH = credenciais/senha de app inválida no Gmail).
+        console.error('[ESQUECI] Falha ao enviar e-mail:', {
+            message: e.message,
+            code: e.code,
+            response: e.response
+        });
+        res.status(500).json({ erro: 'Erro ao enviar.' });
+    }
 });
 
 app.post('/auth/mudar-senha', async (req, res) => {
@@ -431,7 +450,7 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
 /* ── 404 ──────────────────────────────────────────────────────── */
 app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.' }));
 
-/* ── ERROR HANDLER GLOBAL (FIX: antes não existia, erros viravam HTML cru) ── */
+/* ── ERROR HANDLER GLOBAL ──────────────────────────────────────── */
 app.use((err, req, res, next) => {
     console.error('[ERRO NÃO TRATADO]', err.message);
     if (err.message === 'Origem não permitida por CORS') {
@@ -440,6 +459,6 @@ app.use((err, req, res, next) => {
     res.status(500).json({ erro: 'Erro interno no servidor.' });
 });
 
-/* ── START (FIX: bind explícito em 0.0.0.0, necessário em alguns PaaS) ── */
+/* ── START ────────────────────────────────────────────────────── */
 const PORT = process.env.PORT || 3333;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Iana rodando na porta ${PORT}`));

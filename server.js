@@ -182,18 +182,19 @@ function respostaSistema(mensagem) {
     return `Ei! 😊 Estou tendo uma instabilidade de conexão agora, mas já volto ao normal. Você pode repetir ou tentar em instantes?`;
 }
 
-async function askPython(nome, conversa, mensagem) {
+async function askPython(nome, conversa, mensagem, historico = []) {
     return new Promise((resolve, reject) => {
         const py = process.env.IANA_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
-        const proc = spawn(py, [path.join(__dirname, 'iana.py'), nome, conversa, mensagem]);
+        // FIX: o histórico da conversa (buscado do MySQL logo acima) nunca
+        // era passado pro Python — ele só tinha acesso à memória de longo
+        // prazo (ChromaDB, busca por similaridade), sem saber literalmente
+        // o que foi dito nas últimas mensagens da conversa atual. Por isso
+        // "o que você falou antes?" não funcionava direito.
+        const historicoJSON = JSON.stringify(historico);
+        const proc = spawn(py, [path.join(__dirname, 'iana.py'), nome, conversa, mensagem, historicoJSON]);
         let out = '', err = '';
         let finalizado = false;
 
-        // FIX: sem timeout, se o processo Python travar (ex: ChromaDB
-        // preso, modelo de embeddings demorando pra carregar, rede lenta
-        // na chamada do Gemini de dentro do Python), a requisição HTTP
-        // fica pendurada pra sempre — o usuário nunca recebe resposta
-        // nem erro. 25s dá folga pro cold start do modelo + chamada da API.
         const timeout = setTimeout(() => {
             if (finalizado) return;
             finalizado = true;
@@ -471,7 +472,7 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
     //    deve ser usado se você quiser desligar isso de propósito.
     if (process.env.ENABLE_PYTHON !== 'false') {
         try {
-            resposta = await askPython(nome, idConv || 'geral', msg);
+            resposta = await askPython(nome, idConv || 'geral', msg, historico);
             origem = 'python';
         } catch (e) {
             console.error('[Python] falhou, caindo pro Gemini via Node:', e.message);

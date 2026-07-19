@@ -12,6 +12,8 @@
 #     script (não quebra em cron/deploy)
 #   - de mine.py: controle "já aprendeu" via arquivo (evita reprocessar
 #     URLs/tópicos que não mudaram, economiza tempo e banda)
+#
+# ATUALIZAÇÃO: Agora usa MySQL (via memory.py) para persistência real do controle "já aprendeu".
 
 import requests
 import hashlib
@@ -19,10 +21,11 @@ import time
 from bs4 import BeautifulSoup
 from pathlib import Path
 from learning_engine import learn
+import memory # Importa a memória persistente no MySQL
 
 DIRETORIO_RAIZ = Path(__file__).parent.resolve()
 PASTA_DATA = DIRETORIO_RAIZ / "data"
-ARQUIVO_APRENDIDOS = PASTA_DATA / "aprendidos.txt"
+# ARQUIVO_APRENDIDOS = PASTA_DATA / "aprendidos.txt" # Desativado em favor do MySQL
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -43,18 +46,17 @@ def id_estavel(prefixo, texto):
 
 
 # =========================================================
-# CONTROLE "JÁ APRENDEU" (evita reprocessar o que não mudou)
+# CONTROLE "JÁ APRENDEU" (Agora usando MySQL para persistência real)
 # =========================================================
 def ja_aprendeu(chave):
-    if not ARQUIVO_APRENDIDOS.exists():
-        return False
-    with open(ARQUIVO_APRENDIDOS, 'r', encoding='utf-8') as f:
-        return chave in f.read().splitlines()
+    # Tenta no MySQL primeiro para persistência garantida
+    if memory.ja_aprendeu_mysql(chave):
+        return True
+    return False
 
-def registrar_aprendizado(chave):
-    ARQUIVO_APRENDIDOS.parent.mkdir(parents=True, exist_ok=True)
-    with open(ARQUIVO_APRENDIDOS, 'a', encoding='utf-8') as f:
-        f.write(chave + "\n")
+def registrar_aprendizado(chave, tipo="url"):
+    # Registra no MySQL para persistência garantida
+    memory.registrar_aprendizado_mysql(chave, tipo)
 
 
 # =========================================================
@@ -109,7 +111,7 @@ def learn_topics(filepath):
             continue
         ok = learn(f"Tópico: {topic}", f"Guia sobre: {topic}", "topics", id_estavel("topic", topic))
         if ok:
-            registrar_aprendizado(topic)
+            registrar_aprendizado(topic, tipo="topic")
             sucesso += 1
 
     return sucesso, ignorados

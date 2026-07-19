@@ -29,6 +29,10 @@ path_banco.mkdir(parents=True, exist_ok=True)
 print(f"🧠 Ligando os motores neurais da Iana... (banco em: {path_banco})")
 try:
     cliente = chromadb.PersistentClient(path=str(path_banco))
+    # Verificação de persistência: se o diretório estiver vazio, avisa o desenvolvedor
+    if not any(path_banco.iterdir()):
+        print(f"⚠️ AVISO: O diretório do ChromaDB está vazio. Se você estiver no Render, verifique o Persistent Disk!")
+    
     # Conectando na mesma coleção que a Iana usa para o chat
     colecao = cliente.get_or_create_collection(name='memoria_iana')
     # O modelo que transforma texto em vetores matemáticos

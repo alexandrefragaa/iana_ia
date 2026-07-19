@@ -185,11 +185,11 @@ function respostaSistema(mensagem) {
 async function askPython(nome, conversa, mensagem, historico = []) {
     return new Promise((resolve, reject) => {
         const py = process.env.IANA_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
-        // FIX: o histórico da conversa (buscado do MySQL logo acima) nunca
-        // era passado pro Python — ele só tinha acesso à memória de longo
-        // prazo (ChromaDB, busca por similaridade), sem saber literalmente
-        // o que foi dito nas últimas mensagens da conversa atual. Por isso
-        // "o que você falou antes?" não funcionava direito.
+        // O histórico da conversa (buscado do MySQL logo acima) é passado
+        // pro Python como um argumento JSON separado (argv[4]). O iana.py
+        // precisa ler exatamente esse 4º argumento como histórico — ver
+        // fix correspondente em iana.py (antes ele estava sendo colado
+        // dentro da própria mensagem por engano).
         const historicoJSON = JSON.stringify(historico);
         const proc = spawn(py, [path.join(__dirname, 'iana.py'), nome, conversa, mensagem, historicoJSON]);
         let out = '', err = '';
@@ -316,7 +316,7 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
             if (sendgridPronto) {
                 try {
                     await sgMail.send({
-                        // FIX: precisa ser o e-mail verificado no SendGrid via
+                        // Precisa ser o e-mail verificado no SendGrid via
                         // Single Sender Verification (Settings > Sender
                         // Authentication). Não pode ser qualquer endereço —
                         // só o que você verificou lá vai funcionar.

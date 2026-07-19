@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 import requests
 import hashlib
 import time
@@ -14,9 +15,24 @@ load_dotenv(dotenv_path=Path(__file__).parent / '.env')
 # =========================================================
 # ARGUMENTOS
 # =========================================================
+# FIX: antes disto, "msg_final = ' '.join(sys.argv[3:])" juntava a
+# mensagem (argv[3]) com o histórico em JSON (argv[4]) no mesmo texto,
+# então o histórico nunca era interpretado como histórico — só virava
+# lixo colado no fim da mensagem do usuário. Por isso a Iana "esquecia"
+# o que tinha acabado de falar: o Gemini nunca recebia os últimos
+# turnos da conversa, só a busca semântica do ChromaDB (que nem sempre
+# encontra algo relevante).
 nome_usuario = sys.argv[1].strip() if len(sys.argv) > 1 else 'Jogador'
 id_conversa = sys.argv[2].strip() if len(sys.argv) > 2 else 'chat_geral'
-msg_final = ' '.join(sys.argv[3:]).strip() if len(sys.argv) > 3 else ''
+msg_final = sys.argv[3].strip() if len(sys.argv) > 3 else ''
+
+try:
+    historico = json.loads(sys.argv[4]) if len(sys.argv) > 4 else []
+    if not isinstance(historico, list):
+        historico = []
+except Exception as e:
+    sys.stderr.write(f'[AVISO] Histórico inválido, ignorando: {e}\n')
+    historico = []
 
 if not msg_final:
     print('Não recebi nenhuma mensagem.')
@@ -181,6 +197,28 @@ if not chave:
 
 
 # =========================================================
+# MONTAGEM DOS TURNOS (FIX principal)
+# =========================================================
+# Antes: só era enviado 1 "parts" com a mensagem atual — o Gemini não
+# via nenhuma mensagem anterior da conversa, só o que caísse na busca
+# semântica do ChromaDB. Agora montamos os turnos reais (user/model)
+# a partir do histórico vindo do MySQL (via server.js), na ordem
+# cronológica certa, e só então adicionamos a mensagem atual por cima.
+contents = []
+for h in historico:
+    remetente = h.get('remetente', 'user') if isinstance(h, dict) else 'user'
+    texto_h = h.get('mensagem', '') if isinstance(h, dict) else ''
+    if not texto_h:
+        continue
+    role = 'model' if remetente == 'iana' else 'user'
+    contents.append({'role': role, 'parts': [{'text': texto_h}]})
+
+contents.append({
+    'role': 'user',
+    'parts': [{'text': f'{bloco_contexto}\n\nUsuário ({nome_usuario}): {msg_final}'}]
+})
+
+# =========================================================
 # REQUEST (RESPOSTA DO CHAT + MINERAÇÃO NO IANA_DATABASE)
 # =========================================================
 try:
@@ -188,11 +226,7 @@ try:
         url,
         json={
             'system_instruction': {'parts': [{'text': system_prompt}]},
-            'contents': [{
-                'parts': [{
-                    'text': f'{bloco_contexto}\n\nUsuário ({nome_usuario}): {msg_final}'
-                }]
-            }]
+            'contents': contents
         },
         headers={'x-goog-api-key': chave, 'Content-Type': 'application/json'},
         timeout=30

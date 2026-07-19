@@ -11,7 +11,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Resend } from 'resend';
+import sgMail from '@sendgrid/mail';
 
 dotenv.config();
 
@@ -96,13 +96,16 @@ try {
     }
 } catch (e) { console.error('❌ Gemini erro:', e.message); }
 
-/* ── RESEND ───────────────────────────────────────────────────── */
-let resend = null;
-if (process.env.RESEND_API_KEY) {
-    resend = new Resend(process.env.RESEND_API_KEY);
-    console.log('✅ Resend inicializado');
+/* ── SENDGRID ─────────────────────────────────────────────────── */
+// Usa Single Sender Verification (settings.sendgrid.com > Sender Authentication),
+// que não exige domínio próprio — só verifica um e-mail comum (Gmail, etc.)
+let sendgridPronto = false;
+if (process.env.SENDGRID_API_KEY) {
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+    sendgridPronto = true;
+    console.log('✅ SendGrid inicializado');
 } else {
-    console.warn('⚠️ RESEND_API_KEY ausente — envio de e-mail desativado');
+    console.warn('⚠️ SENDGRID_API_KEY ausente — envio de e-mail desativado');
 }
 
 function detectarHumor(texto) {
@@ -309,32 +312,37 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
             const codigo = Math.floor(100000 + Math.random() * 900000).toString();
             codigos.set(email, { codigo, exp: Date.now() + 15 * 60 * 1000 });
 
-            if (resend) {
-                const { error } = await resend.emails.send({
-                    // FIX: precisa ser um remetente de domínio verificado no Resend.
-                    // Enquanto não verificar seu domínio, use 'onboarding@resend.dev'
-                    // (funciona, mas só entrega pro seu próprio e-mail de teste).
-                    from: process.env.EMAIL_FROM || 'Iana <onboarding@resend.dev>',
-                    to: email,
-                    subject: 'Código de recuperação — Iana',
-                    html: `<div style="font-family:sans-serif;background:#111;color:#fff;padding:30px;border-radius:12px;max-width:400px;margin:auto">
-                        <h2 style="color:#a855f7">🎮 Iana</h2>
-                        <p>Seu código:</p>
-                        <div style="background:#1e1f20;border-radius:8px;padding:20px;text-align:center;margin:20px 0">
-                            <span style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#a855f7">${codigo}</span>
-                        </div>
-                        <p style="color:#aaa;font-size:13px">Expira em 15 minutos.</p>
-                    </div>`
-                });
-                if (error) {
-                    // FIX: SDK do Resend não lança exceção em erro de API — retorna
-                    // { error } no objeto de resposta. Se não checar isso aqui, o
-                    // catch abaixo nunca pega e você acha que o e-mail foi enviado
-                    // quando na verdade falhou silenciosamente.
-                    console.error('[ESQUECI] Resend recusou o envio:', error);
+            if (sendgridPronto) {
+                try {
+                    await sgMail.send({
+                        // FIX: precisa ser o e-mail verificado no SendGrid via
+                        // Single Sender Verification (Settings > Sender
+                        // Authentication). Não pode ser qualquer endereço —
+                        // só o que você verificou lá vai funcionar.
+                        from: process.env.EMAIL_FROM || 'iana@example.com',
+                        to: email,
+                        subject: 'Código de recuperação — Iana',
+                        html: `<div style="font-family:sans-serif;background:#111;color:#fff;padding:30px;border-radius:12px;max-width:400px;margin:auto">
+                            <h2 style="color:#a855f7">🎮 Iana</h2>
+                            <p>Seu código:</p>
+                            <div style="background:#1e1f20;border-radius:8px;padding:20px;text-align:center;margin:20px 0">
+                                <span style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#a855f7">${codigo}</span>
+                            </div>
+                            <p style="color:#aaa;font-size:13px">Expira em 15 minutos.</p>
+                        </div>`
+                    });
+                } catch (sgErro) {
+                    // SDK do SendGrid lança exceção em erro de API (diferente do
+                    // Resend), então esse catch interno pega direto. O corpo do
+                    // erro costuma vir em sgErro.response.body.errors.
+                    const detalhe = sgErro.response?.body?.errors?.map(e => e.message).join('; ') || sgErro.message;
+                    const dicaSender = /does not match a verified Sender|from address/i.test(detalhe)
+                        ? ' → Causa provável: o remetente em EMAIL_FROM não foi verificado no SendGrid (Settings > Sender Authentication > Single Sender Verification).'
+                        : '';
+                    console.error(`[ESQUECI] SendGrid recusou o envio para ${email}:`, detalhe, dicaSender);
                 }
             } else {
-                console.warn(`[ESQUECI] Código gerado para ${email}, mas RESEND_API_KEY não está configurada.`);
+                console.warn(`[ESQUECI] Código gerado para ${email}, mas SENDGRID_API_KEY não está configurada.`);
             }
         }
         res.json({ ok: true, msg: 'Se o e-mail existir, um código foi enviado.' });

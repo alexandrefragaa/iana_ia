@@ -182,16 +182,22 @@ function respostaSistema(mensagem) {
     return `Ei! 😊 Estou tendo uma instabilidade de conexão agora, mas já volto ao normal. Você pode repetir ou tentar em instantes?`;
 }
 
-async function askPython(nome, conversa, mensagem, historico = []) {
+async function askPython(nome, conversa, mensagem, historico = [], idUser = null) {
     return new Promise((resolve, reject) => {
         const py = process.env.IANA_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
-        // O histórico da conversa (buscado do MySQL logo acima) é passado
-        // pro Python como um argumento JSON separado (argv[4]). O iana.py
-        // precisa ler exatamente esse 4º argumento como histórico — ver
-        // fix correspondente em iana.py (antes ele estava sendo colado
-        // dentro da própria mensagem por engano).
         const historicoJSON = JSON.stringify(historico);
-        const proc = spawn(py, [path.join(__dirname, 'iana.py'), nome, conversa, mensagem, historicoJSON]);
+        
+        // Passando idUser como o 5º argumento (para virar o sys.argv[5] no Python)
+        const args = [
+            path.join(__dirname, 'iana.py'), 
+            nome, 
+            conversa, 
+            mensagem, 
+            historicoJSON,
+            idUser ? idUser.toString() : ''
+        ];
+
+        const proc = spawn(py, args);
         let out = '', err = '';
         let finalizado = false;
 
@@ -472,7 +478,7 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
     //    deve ser usado se você quiser desligar isso de propósito.
     if (process.env.ENABLE_PYTHON !== 'false') {
         try {
-            resposta = await askPython(nome, idConv || 'geral', msg, historico);
+            resposta = await askPython(nome, idConv || 'geral', msg, historico, idUser);
             origem = 'python';
         } catch (e) {
             console.error('[Python] falhou, caindo pro Gemini via Node:', e.message);

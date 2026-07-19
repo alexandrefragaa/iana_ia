@@ -7,8 +7,8 @@ import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { spawn } from 'child_process';
-import path from 'path';
+const { spawn } = require('child_process');
+const path = require('path');
 import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import sgMail from '@sendgrid/mail';
@@ -187,9 +187,11 @@ async function askPython(nome, conversa, mensagem, historico = [], idUser = null
         const py = process.env.IANA_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
         const historicoJSON = JSON.stringify(historico);
         
-        // Passando idUser como o 5º argumento (para virar o sys.argv[5] no Python)
+        // Caminho corrigido para a pasta /core
+        const scriptPath = path.join(__dirname, 'core', 'iana.py');
+        
         const args = [
-            path.join(__dirname, 'iana.py'), 
+            scriptPath, 
             nome, 
             conversa, 
             mensagem, 
@@ -197,7 +199,11 @@ async function askPython(nome, conversa, mensagem, historico = [], idUser = null
             idUser ? idUser.toString() : ''
         ];
 
-        const proc = spawn(py, args);
+        // Adicionamos PYTHONPATH ao ambiente do Python para ele enxergar a pasta raiz
+        const proc = spawn(py, args, {
+            env: { ...process.env, PYTHONPATH: __dirname }
+        });
+
         let out = '', err = '';
         let finalizado = false;
 
@@ -205,18 +211,26 @@ async function askPython(nome, conversa, mensagem, historico = [], idUser = null
             if (finalizado) return;
             finalizado = true;
             proc.kill();
-            reject(new Error('Timeout: processo Python demorou demais (25s)'));
+            reject(new Error('Timeout: processo Python demorou mais de 25s'));
         }, 25000);
 
         proc.stdout.on('data', d => out += d.toString());
         proc.stderr.on('data', d => err += d.toString());
+        
         proc.on('close', code => {
             if (finalizado) return;
             finalizado = true;
             clearTimeout(timeout);
-            if (code !== 0 || !out.trim()) return reject(new Error(err || `exit ${code}`));
-            resolve(out.trim());
+            
+            if (code !== 0) {
+                reject(new Error(`Python falhou com código ${code}: ${err}`));
+            } else if (!out.trim()) {
+                reject(new Error('Python retornou vazio: ' + err));
+            } else {
+                resolve(out.trim());
+            }
         });
+
         proc.on('error', e => {
             if (finalizado) return;
             finalizado = true;

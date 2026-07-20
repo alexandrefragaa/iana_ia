@@ -290,48 +290,49 @@
     overflow: hidden;
 }
 
+/* O ícone do menu padrão permanece visível e limpo */
 #sidebar-toggle img {
-    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-    transform-origin: center;
+    opacity: 1;
+    transform: translateX(0);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Setinha criada via CSS, escondida no centro do botão */
+/* A setinha fica oculta por padrão */
 #sidebar-toggle::after {
     content: '❮';
     position: absolute;
-    font-size: 15px;
-    color: rgba(255, 255, 255, 0.8);
+    right: 4px;
+    font-size: 12px;
+    font-weight: bold;
+    color: #22d3ee;
     opacity: 0;
-    transform: scale(0.3);
-    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateX(8px);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
 }
 
-/* 1. MOUSE EM CIMA: O menu "encolhe e some", a setinha "cresce e aparece" */
-#sidebar-toggle:hover img {
-    opacity: 0;
-    transform: scale(0.3) rotate(-90deg);
+/* 1. AO ENCOSTAR O MOUSE (Hover - Sidebar Aberta): O menu desliza levemente e a setinha de fechar aparece suavemente */
+#sidebar:not(.collapsed) #sidebar-toggle:hover img {
+    transform: translateX(-4px);
+    opacity: 0.7;
 }
 
-#sidebar-toggle:hover::after {
+#sidebar:not(.collapsed) #sidebar-toggle:hover::after {
+    content: '❮';
     opacity: 1;
-    transform: scale(1);
+    transform: translateX(0);
 }
 
-/* 2. SIDEBAR RECOLHIDA: A setinha fica permanente e invertida */
-.sidebar.collapsed #sidebar-toggle img {
-    opacity: 0;
-    transform: scale(0.3);
-    transition: none; /* Evita piscar ao abrir/fechar rápido */
+/* 2. AO ENCOSTAR O MOUSE (Hover - Sidebar Fechada): Mostra a setinha indicando que vai abrir */
+.sidebar.collapsed #sidebar-toggle:hover img {
+    transform: translateX(4px);
+    opacity: 0.7;
 }
 
-.sidebar.collapsed #sidebar-toggle::after {
-    content: '❯';
-    opacity: 1;
-    transform: scale(1);
-}
-
-/* 3. MOUSE EM CIMA COM ELA RECOLHIDA: Leve animação chamando o clique */
 .sidebar.collapsed #sidebar-toggle:hover::after {
-    transform: scale(1.1) translateX(2px);
-    color: #fff;
+    content: '❯';
+    left: 4px;
+    right: auto;
+    opacity: 1;
+    transform: translateX(0);
 }

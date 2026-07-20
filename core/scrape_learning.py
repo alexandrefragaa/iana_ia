@@ -22,7 +22,8 @@ except ImportError:
         sys.exit(1)
 
 # ── CONFIGURAÇÃO ───────────────────────────────────────────────────
-PASTA_DATA = Path(__file__).parent / "data"
+PASTA_DATA = Path(__file__).parent.parent / "data"
+print(f"DEBUG: O script está procurando os arquivos em: {PASTA_DATA}")
 PASTA_DATA.mkdir(exist_ok=True)
 
 ARQUIVO_LINKS   = PASTA_DATA / "links_para_mineracao.txt"
@@ -111,23 +112,28 @@ def extrair_conteudo(url):
 # ── FASE 1: LINKS ──────────────────────────────────────────────────
 def minerar_links():
     if not ARQUIVO_LINKS.exists():
-        print(f"⚠️  Arquivo não encontrado: {ARQUIVO_LINKS}")
+        print(f"⚠️ ARQUIVO NÃO ENCONTRADO: {ARQUIVO_LINKS}")
         return 0, 0
 
-    urls = [
-        linha.strip()
-        for linha in ARQUIVO_LINKS.read_text(encoding='utf-8').splitlines()
-        if linha.strip().startswith("http")
-    ]
-
-    print(f"\n🔗 FASE 1 — Links para minerar: {len(urls)}")
-    print("─" * 50)
-
-    ok  = 0
+    # LÊ O ARQUIVO BRUTO
+    conteudo_arquivo = ARQUIVO_LINKS.read_text(encoding='utf-8')
+    linhas = conteudo_arquivo.splitlines()
+    
+    # FILTRA URLs
+    urls = []
+    for i, linha in enumerate(linhas):
+        linha_limpa = linha.strip()
+        if linha_limpa.startswith("http"):
+            urls.append(linha_limpa)
+    
+    print(f"DEBUG: Total de URLs válidas encontradas: {len(urls)}")
+    
+    # ── AGORA VEM A LÓGICA QUE FALTAVA ──
+    ok = 0
     err = 0
 
     for i, url in enumerate(urls, 1):
-        print(f"[{i}/{len(urls)}] {url[:70]}...")
+        print(f"[{i}/{len(urls)}] Processando: {url[:60]}...")
 
         if ja_processado(url):
             print(f"  ⏭️  Já processado — pulando")
@@ -136,15 +142,15 @@ def minerar_links():
         titulo, conteudo = extrair_conteudo(url)
 
         if not conteudo or len(conteudo) < 80:
-            print(f"  ⚠️  Conteúdo insuficiente — pulando")
+            print(f"  ⚠️  Conteúdo insuficiente ou erro — pulando")
             err += 1
-            time.sleep(0.5)
             continue
 
+        # Chama a função de aprendizado
         sucesso = learn(
-            titulo   = titulo,
-            conteudo = conteudo,
-            categoria= "web_mining",
+            titulo    = titulo,
+            conteudo  = conteudo,
+            categoria = "web_mining",
             id_documento = uid(url)
         )
 
@@ -155,9 +161,11 @@ def minerar_links():
         else:
             err += 1
 
-        time.sleep(1)  # respeita os servidores
+        time.sleep(1) # Respeita o servidor
 
     print(f"\n  ✅ OK: {ok} | ❌ Erro: {err}")
+    
+    # RETORNA OS VALORES PARA A FASE 3 PODER LER
     return ok, err
 
 # ── FASE 2: TÓPICOS ────────────────────────────────────────────────

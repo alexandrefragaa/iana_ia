@@ -1391,62 +1391,17 @@ main {
     }
 }
 
-.btn-chat-options {
-    background: transparent;
-    border: none;
-    color: rgba(168, 85, 247, 0.7); /* Tom roxo alinhado com a identidade da IA */
-    font-size: 1.1rem;
-    cursor: pointer;
-    padding: 2px 6px;
-    border-radius: 6px;
-    transition: all 0.2s ease;
-}
-
-.btn-chat-options:hover {
-    color: #fff;
-    background: rgba(168, 85, 247, 0.15);
-}
-
-/* O menu flutuante */
-.chat-options-menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
-    background: #141418; /* Fundo escuro que combina com o tema da sidebar */
-    border: 1px solid rgba(168, 85, 247, 0.25);
-    border-radius: 12px;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-    display: none;
-    flex-direction: column;
-    padding: 6px;
-    z-index: 999;
-    min-width: 140px;
-    animation: fadeUpMenu 0.2s ease;
-}
-
-.chat-options-menu.ativo {
-    display: flex;
-}
-
-@keyframes fadeUpMenu {
-    from {
-        opacity: 0;
-        transform: translateY(6px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* Itens de ação dentro do menu (Fixar, Renomear, Excluir) */
 /* =========================================
-   ESTILIZAÇÃO DO ITEM DE HISTÓRICO E MENU LATERAL
+   SIDEBAR E MENU FLUTUANTE EXTERNO
    ========================================= */
+
+.sidebar {
+    overflow: visible !important; /* Libera para o menu sair da barra lateral */
+}
 
 .sidebar-historico {
     overflow-y: auto;
-    overflow-x: visible !important; /* Permite que o menu flutuante saia da barra lateral se necessário */
+    overflow-x: visible !important;
 }
 
 .chat-item {
@@ -1477,7 +1432,7 @@ main {
 
 /* Wrapper que segura o botão de três pontos */
 .chat-options-wrapper {
-    position: relative;
+    position: relative; /* Base de posicionamento para o menu absoluto */
     display: flex;
     align-items: center;
 }
@@ -1499,11 +1454,11 @@ main {
     background: rgba(168, 85, 247, 0.2);
 }
 
-/* A "Box" do menu flutuante posicionada EXATAMENTE AO LADO */
+/* A "Box" do menu flutuante posicionado PARA FORA (à direita do botão) */
 .chat-options-menu {
     position: absolute;
     top: 50%;
-    right: calc(100% + 8px); /* Abre para o lado esquerdo se estiver muito na borda, ou use left: calc(100% + 8px) para a direita */
+    left: calc(100% + 8px); /* Posiciona perfeitamente fora do item, à direita */
     transform: translateY(-50%) scale(0.95);
     background: #141418;
     border: 1px solid rgba(168, 85, 247, 0.25);
@@ -1512,13 +1467,13 @@ main {
     display: none;
     flex-direction: column;
     padding: 6px;
-    z-index: 99999;
+    z-index: 999999;
     min-width: 140px;
     opacity: 0;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-/* Classe ativada via JS para exibir o menu com efeito suave */
+/* Classe ativada via JS para exibir o menu com transição suave */
 .chat-options-menu.ativo {
     display: flex;
     opacity: 1;

@@ -1247,15 +1247,6 @@ main {
     gap: 10px;
 }
 
-/* Ícone único de abrir/fechar sidebar — gira 180° para indicar o estado */
-#sidebar-toggle img {
-    transition: transform .3s ease;
-}
-
-.sidebar.collapsed #sidebar-toggle img {
-    transform: rotate(180deg);
-}
-
 .btn-entrar,
 .btn-registrar {
     padding: 9px 18px;

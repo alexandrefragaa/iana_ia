@@ -9,7 +9,9 @@
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "@sendgrid/mail": "^8.1.6",
+    "axios": "^1.18.1",
     "bcryptjs": "^3.0.3",
+    "cheerio": "^1.2.0",
     "chromadb": "^3.4.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",

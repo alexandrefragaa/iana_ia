@@ -1,162 +1,269 @@
-# scrape_learning.py - Pipeline único de mineração (consolidado)
-#
-# Substitui mine.py + scrape_learning.py antigos.
-# Motivo da consolidação: os dois faziam a mesma coisa (extrair conteúdo
-# de links/tópicos e chamar learn()), com fixes diferentes cada um —
-# risco real de bug corrigido em um lado e esquecido no outro (já
-# aconteceu com o hash() não-determinístico).
-#
-# O que foi puxado de cada um:
-#   - de scrape_learning.py: headers de navegador, delay entre requests,
-#     id_estavel() com hashlib (determinístico), caminhos relativos ao
-#     script (não quebra em cron/deploy)
-#   - de mine.py: controle "já aprendeu" via arquivo (evita reprocessar
-#     URLs/tópicos que não mudaram, economiza tempo e banda)
-#
-# ATUALIZAÇÃO: Agora usa MySQL (via memory.py) para persistência real do controle "já aprendeu".
+# scrape_learning.py
+# Roda localmente: python scrape_learning.py
+# Lê links_para_mineracao.txt e titulos_para_buscar.txt
+# Extrai o conteúdo real e salva no ChromaDB da Iana
 
 import requests
 import hashlib
 import time
-from bs4 import BeautifulSoup
+import sys
+import os
 from pathlib import Path
-from learning_engine import learn
-import memory # Importa a memória persistente no MySQL
+from bs4 import BeautifulSoup
 
-DIRETORIO_RAIZ = Path(__file__).parent.resolve()
-PASTA_DATA = DIRETORIO_RAIZ / "data"
-# ARQUIVO_APRENDIDOS = PASTA_DATA / "aprendidos.txt" # Desativado em favor do MySQL
+# Importa o motor de aprendizado
+try:
+    from learning_engine import learn
+except ImportError:
+    try:
+        from core.learning_engine import learn
+    except ImportError:
+        print("❌ learning_engine.py não encontrado.")
+        sys.exit(1)
+
+# ── CONFIGURAÇÃO ───────────────────────────────────────────────────
+PASTA_DATA = Path(__file__).parent / "data"
+PASTA_DATA.mkdir(exist_ok=True)
+
+ARQUIVO_LINKS   = PASTA_DATA / "links_para_mineracao.txt"
+ARQUIVO_TITULOS = PASTA_DATA / "titulos_para_buscar.txt"
+ARQUIVO_FEITOS  = PASTA_DATA / "links_concluidos.txt"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://www.google.com/",
-    "Connection": "keep-alive",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"
 }
 
-DELAY_ENTRE_REQUESTS = 1  # segundos, evita rate-limit/bloqueio
-LIMITE_CARACTERES = 2000  # tamanho do texto salvo por item
+# ── UTILITÁRIOS ────────────────────────────────────────────────────
+def ja_processado(url):
+    if not ARQUIVO_FEITOS.exists():
+        return False
+    return url in ARQUIVO_FEITOS.read_text(encoding='utf-8')
 
+def marcar_como_feito(url):
+    with open(ARQUIVO_FEITOS, 'a', encoding='utf-8') as f:
+        f.write(url + '\n')
 
-def id_estavel(prefixo, texto):
-    """ID determinístico (mesmo texto -> mesmo ID sempre), pra upsert funcionar certo."""
-    return f"{prefixo}_" + hashlib.md5(texto.strip().lower().encode('utf-8')).hexdigest()
+def uid(texto):
+    return "url_" + hashlib.md5(texto.encode('utf-8')).hexdigest()
 
-
-# =========================================================
-# CONTROLE "JÁ APRENDEU" (Agora usando MySQL para persistência real)
-# =========================================================
-def ja_aprendeu(chave):
-    # Tenta no MySQL primeiro para persistência garantida
-    if memory.ja_aprendeu_mysql(chave):
-        return True
-    return False
-
-def registrar_aprendizado(chave, tipo="url"):
-    # Registra no MySQL para persistência garantida
-    memory.registrar_aprendizado_mysql(chave, tipo)
-
-
-# =========================================================
-# EXTRAÇÃO E APRENDIZADO
-# =========================================================
-def scrape_and_learn(url):
-    """Extrai o conteúdo de uma URL e manda pro learning_engine."""
-    if ja_aprendeu(url):
-        print(f"  ⏩ [PULANDO] Já sei isso: {url}")
-        return None  # None = pulado (diferente de False = falhou)
-
+# ── EXTRAÇÃO DE CONTEÚDO ───────────────────────────────────────────
+def extrair_conteudo(url):
+    """
+    Faz o scraping real da página e retorna (titulo, conteudo).
+    Extrai parágrafos, listas, títulos — tudo que tem texto útil.
+    """
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
+        r = requests.get(url, headers=HEADERS, timeout=12)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
-        for el in soup(["script", "style", "nav", "footer", "header"]):
-            el.decompose()
+        # Remove scripts, estilos, menus, rodapés
+        for tag in soup(["script","style","nav","footer","header","aside","form","iframe"]):
+            tag.decompose()
 
-        title = soup.title.text.strip() if soup.title else url.split("/")[-1]
-        content = soup.get_text(separator="\n", strip=True)[:LIMITE_CARACTERES]
+        titulo = soup.title.text.strip() if soup.title else url.split("/")[-1]
 
-        if len(content) <= 50:
-            print(f"  ⚠️ Conteúdo insuficiente, ignorando: {url}")
-            return False
+        # Extrai parágrafos e listas com conteúdo real
+        blocos = []
 
-        ok = learn(title, content, "mining", id_estavel("url", url))
-        if ok:
-            registrar_aprendizado(url)
-        return ok
+        # Títulos da página (h1, h2, h3) — dão contexto
+        for h in soup.find_all(["h1","h2","h3"]):
+            txt = h.get_text(strip=True)
+            if len(txt) > 5:
+                blocos.append(f"## {txt}")
 
+        # Parágrafos longos
+        for p in soup.find_all("p"):
+            txt = p.get_text(strip=True)
+            if len(txt) > 40:
+                blocos.append(txt)
+
+        # Listas (itens de conquistas, builds, etc)
+        for li in soup.find_all("li"):
+            txt = li.get_text(strip=True)
+            if len(txt) > 20:
+                blocos.append(f"• {txt}")
+
+        # Tabelas (muito comuns em wikis de jogos)
+        for tr in soup.find_all("tr"):
+            celulas = [td.get_text(strip=True) for td in tr.find_all(["td","th"]) if td.get_text(strip=True)]
+            if celulas:
+                blocos.append(" | ".join(celulas))
+
+        conteudo = "\n".join(blocos)
+
+        # Limita o tamanho para não estourar o ChromaDB
+        if len(conteudo) > 6000:
+            conteudo = conteudo[:6000] + "\n...[continua]"
+
+        return titulo, conteudo
+
+    except requests.exceptions.Timeout:
+        print(f"  ⏱️ Timeout: {url}")
+    except requests.exceptions.HTTPError as e:
+        print(f"  ❌ HTTP {e.response.status_code}: {url}")
     except Exception as e:
-        print(f"  ❌ Erro ao minerar {url}: {e}")
-        return False
-    finally:
-        time.sleep(DELAY_ENTRE_REQUESTS)
+        print(f"  ❌ Erro ao extrair {url}: {e}")
 
+    return None, None
 
-def learn_topics(filepath):
-    """Aprende tópicos direto como conhecimento estruturado (sem scraping)."""
-    if not filepath.exists():
-        print(f"⚠️ Arquivo não encontrado: {filepath}")
+# ── FASE 1: LINKS ──────────────────────────────────────────────────
+def minerar_links():
+    if not ARQUIVO_LINKS.exists():
+        print(f"⚠️  Arquivo não encontrado: {ARQUIVO_LINKS}")
         return 0, 0
 
-    with open(filepath, 'r', encoding='utf-8') as f:
-        topics = [line.strip() for line in f if line.strip()]
+    urls = [
+        linha.strip()
+        for linha in ARQUIVO_LINKS.read_text(encoding='utf-8').splitlines()
+        if linha.strip().startswith("http")
+    ]
 
-    sucesso, ignorados = 0, 0
-    for topic in topics:
-        if ja_aprendeu(topic):
-            ignorados += 1
+    print(f"\n🔗 FASE 1 — Links para minerar: {len(urls)}")
+    print("─" * 50)
+
+    ok  = 0
+    err = 0
+
+    for i, url in enumerate(urls, 1):
+        print(f"[{i}/{len(urls)}] {url[:70]}...")
+
+        if ja_processado(url):
+            print(f"  ⏭️  Já processado — pulando")
             continue
-        ok = learn(f"Tópico: {topic}", f"Guia sobre: {topic}", "topics", id_estavel("topic", topic))
-        if ok:
-            registrar_aprendizado(topic, tipo="topic")
-            sucesso += 1
 
-    return sucesso, ignorados
+        titulo, conteudo = extrair_conteudo(url)
 
+        if not conteudo or len(conteudo) < 80:
+            print(f"  ⚠️  Conteúdo insuficiente — pulando")
+            err += 1
+            time.sleep(0.5)
+            continue
 
-# =========================================================
-# EXECUÇÃO
-# =========================================================
-def run():
-    print("=" * 50)
-    print("⚡ MINERAÇÃO")
-    print("=" * 50 + "\n")
+        sucesso = learn(
+            titulo   = titulo,
+            conteudo = conteudo,
+            categoria= "web_mining",
+            id_documento = uid(url)
+        )
 
-    arquivo_links = PASTA_DATA / "links_para_mineracao.txt"
-    arquivo_topicos = PASTA_DATA / "titulos_para_buscar.txt"
-
-    # FASE 1: links
-    print("📥 FASE 1: Extraindo conteúdo dos links\n")
-    if not arquivo_links.exists():
-        print(f"⚠️ Arquivo não encontrado: {arquivo_links}")
-        urls = []
-    else:
-        with open(arquivo_links, encoding='utf-8') as f:
-            urls = [line.strip() for line in f if line.strip().startswith("http")]
-
-    print(f"🔗 {len(urls)} links no arquivo\n")
-    novos, ignorados, falhas = 0, 0, 0
-    for url in urls:
-        resultado = scrape_and_learn(url)
-        if resultado is None:
-            ignorados += 1
-        elif resultado:
-            novos += 1
+        if sucesso:
+            marcar_como_feito(url)
+            print(f"  ✅ Aprendido: {titulo[:60]}")
+            ok += 1
         else:
-            falhas += 1
+            err += 1
 
-    print(f"\n✅ FASE 1 CONCLUÍDA: {novos} novos, {ignorados} repetidos pulados, {falhas} falharam.\n")
+        time.sleep(1)  # respeita os servidores
 
-    # FASE 2: tópicos
-    print("📚 FASE 2: Processando tópicos\n")
-    topicos_novos, topicos_ignorados = learn_topics(arquivo_topicos)
-    print(f"✅ FASE 2 CONCLUÍDA: {topicos_novos} tópicos novos, {topicos_ignorados} já conhecidos ignorados.\n")
+    print(f"\n  ✅ OK: {ok} | ❌ Erro: {err}")
+    return ok, err
 
-    print(f"🎉 Total: {novos + topicos_novos} itens novos integrados ao conhecimento!")
+# ── FASE 2: TÓPICOS ────────────────────────────────────────────────
+def minerar_topicos():
+    if not ARQUIVO_TITULOS.exists():
+        print(f"⚠️  Arquivo não encontrado: {ARQUIVO_TITULOS}")
+        return 0
 
+    topicos = [
+        linha.strip()
+        for linha in ARQUIVO_TITULOS.read_text(encoding='utf-8').splitlines()
+        if linha.strip() and not linha.startswith("#")
+    ]
 
+    print(f"\n📚 FASE 2 — Tópicos para aprender: {len(topicos)}")
+    print("─" * 50)
+
+    ok = 0
+
+    for i, topico in enumerate(topicos, 1):
+        print(f"[{i}/{len(topicos)}] {topico}")
+
+        # Tenta buscar conteúdo real do tópico via Wikipedia em português
+        conteudo = buscar_wikipedia(topico)
+
+        if not conteudo:
+            # Se não achou no Wikipedia, salva o tópico como contexto estruturado
+            conteudo = gerar_conteudo_estruturado(topico)
+
+        sucesso = learn(
+            titulo   = topico,
+            conteudo = conteudo,
+            categoria= "topico",
+            id_documento = "topic_" + hashlib.md5(topico.lower().encode('utf-8')).hexdigest()
+        )
+
+        if sucesso:
+            print(f"  ✅ Aprendido")
+            ok += 1
+        else:
+            print(f"  ⚠️  Falha")
+
+        time.sleep(0.3)
+
+    print(f"\n  ✅ Aprendidos: {ok}/{len(topicos)}")
+    return ok
+
+def buscar_wikipedia(topico):
+    """Busca resumo real do tópico na Wikipedia em português."""
+    try:
+        url = "https://pt.wikipedia.org/w/api.php"
+        params = {
+            "action": "query",
+            "prop":   "extracts",
+            "exintro": True,
+            "explaintext": True,
+            "redirects": 1,
+            "titles": topico,
+            "format": "json"
+        }
+        r = requests.get(url, params=params, timeout=8, headers=HEADERS)
+        data = r.json()
+        pages = data.get("query", {}).get("pages", {})
+        for page in pages.values():
+            extract = page.get("extract", "")
+            if extract and len(extract) > 100:
+                return extract[:4000]
+    except Exception:
+        pass
+    return None
+
+def gerar_conteudo_estruturado(topico):
+    """
+    Gera um conteúdo estruturado quando não acha na web.
+    Garante que a Iana ao menos saiba que o tópico existe
+    e tenha contexto para elaborar sobre ele.
+    """
+    return (
+        f"Tópico de conhecimento: {topico}\n\n"
+        f"Este é um assunto relevante no universo gamer e de entretenimento. "
+        f"Contexto: {topico} é um termo/assunto que pode estar relacionado a "
+        f"jogos, conquistas, estratégias, personagens, mecânicas de gameplay, "
+        f"itens, localizações ou lore de jogos. "
+        f"Quando perguntada sobre {topico}, a Iana deve usar criatividade e "
+        f"conhecimento geral sobre games para dar uma resposta útil e envolvente."
+    )
+
+# ── FASE 3: RESUMO ─────────────────────────────────────────────────
+def mostrar_resumo(ok_links, err_links, ok_topicos):
+    print("\n" + "="*50)
+    print("📊 RESUMO DA MINERAÇÃO")
+    print("="*50)
+    print(f"  🔗 Links processados:  {ok_links} ✅  {err_links} ❌")
+    print(f"  📚 Tópicos aprendidos: {ok_topicos} ✅")
+    print(f"  🧠 Total integrado:    {ok_links + ok_topicos} itens")
+    print("="*50)
+    print("✨ A Iana agora sabe mais! Reinicie o servidor para")
+    print("   que as mudanças reflitam nas respostas do chat.")
+
+# ── MAIN ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    run()
+    print("="*50)
+    print("⚡ IANA — SISTEMA DE MINERAÇÃO E APRENDIZADO")
+    print("="*50)
+
+    ok_links, err_links = minerar_links()
+    ok_topicos          = minerar_topicos()
+
+    mostrar_resumo(ok_links, err_links, ok_topicos)

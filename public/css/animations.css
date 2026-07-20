@@ -299,14 +299,14 @@
 }
 
 /* 2. QUANDO ENCOSTA O MOUSE (Hover - Sidebar Aberta):
-   O ícone se espelha horizontalmente (scaleX(-1)), fazendo a setinha inverter e apontar para a esquerda para fechar/encurtar */
+   O ícone se espelha horizontalmente, invertendo a setinha para a esquerda para fechar/encurtar */
 #sidebar:not(.collapsed) #sidebar-toggle:hover img {
     opacity: 1;
     transform: scale(1.05) scaleX(-1);
 }
 
 /* 3. QUANDO A SIDEBAR ESTÁ FECHADA (Collapsed):
-   Quando o mouse encosta com ela fechada, ela mantém a posição original para indicar que vai abrir */
+   Quando o mouse encosta com ela fechada, mantém a posição original para indicar que vai abrir */
 .sidebar.collapsed #sidebar-toggle:hover img {
     opacity: 1;
     transform: scale(1.05) rotate(0deg);

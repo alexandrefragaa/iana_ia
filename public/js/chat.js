@@ -1,27 +1,27 @@
 /* ================================================================
-   IANA — chat.js — reescrito para bater com o index.html atual
+   IANA — chat.js — reescrito e otimizado
    ================================================================ */
 
 'use strict';
 
 let aguardandoResposta = false;
-let idConversaAtiva    = null;
-let controller         = new AbortController();
-let emailRecuperacao   = '';
+let idConversaAtiva = null;
+let controller = new AbortController();
+let emailRecuperacao = '';
 let idConversaRenomear = null;
-let idConversaExcluir  = null;
-let usuarioAtual       = null;
+let idConversaExcluir = null;
+let usuarioAtual = null;
 
-let ttsEnabled      = true;
+let ttsEnabled = true;
 let ttsNextResponse = false;
-let ttsVoice        = null;
+let ttsVoice = null;
 
 let mediaRecorderAudio = null;
-let audioChunks        = [];
-let gravandoAudio      = false;
+let audioChunks = [];
+let gravandoAudio = false;
 
 let streamCamera = null;
-let streamVoz    = null;
+let streamVoz = null;
 
 const TELAS = [
     'tela-login', 'tela-cadastro', 'tela-esqueci', 'tela-codigo',
@@ -29,18 +29,23 @@ const TELAS = [
 ];
 
 /* ── UTILS ────────────────────────────────────────────────────── */
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function sleep(ms) { 
+    return new Promise(r => setTimeout(r, ms)); 
+}
 
 function sanitizarHTML(html) {
     return typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(html) : html;
 }
 
-/* ── CONFIGURAÇÕES (lidas do localStorage salvo em /configuracoes) ── */
+/* ── CONFIGURAÇÕES (lidas do localStorage) ────────────────────── */
 const CONFIG_KEY = 'iana_config';
 
 function obterConfigSalva() {
-    try { return JSON.parse(localStorage.getItem(CONFIG_KEY)) || {}; }
-    catch { return {}; }
+    try { 
+        return JSON.parse(localStorage.getItem(CONFIG_KEY)) || {}; 
+    } catch { 
+        return {}; 
+    }
 }
 
 function montarConfigPrompt() {
@@ -49,19 +54,19 @@ function montarConfigPrompt() {
 
     const linhas = [];
     if (c.personalidade?.length) linhas.push(`Estilo de personalidade: ${c.personalidade.join(', ')}.`);
-    if (c.foco?.length)          linhas.push(`Foco principal (priorize esses assuntos): ${c.foco.join(', ')}.`);
-    if (c.plataforma?.length)    linhas.push(`Plataforma do usuário: ${c.plataforma.join(', ')}.`);
-    if (c.voz?.length)           linhas.push(`Estilo de escrita/voz: ${c.voz.join(', ')}.`);
-    if (c.tamanho)                linhas.push(`Tamanho preferido das respostas: ${c.tamanho}.`);
-    if (c.emojis)                 linhas.push(`Uso de emojis: ${c.emojis}.`);
-    if (c.instrucoes)             linhas.push(`Instruções específicas do usuário: ${c.instrucoes}`);
-    if (c.sobreVoce)              linhas.push(`Sobre o usuário: ${c.sobreVoce}`);
+    if (c.foco?.length) linhas.push(`Foco principal (priorize esses assuntos): ${c.foco.join(', ')}.`);
+    if (c.plataforma?.length) linhas.push(`Plataforma do usuário: ${c.plataforma.join(', ')}.`);
+    if (c.voz?.length) linhas.push(`Estilo de escrita/voz: ${c.voz.join(', ')}.`);
+    if (c.tamanho) linhas.push(`Tamanho preferido das respostas: ${c.tamanho}.`);
+    if (c.emojis) linhas.push(`Uso de emojis: ${c.emojis}.`);
+    if (c.instrucoes) linhas.push(`Instruções específicas do usuário: ${c.instrucoes}`);
+    if (c.sobreVoce) linhas.push(`Sobre o usuário: ${c.sobreVoce}`);
 
     const comportamentos = [];
-    if (c.perguntas === false)    comportamentos.push('NÃO termine a resposta com uma pergunta.');
-    if (c.humor === false)        comportamentos.push('NÃO precisa adaptar o tom ao humor do usuário.');
+    if (c.perguntas === false) comportamentos.push('NÃO termine a resposta com uma pergunta.');
+    if (c.humor === false) comportamentos.push('NÃO precisa adaptar o tom ao humor do usuário.');
     if (c.criatividade === false) comportamentos.push('NÃO invente/crie conteúdo quando não souber a resposta — diga que não sabe.');
-    if (c.contexto === false)     comportamentos.push('NÃO dependa do contexto de mensagens anteriores.');
+    if (c.contexto === false) comportamentos.push('NÃO dependa do contexto de mensagens anteriores.');
     if (comportamentos.length) linhas.push(comportamentos.join(' '));
 
     return linhas.join('\n');
@@ -92,7 +97,9 @@ function falar(texto) {
         ut.pitch = 1.05;
         speechSynthesis.cancel();
         speechSynthesis.speak(ut);
-    } catch (e) { console.warn('TTS falhou:', e); }
+    } catch (e) { 
+        console.warn('TTS falhou:', e); 
+    }
 }
 
 /* ── MODAL DE AUTENTICAÇÃO (overlay-auth) ────────────────────── */
@@ -127,7 +134,10 @@ async function abrirCamera() {
 
 function fecharCamera() {
     const overlay = document.getElementById('overlay-camera');
-    if (streamCamera) { streamCamera.getTracks().forEach(t => t.stop()); streamCamera = null; }
+    if (streamCamera) { 
+        streamCamera.getTracks().forEach(t => t.stop()); 
+        streamCamera = null; 
+    }
     if (overlay) overlay.style.display = 'none';
 }
 
@@ -155,18 +165,25 @@ function abrirVoz() {
 function fecharVoz() {
     const overlay = document.getElementById('overlay-voz');
     if (overlay) overlay.style.display = 'none';
-    if (window._recognitionVoz) { try { window._recognitionVoz.stop(); } catch (e) {} }
-    if (streamVoz) { streamVoz.getTracks().forEach(t => t.stop()); streamVoz = null; }
+    if (window._recognitionVoz) { 
+        try { window._recognitionVoz.stop(); } catch (e) { } 
+    }
+    if (streamVoz) { 
+        streamVoz.getTracks().forEach(t => t.stop()); 
+        streamVoz = null; 
+    }
 }
 
 function iniciarReconhecimentoVoz() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const statusEl     = document.getElementById('voz-status');
+    const statusEl = document.getElementById('voz-status');
     const transcriptEl = document.getElementById('voz-transcript');
+    
     if (!SpeechRecognition) {
         if (statusEl) statusEl.textContent = 'Reconhecimento de voz não suportado neste navegador.';
         return;
     }
+    
     const rec = new SpeechRecognition();
     rec.lang = 'pt-BR';
     rec.continuous = true;
@@ -175,7 +192,9 @@ function iniciarReconhecimentoVoz() {
 
     rec.onresult = (e) => {
         let texto = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) texto += e.results[i][0].transcript;
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+            texto += e.results[i][0].transcript;
+        }
         if (transcriptEl) transcriptEl.textContent = texto;
         if (e.results[e.results.length - 1].isFinal && texto.trim()) {
             if (statusEl) statusEl.textContent = 'Processando...';
@@ -186,14 +205,18 @@ function iniciarReconhecimentoVoz() {
             });
         }
     };
-    rec.onerror = () => { if (statusEl) statusEl.textContent = 'Erro ao ouvir. Tente novamente.'; };
+    
+    rec.onerror = () => { 
+        if (statusEl) statusEl.textContent = 'Erro ao ouvir. Tente novamente.'; 
+    };
+    
     rec.start();
 }
 
 function toggleMuteVoz() {
     const btn = document.getElementById('btn-voz-mute');
     if (window._recognitionVoz) {
-        try { window._recognitionVoz.stop(); } catch (e) {}
+        try { window._recognitionVoz.stop(); } catch (e) { }
         window._recognitionVoz = null;
         if (btn) btn.textContent = '🔇';
     } else {
@@ -205,7 +228,7 @@ function toggleMuteVoz() {
 /* ── MENU DE UPLOAD ───────────────────────────────────────────── */
 function iniciarMenuUpload() {
     const btnMais = document.getElementById('btn-mais');
-    const menu    = document.getElementById('upload-menu');
+    const menu = document.getElementById('upload-menu');
     const fileInput = document.getElementById('file-input');
     if (!btnMais || !menu) return;
 
@@ -213,14 +236,20 @@ function iniciarMenuUpload() {
         e.stopPropagation();
         const rect = btnMais.getBoundingClientRect();
         menu.style.left = rect.left + 'px';
-        menu.style.top  = (rect.top - menu.offsetHeight - 8) + 'px';
+        menu.style.top = (rect.top - menu.offsetHeight - 8) + 'px';
         menu.style.display = (menu.style.display === 'flex') ? 'none' : 'flex';
     });
 
-    document.addEventListener('click', () => { menu.style.display = 'none'; });
+    document.addEventListener('click', () => { 
+        menu.style.display = 'none'; 
+    });
+    
     menu.addEventListener('click', (e) => e.stopPropagation());
 
-    document.getElementById('up-foto')?.addEventListener('click', () => { menu.style.display = 'none'; abrirCamera(); });
+    document.getElementById('up-foto')?.addEventListener('click', () => { 
+        menu.style.display = 'none'; 
+        abrirCamera(); 
+    });
 
     document.getElementById('up-imagem')?.addEventListener('click', () => {
         menu.style.display = 'none';
@@ -237,12 +266,16 @@ function iniciarMenuUpload() {
         if (fileInput) { fileInput.accept = 'audio/*'; fileInput.click(); }
     });
 
-    document.getElementById('up-tela')?.addEventListener('click', () => { menu.style.display = 'none'; compartilharTela(); });
+    document.getElementById('up-tela')?.addEventListener('click', () => { 
+        menu.style.display = 'none'; 
+        compartilharTela(); 
+    });
 }
 
 function iniciarUpload() {
     const fileInput = document.getElementById('file-input');
     if (!fileInput) return;
+    
     fileInput.addEventListener('change', async () => {
         const file = fileInput.files?.[0];
         if (!file) return;
@@ -264,11 +297,13 @@ function iniciarUpload() {
 async function compartilharTela() {
     try {
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-        stream.getVideoTracks()[0].addEventListener('ended', () => {});
+        stream.getVideoTracks()[0].addEventListener('ended', () => { });
         await processarEnvioIA('[Usuário compartilhou a tela.]');
         stream.getTracks().forEach(t => t.stop());
     } catch (e) {
-        if (e.name !== 'NotAllowedError') alert('Erro ao compartilhar tela: ' + e.message);
+        if (e.name !== 'NotAllowedError') {
+            alert('Erro ao compartilhar tela: ' + e.message);
+        }
     }
 }
 
@@ -288,7 +323,7 @@ function iniciarGravacaoAudio() {
                     stream.getTracks().forEach(t => t.stop());
                     const blob = new Blob(audioChunks, { type: 'audio/webm' });
                     console.log('Áudio gravado:', blob);
-                    // Envio de áudio para transcrição ainda não implementado no backend.
+                    // O envio de áudio para transcrição no backend deve ser implementado aqui
                 };
                 mediaRecorderAudio.start();
                 gravandoAudio = true;
@@ -298,7 +333,9 @@ function iniciarGravacaoAudio() {
                 alert('Não foi possível acessar o microfone: ' + e.message);
             }
         } else {
-            if (mediaRecorderAudio && mediaRecorderAudio.state !== 'inactive') mediaRecorderAudio.stop();
+            if (mediaRecorderAudio && mediaRecorderAudio.state !== 'inactive') {
+                mediaRecorderAudio.stop();
+            }
             gravandoAudio = false;
             btn.classList.remove('gravando');
             btn.title = 'Gravar áudio';
@@ -309,17 +346,22 @@ function iniciarGravacaoAudio() {
 /* ── SESSÃO E IDENTIDADE ──────────────────────────────────────── */
 async function verificarSessao() {
     try {
-        const res  = await fetch('/auth/me', { credentials: 'include' });
+        const res = await fetch('/auth/me', { credentials: 'include' });
         const data = await res.json();
-        if (data.logado) atualizarUILogado(data.usuario);
-        else atualizarUIVisitante();
-    } catch (e) { atualizarUIVisitante(); }
+        if (data.logado) {
+            atualizarUILogado(data.usuario);
+        } else {
+            atualizarUIVisitante();
+        }
+    } catch (e) { 
+        atualizarUIVisitante(); 
+    }
 }
 
 function atualizarUIVisitante() {
     usuarioAtual = null;
     const authButtons = document.getElementById('auth-buttons');
-    const footer       = document.getElementById('sidebar-footer');
+    const footer = document.getElementById('sidebar-footer');
     if (authButtons) authButtons.style.display = 'flex';
     if (footer) footer.style.display = 'none';
 
@@ -332,7 +374,7 @@ function atualizarUIVisitante() {
 function atualizarUILogado(usuario) {
     usuarioAtual = usuario;
     const authButtons = document.getElementById('auth-buttons');
-    const footer       = document.getElementById('sidebar-footer');
+    const footer = document.getElementById('sidebar-footer');
     if (authButtons) authButtons.style.display = 'none';
     if (footer) footer.style.display = 'block';
 
@@ -346,8 +388,8 @@ function atualizarUILogado(usuario) {
 function mensagemErroAuth(msg, fallback = 'Erro inesperado.') {
     const texto = String(msg || '').toLowerCase();
     if (texto.includes('já cadastrado')) return 'Este e-mail já está cadastrado.';
-    if (texto.includes('inválidas'))     return 'E-mail ou senha inválidos.';
-    if (texto.includes('mínima'))        return 'Senha muito curta (mínimo 8 caracteres).';
+    if (texto.includes('inválidas')) return 'E-mail ou senha inválidos.';
+    if (texto.includes('mínima')) return 'Senha muito curta (mínimo 8 caracteres).';
     return msg || fallback;
 }
 
@@ -359,86 +401,135 @@ function mostrarErroTela(id, msg) {
 async function realizarLogin() {
     const email = document.getElementById('login-email')?.value.trim();
     const senha = document.getElementById('login-senha')?.value;
-    if (!email || !senha) { mostrarErroTela('login-erro', 'Preencha e-mail e senha.'); return; }
+    if (!email || !senha) { 
+        mostrarErroTela('login-erro', 'Preencha e-mail e senha.'); 
+        return; 
+    }
 
     const btn = document.getElementById('btn-login');
-    const orig = btn.textContent; btn.textContent = 'Entrando...'; btn.disabled = true;
+    const orig = btn.textContent; 
+    btn.textContent = 'Entrando...'; 
+    btn.disabled = true;
+    
     try {
-        const res  = await fetch('/auth/login', {
+        const res = await fetch('/auth/login', {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, senha })
         });
         const data = await res.json();
-        if (!res.ok) mostrarErroTela('login-erro', mensagemErroAuth(data.erro, 'Falha no login.'));
-        else { fecharAuth(); atualizarUILogado(data.usuario); }
-    } catch (e) { mostrarErroTela('login-erro', 'Erro de conexão.'); }
-    finally { btn.textContent = orig; btn.disabled = false; }
+        if (!res.ok) {
+            mostrarErroTela('login-erro', mensagemErroAuth(data.erro, 'Falha no login.'));
+        } else { 
+            fecharAuth(); 
+            atualizarUILogado(data.usuario); 
+        }
+    } catch (e) { 
+        mostrarErroTela('login-erro', 'Erro de conexão.'); 
+    } finally { 
+        btn.textContent = orig; 
+        btn.disabled = false; 
+    }
 }
 
 async function realizarCadastro() {
-    const nome  = document.getElementById('cad-nome')?.value.trim();
+    const nome = document.getElementById('cad-nome')?.value.trim();
     const email = document.getElementById('cad-email')?.value.trim();
     const senha = document.getElementById('cad-senha')?.value;
-    if (!nome || !email || !senha) { mostrarErroTela('cad-erro', 'Preencha todos os campos.'); return; }
+    
+    if (!nome || !email || !senha) { 
+        mostrarErroTela('cad-erro', 'Preencha todos os campos.'); 
+        return; 
+    }
 
     const btn = document.getElementById('btn-cadastrar');
-    const orig = btn.textContent; btn.textContent = 'Criando...'; btn.disabled = true;
+    const orig = btn.textContent; 
+    btn.textContent = 'Criando...'; 
+    btn.disabled = true;
+    
     try {
-        const res  = await fetch('/auth/registro', {
+        const res = await fetch('/auth/registro', {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ nome, email, senha })
         });
         const data = await res.json();
-        if (!res.ok) mostrarErroTela('cad-erro', mensagemErroAuth(data.erro, 'Falha no cadastro.'));
-        else { fecharAuth(); atualizarUILogado(data.usuario); }
-    } catch (e) { mostrarErroTela('cad-erro', 'Erro de conexão.'); }
-    finally { btn.textContent = orig; btn.disabled = false; }
+        if (!res.ok) {
+            mostrarErroTela('cad-erro', mensagemErroAuth(data.erro, 'Falha no cadastro.'));
+        } else { 
+            fecharAuth(); 
+            atualizarUILogado(data.usuario); 
+        }
+    } catch (e) { 
+        mostrarErroTela('cad-erro', 'Erro de conexão.'); 
+    } finally { 
+        btn.textContent = orig; 
+        btn.disabled = false; 
+    }
 }
 
 async function realizarLogout() {
-    try { await fetch('/auth/logout', { method: 'POST', credentials: 'include' }); }
-    catch (e) { console.warn('Logout falhou:', e); }
+    try { 
+        await fetch('/auth/logout', { method: 'POST', credentials: 'include' }); 
+    } catch (e) { 
+        console.warn('Logout falhou:', e); 
+    }
     atualizarUIVisitante();
     resetarChat();
 }
 
 async function enviarCodigoRecuperacao() {
     const email = document.getElementById('esq-email')?.value.trim();
-    if (!email) { mostrarErroTela('esq-erro', 'Digite seu e-mail.'); return; }
+    if (!email) { 
+        mostrarErroTela('esq-erro', 'Digite seu e-mail.'); 
+        return; 
+    }
+    
     mostrarErroTela('esq-erro', '');
     try {
-        const res  = await fetch('/auth/esqueci-senha', {
+        const res = await fetch('/auth/esqueci-senha', {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email })
         });
         const data = await res.json();
-        if (!res.ok) mostrarErroTela('esq-erro', mensagemErroAuth(data.erro, 'Não foi possível enviar o código.'));
-        else {
+        if (!res.ok) {
+            mostrarErroTela('esq-erro', mensagemErroAuth(data.erro, 'Não foi possível enviar o código.'));
+        } else {
             emailRecuperacao = email;
             const label = document.getElementById('cod-label');
             if (label) label.textContent = `Código enviado para ${email}`;
             mostrarTela('tela-codigo');
         }
-    } catch (e) { mostrarErroTela('esq-erro', 'Erro de conexão.'); }
+    } catch (e) { 
+        mostrarErroTela('esq-erro', 'Erro de conexão.'); 
+    }
 }
 
 async function alterarSenha() {
-    const codigo    = document.getElementById('cod-input')?.value.trim();
+    const codigo = document.getElementById('cod-input')?.value.trim();
     const novaSenha = document.getElementById('cod-nova-senha')?.value;
-    if (!codigo || !novaSenha) { mostrarErroTela('cod-erro', 'Preencha o código e a nova senha.'); return; }
+    if (!codigo || !novaSenha) { 
+        mostrarErroTela('cod-erro', 'Preencha o código e a nova senha.'); 
+        return; 
+    }
+    
     try {
-        const res  = await fetch('/auth/mudar-senha', {
+        const res = await fetch('/auth/mudar-senha', {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: emailRecuperacao, codigo, nova_senha: novaSenha })
         });
         const data = await res.json();
-        if (!res.ok) mostrarErroTela('cod-erro', mensagemErroAuth(data.erro, 'Código inválido.'));
-        else { alert('✅ Senha alterada! Faça login.'); mostrarTela('tela-login'); }
-    } catch (e) { mostrarErroTela('cod-erro', 'Erro de conexão.'); }
+        if (!res.ok) {
+            mostrarErroTela('cod-erro', mensagemErroAuth(data.erro, 'Código inválido.'));
+        } else { 
+            alert('✅ Senha alterada! Faça login.'); 
+            mostrarTela('tela-login'); 
+        }
+    } catch (e) { 
+        mostrarErroTela('cod-erro', 'Erro de conexão.'); 
+    }
 }
 
 /* ── HISTÓRICO DE CONVERSAS ───────────────────────────────────── */
@@ -447,7 +538,11 @@ async function carregarHistorico() {
     if (!container) return;
     try {
         const res = await fetch('/chat/conversas', { credentials: 'include' });
-        if (!res.ok) { container.innerHTML = '<p class="sidebar-hint">Erro ao carregar o histórico.</p>'; return; }
+        if (!res.ok) { 
+            container.innerHTML = '<p class="sidebar-hint">Erro ao carregar o histórico.</p>'; 
+            return; 
+        }
+        
         const { conversas } = await res.json();
         container.innerHTML = '';
 
@@ -459,35 +554,59 @@ async function carregarHistorico() {
         conversas.forEach(c => {
             const item = document.createElement('div');
             item.className = `chat-item ${idConversaAtiva === c.id_conversa ? 'active' : ''} ${c.fixada ? 'fixada' : ''}`;
-            const tituloSafe = (c.titulo || 'Conversa').replace(/'/g, "\\'").replace(/"/g, '\\"');
+            const tituloOriginal = c.titulo || 'Conversa';
 
             item.innerHTML = `
-                <span class="chat-titulo">${c.titulo || 'Conversa'}</span>
+                <span class="chat-titulo">${tituloOriginal}</span>
                 <div class="chat-options-wrapper">
                     <button class="btn-chat-options" type="button">⋮</button>
                     <div class="chat-options-menu">
-                        <button class="chat-option-btn" data-acao="fixar">📌 ${c.fixada ? 'Desafixar' : 'Fixar'}</button>
-                        <button class="chat-option-btn" data-acao="renomear">✏️ Renomear</button>
-                        <button class="chat-option-btn" style="color:#f87171;" data-acao="excluir">🗑️ Excluir</button>
+                        <button class="chat-option-btn" data-acao="fixar">
+                            <img src="/img/pin.png" class="menu-icon">
+                            <span>${c.fixada ? 'Desafixar' : 'Fixar'}</span>
+                        </button>
+                        <button class="chat-option-btn" data-acao="renomear">
+                            <img src="/img/escrever.png" class="menu-icon">
+                            <span>Renomear</span>
+                        </button>
+                        <button class="chat-option-btn excluir" data-acao="excluir">
+                            <img src="/img/lixo.png" class="menu-icon">
+                            <span>Excluir</span>
+                        </button>
                     </div>
                 </div>`;
 
-            item.querySelector('.chat-titulo').addEventListener('click', () => ativarConversa(c.id_conversa, c.titulo));
+            item.querySelector('.chat-titulo').addEventListener('click', () => ativarConversa(c.id_conversa, tituloOriginal));
 
             item.querySelector('.btn-chat-options').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const menu = item.querySelector('.chat-options-menu');
-                document.querySelectorAll('.chat-options-menu').forEach(m => { if (m !== menu) m.classList.remove('ativo'); });
+                document.querySelectorAll('.chat-options-menu').forEach(m => { 
+                    if (m !== menu) m.classList.remove('ativo'); 
+                });
                 menu.classList.toggle('ativo');
             });
 
-            item.querySelector('[data-acao="fixar"]').addEventListener('click', (e) => { e.stopPropagation(); acaoFixar(c.id_conversa, !c.fixada); });
-            item.querySelector('[data-acao="renomear"]').addEventListener('click', (e) => { e.stopPropagation(); acaoRenomear(c.id_conversa, tituloSafe); });
-            item.querySelector('[data-acao="excluir"]').addEventListener('click', (e) => { e.stopPropagation(); acaoExcluir(c.id_conversa); });
+            item.querySelector('[data-acao="fixar"]').addEventListener('click', (e) => { 
+                e.stopPropagation(); 
+                acaoFixar(c.id_conversa, !c.fixada); 
+            });
+            
+            item.querySelector('[data-acao="renomear"]').addEventListener('click', (e) => { 
+                e.stopPropagation(); 
+                acaoRenomear(c.id_conversa, tituloOriginal); // Passando a string diretamente sem escapes prejudiciais
+            });
+            
+            item.querySelector('[data-acao="excluir"]').addEventListener('click', (e) => { 
+                e.stopPropagation(); 
+                acaoExcluir(c.id_conversa); 
+            });
 
             container.appendChild(item);
         });
-    } catch (e) { console.error('Histórico:', e); }
+    } catch (e) { 
+        console.error('Histórico:', e); 
+    }
 }
 
 function fecharChatOptionsMenu() {
@@ -514,7 +633,10 @@ function acaoRenomear(id, tituloAtual) {
 
 async function salvarRenomear() {
     const novo = document.getElementById('rename-input')?.value.trim();
-    if (!novo || !idConversaRenomear) { fecharAuth(); return; }
+    if (!novo || !idConversaRenomear) { 
+        fecharAuth(); 
+        return; 
+    }
     await fetch(`/chat/conversas/${idConversaRenomear}`, {
         method: 'PUT', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -531,11 +653,17 @@ function acaoExcluir(id) {
 }
 
 async function confirmarExcluir() {
-    if (!idConversaExcluir) { fecharAuth(); return; }
+    if (!idConversaExcluir) { 
+        fecharAuth(); 
+        return; 
+    }
     await fetch(`/chat/conversas/${idConversaExcluir}`, { method: 'DELETE', credentials: 'include' });
     fecharAuth();
-    if (idConversaAtiva === idConversaExcluir) resetarChat();
-    else carregarHistorico();
+    if (idConversaAtiva === idConversaExcluir) {
+        resetarChat();
+    } else {
+        carregarHistorico();
+    }
     idConversaExcluir = null;
 }
 
@@ -543,20 +671,32 @@ async function pesquisarConversas(termo) {
     const resultados = document.getElementById('pesquisa-resultados');
     if (!resultados) return;
     resultados.innerHTML = '';
+    
     if (!termo.trim()) return;
+    
     try {
         const res = await fetch('/chat/conversas', { credentials: 'include' });
         const { conversas } = await res.json();
         const found = (conversas || []).filter(c => c.titulo?.toLowerCase().includes(termo.toLowerCase()));
-        if (!found.length) { resultados.innerHTML = '<p class="sidebar-hint">Nenhuma conversa encontrada.</p>'; return; }
+        
+        if (!found.length) { 
+            resultados.innerHTML = '<p class="sidebar-hint">Nenhuma conversa encontrada.</p>'; 
+            return; 
+        }
+        
         found.forEach(c => {
             const item = document.createElement('div');
             item.className = 'chat-item';
             item.textContent = c.titulo || 'Sem título';
-            item.addEventListener('click', () => { ativarConversa(c.id_conversa, c.titulo); fecharAuth(); });
+            item.addEventListener('click', () => { 
+                ativarConversa(c.id_conversa, c.titulo); 
+                fecharAuth(); 
+            });
             resultados.appendChild(item);
         });
-    } catch (e) { console.error('Pesquisa:', e); }
+    } catch (e) { 
+        console.error('Pesquisa:', e); 
+    }
 }
 
 /* ── MENSAGENS (bolhas em #msgs) ──────────────────────────────── */
@@ -567,8 +707,6 @@ function mostrarWelcome(mostrar) {
     if (chatbox) chatbox.classList.toggle('has-messages', !mostrar);
 }
 
-/* Botão de copiar — usado tanto na bolha do usuário quanto na da Iana.
-   Recebe uma função () => texto pra sempre pegar o conteúdo mais atual. */
 function criarBotaoCopiar(getTexto) {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -581,13 +719,11 @@ function criarBotaoCopiar(getTexto) {
             const original = btn.innerHTML;
             btn.innerHTML = '✅';
             setTimeout(() => { btn.innerHTML = original; }, 1200);
-        }).catch(() => {});
+        }).catch(() => { });
     });
     return btn;
 }
 
-/* Botão de editar — só faz sentido nas mensagens do usuário: joga o
-   texto de volta pro campo de digitação. */
 function criarBotaoEditar(texto) {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -605,29 +741,31 @@ function criarBotaoEditar(texto) {
     return btn;
 }
 
-/* Aplica o "clamp" de 3 linhas na bolha e, SE o conteúdo realmente
-   ultrapassar isso, adiciona um botão de Expandir/Recolher na linha
-   de ações. Se o texto for curto, não faz nada (sem botão desnecessário). */
 function configurarExpandir(bubble, linhaAcoes) {
     bubble.classList.add('msg-clamped');
-    // Precisa já estar no DOM pra scrollHeight/clientHeight serem confiáveis.
-    const ultrapassou = bubble.scrollHeight > bubble.clientHeight + 1;
-    if (!ultrapassou) {
-        bubble.classList.remove('msg-clamped');
-        return;
-    }
+    
+    // Pequeno timeout para garantir que o DOM processou a altura corretamente
+    setTimeout(() => {
+        const ultrapassou = bubble.scrollHeight > bubble.clientHeight + 1;
+        if (!ultrapassou) {
+            bubble.classList.remove('msg-clamped');
+            return;
+        }
 
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'msg-expand-btn';
-    btn.textContent = '▼ Expandir';
-    let expandido = false;
-    btn.addEventListener('click', () => {
-        expandido = !expandido;
-        bubble.classList.toggle('msg-clamped', !expandido);
-        btn.textContent = expandido ? '▲ Recolher' : '▼ Expandir';
-    });
-    linhaAcoes.appendChild(btn);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'msg-expand-btn';
+        btn.textContent = '▼ Expandir';
+        let expandido = false;
+        
+        btn.addEventListener('click', () => {
+            expandido = !expandido;
+            bubble.classList.toggle('msg-clamped', !expandido);
+            btn.textContent = expandido ? '▲ Recolher' : '▼ Expandir';
+        });
+        
+        linhaAcoes.appendChild(btn);
+    }, 50);
 }
 
 function adicionarBolhaUsuario(texto) {
@@ -697,7 +835,10 @@ function adicionarRespostaIA(texto) {
     configurarExpandir(bubble, acoes);
     scrollParaFim();
 
-    if (ttsNextResponse) { falar(texto); ttsNextResponse = false; }
+    if (ttsNextResponse) { 
+        falar(texto); 
+        ttsNextResponse = false; 
+    }
 }
 
 function scrollParaFim() {
@@ -705,9 +846,6 @@ function scrollParaFim() {
     if (chatbox) chatbox.scrollTop = chatbox.scrollHeight;
 }
 
-/* FIX: essas duas funções eram chamadas em processarEnvioIA() mas nunca
-   tinham sido definidas nesse arquivo — o "ReferenceError" travava o
-   envio antes mesmo do fetch. Agora usam a "thinking-bubble" (ver CSS). */
 function mostrarTypingIndicator() {
     const msgs = document.getElementById('msgs');
     if (!msgs) return;
@@ -754,10 +892,14 @@ async function processarEnvioIA(conteudo) {
 
     const sendBtn = document.getElementById('btn-send');
     const stopBtn = document.getElementById('btn-stop');
-    const input   = document.getElementById('chat-input');
+    const input = document.getElementById('chat-input');
+    
     if (sendBtn) sendBtn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = 'flex';
-    if (input) { input.disabled = true; input.placeholder = 'Iana está pensando...'; }
+    if (input) { 
+        input.disabled = true; 
+        input.placeholder = 'Iana está pensando...'; 
+    }
 
     controller = new AbortController();
 
@@ -769,6 +911,7 @@ async function processarEnvioIA(conteudo) {
             body: JSON.stringify({
                 mensagem: conteudo,
                 idConversa: idConversaAtiva,
+                configPrompt: montarConfigPrompt(),
                 estadoEmocional: typeof detectarEstadoEmocional === 'function' ? detectarEstadoEmocional(conteudo) : undefined
             }),
             signal: controller.signal
@@ -780,6 +923,7 @@ async function processarEnvioIA(conteudo) {
         }
 
         const data = await res.json();
+        
         if (data.idConversa && !idConversaAtiva) {
             idConversaAtiva = data.idConversa;
             if (usuarioAtual) carregarHistorico();
@@ -798,20 +942,29 @@ async function processarEnvioIA(conteudo) {
         aguardandoResposta = false;
         if (sendBtn) sendBtn.style.display = 'flex';
         if (stopBtn) stopBtn.style.display = 'none';
-        if (input) { input.disabled = false; input.placeholder = 'Peça à Iana...'; }
+        if (input) { 
+            input.disabled = false; 
+            input.placeholder = 'Peça à Iana...'; 
+            input.focus();
+        }
     }
 }
 
 function pararRespostaIA() {
-    try { controller.abort(); } catch (e) {}
+    try { controller.abort(); } catch (e) { }
     aguardandoResposta = false;
     esconderTypingIndicator();
+    
     const sendBtn = document.getElementById('btn-send');
     const stopBtn = document.getElementById('btn-stop');
-    const input   = document.getElementById('chat-input');
+    const input = document.getElementById('chat-input');
+    
     if (sendBtn) sendBtn.style.display = 'flex';
     if (stopBtn) stopBtn.style.display = 'none';
-    if (input) { input.disabled = false; input.placeholder = 'Peça à Iana...'; }
+    if (input) { 
+        input.disabled = false; 
+        input.placeholder = 'Peça à Iana...'; 
+    }
 }
 
 /* ── CONVERSAS ────────────────────────────────────────────────── */
@@ -830,6 +983,7 @@ async function ativarConversa(id, titulo) {
             msgs.innerHTML = '<p class="sidebar-hint">Não consegui carregar esta conversa.</p>';
             return;
         }
+        
         const { mensagens } = await res.json();
         if (!mensagens?.length) {
             msgs.innerHTML = '<p class="sidebar-hint">Esta conversa ainda não tem mensagens.</p>';
@@ -840,7 +994,9 @@ async function ativarConversa(id, titulo) {
             });
         }
         scrollParaFim();
-    } catch (e) { console.error('Erro ao carregar histórico:', e); }
+    } catch (e) { 
+        console.error('Erro ao carregar histórico:', e); 
+    }
 }
 
 function resetarChat() {
@@ -853,15 +1009,19 @@ function resetarChat() {
 
 /* ── FEEDBACK ─────────────────────────────────────────────────── */
 async function enviarFeedback() {
-    const assunto  = document.getElementById('fb-assunto')?.value.trim();
-    const texto    = document.getElementById('fb-texto')?.value.trim();
+    const assunto = document.getElementById('fb-assunto')?.value.trim();
+    const texto = document.getElementById('fb-texto')?.value.trim();
     const autoriza = document.getElementById('fb-autoriza')?.checked;
-    const btn      = document.getElementById('btn-fb-enviar');
+    const btn = document.getElementById('btn-fb-enviar');
+    
     if (!assunto) { alert('Preencha o assunto.'); return; }
-    if (!texto)   { alert('Descreva seu feedback.'); return; }
-    if (!autoriza){ alert('Marque a autorização de uso.'); return; }
+    if (!texto) { alert('Descreva seu feedback.'); return; }
+    if (!autoriza) { alert('Marque a autorização de uso.'); return; }
 
-    const orig = btn.textContent; btn.textContent = 'Enviando...'; btn.disabled = true;
+    const orig = btn.textContent; 
+    btn.textContent = 'Enviando...'; 
+    btn.disabled = true;
+    
     try {
         const body = {
             _subject: `[Iana Feedback] ${assunto}`,
@@ -871,20 +1031,27 @@ async function enviarFeedback() {
             _template: 'box',
             _captcha: 'false'
         };
-        const res = await fetch('https://formsubmit.co/ajax/SEU_EMAIL_AQUI', {
+        const res = await fetch('https://formsubmit.co/ajax/SEU_EMAIL_AQUI', { // Substitua pelo seu email válido se for usar em prod
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             body: JSON.stringify(body)
         });
+        
         if (res.ok) {
             alert('✅ Feedback enviado! Obrigado.');
             fecharAuth();
             document.getElementById('fb-assunto').value = '';
             document.getElementById('fb-texto').value = '';
             document.getElementById('fb-autoriza').checked = false;
-        } else alert('Erro ao enviar feedback.');
-    } catch (e) { alert('Erro de conexão.'); }
-    finally { btn.textContent = orig; btn.disabled = false; }
+        } else {
+            alert('Erro ao enviar feedback.');
+        }
+    } catch (e) { 
+        alert('Erro de conexão.'); 
+    } finally { 
+        btn.textContent = orig; 
+        btn.disabled = false; 
+    }
 }
 
 /* ── INICIALIZAÇÃO ────────────────────────────────────────────── */
@@ -902,10 +1069,18 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-buscar')?.addEventListener('click', () => mostrarTela('tela-pesquisa'));
 
     // Menu do usuário (footer da sidebar)
-    const btnMenu  = document.getElementById('btn-user-menu');
+    const btnMenu = document.getElementById('btn-user-menu');
     const dropdown = document.getElementById('user-dropdown');
-    btnMenu?.addEventListener('click', (e) => { e.stopPropagation(); dropdown?.classList.toggle('aberto'); });
-    document.addEventListener('click', () => { dropdown?.classList.remove('aberto'); fecharChatOptionsMenu(); });
+    
+    btnMenu?.addEventListener('click', (e) => { 
+        e.stopPropagation(); 
+        dropdown?.classList.toggle('aberto'); 
+    });
+    
+    document.addEventListener('click', () => { 
+        dropdown?.classList.remove('aberto'); 
+        fecharChatOptionsMenu(); 
+    });
 
     document.getElementById('dd-config')?.addEventListener('click', () => { window.location.href = '/configuracoes'; });
     document.getElementById('dd-feedback')?.addEventListener('click', () => { dropdown?.classList.remove('aberto'); mostrarTela('tela-feedback'); });
@@ -945,8 +1120,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const textarea = document.getElementById('chat-input');
     textarea?.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMensagem(); }
+        if (e.key === 'Enter' && !e.shiftKey) { 
+            e.preventDefault(); 
+            enviarMensagem(); 
+        }
     });
+    
     textarea?.addEventListener('input', function () {
         this.style.height = 'auto';
         this.style.height = this.scrollHeight + 'px';
@@ -954,7 +1133,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 /* Expor globalmente para os onclick inline do HTML */
-window.mostrarTela     = mostrarTela;
-window.fecharAuth      = fecharAuth;
-window.fecharCamera    = fecharCamera;
-window.usarSugestao    = usarSugestao;
+window.mostrarTela = mostrarTela;
+window.fecharAuth = fecharAuth;
+window.fecharCamera = fecharCamera;
+window.usarSugestao = usarSugestao;

@@ -1399,3 +1399,51 @@ main {
         padding: 10px 14px;
     }
 }
+
+.btn-chat-options{
+    width:34px;
+    height:34px;
+    border:none;
+    background:transparent;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+}
+
+.menu-icon-menu{
+    width:18px;
+    height:18px;
+    object-fit:contain;
+}
+
+.chat-option-btn{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    width:100%;
+    border:none;
+    background:transparent;
+    color:#fff;
+    padding:10px 14px;
+    cursor:pointer;
+    transition:.2s;
+}
+
+.chat-option-btn:hover{
+    background:#2f2f39;
+}
+
+.menu-icon{
+    width:18px;
+    height:18px;
+    object-fit:contain;
+}
+
+.chat-option-btn.excluir{
+    color:#ff5b5b;
+}
+
+.chat-option-btn.excluir:hover{
+    background:#401b1b;
+}

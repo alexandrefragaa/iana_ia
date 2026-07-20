@@ -1455,11 +1455,17 @@ main {
 }
 
 /* A "Box" do menu flutuante posicionado PARA FORA (à direita do botão) */
+/* FIX: antes era position:absolute dentro de um container com
+   overflow-y:auto (.sidebar-historico). O CSS tem uma regra pouco
+   conhecida: se overflow-y não é 'visible' mas overflow-x é, o
+   navegador FORÇA overflow-x pra 'auto' também — então o
+   "overflow-x: visible !important" mais abaixo nunca tinha efeito de
+   verdade, e o menu continuava sendo cortado/escondido pela barra
+   lateral. Agora o menu usa position:fixed (calculado via JS a partir
+   da posição real do botão ⋮), então ele não fica mais contido/cortado
+   por nenhum ancestral com scroll. */
 .chat-options-menu {
-    position: absolute;
-    top: 50%;
-    left: calc(100% + 8px); /* Posiciona perfeitamente fora do item, à direita */
-    transform: translateY(-50%) scale(0.95);
+    position: fixed;
     background: #141418;
     border: 1px solid rgba(168, 85, 247, 0.25);
     border-radius: 12px;
@@ -1470,14 +1476,16 @@ main {
     z-index: 999999;
     min-width: 140px;
     opacity: 0;
-    transition: opacity 0.2s ease, transform 0.2s ease;
+    transform: scale(0.95);
+    transform-origin: top left;
+    transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 /* Classe ativada via JS para exibir o menu com transição suave */
 .chat-options-menu.ativo {
     display: flex;
     opacity: 1;
-    transform: translateY(-50%) scale(1);
+    transform: scale(1);
 }
 
 /* Botões internos do menu (Fixar, Renomear, Excluir) */

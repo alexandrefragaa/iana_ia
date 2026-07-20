@@ -594,13 +594,18 @@ async function carregarHistorico() {
 
             item.querySelector('.btn-chat-options').addEventListener('click', (e) => {
                 e.stopPropagation();
+                const btn = e.currentTarget;
                 const menu = item.querySelector('.chat-options-menu');
                 const isOpen = menu.classList.contains('ativo');
 
                 // Fecha todos os outros menus abertos no histórico
-                document.querySelectorAll('.chat-options-menu').forEach(m => m.classList.remove('ativo'));
+                fecharChatOptionsMenu();
 
                 if (!isOpen) {
+                    // FIX: como o menu agora é position:fixed, a posição
+                    // precisa ser calculada em relação à janela (viewport),
+                    // não mais herdada do CSS relativo ao item.
+                    posicionarChatOptionsMenu(btn, menu);
                     menu.classList.add('ativo');
                 }
             });
@@ -630,6 +635,31 @@ async function carregarHistorico() {
 function fecharChatOptionsMenu() {
     document.querySelectorAll('.chat-options-menu').forEach(m => m.classList.remove('ativo'));
 }
+
+// FIX: menu agora é position:fixed (ver styles.css), então precisa da
+// posição calculada em px reais a partir do botão ⋮. Se não couber à
+// direita (sidebar perto da borda da tela), cai pra esquerda do botão.
+function posicionarChatOptionsMenu(btn, menu) {
+    const rectBtn = btn.getBoundingClientRect();
+    const larguraMenu = menu.offsetWidth || 140;
+    const alturaMenu = menu.offsetHeight || 120;
+
+    let left = rectBtn.right + 8;
+    if (left + larguraMenu > window.innerWidth - 8) {
+        left = rectBtn.left - larguraMenu - 8;
+    }
+
+    let top = rectBtn.top + rectBtn.height / 2 - alturaMenu / 2;
+    top = Math.max(8, Math.min(top, window.innerHeight - alturaMenu - 8));
+
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+}
+
+// Fecha o menu se a lista rolar ou a janela for redimensionada, pra
+// não deixar um menu "flutuando" desalinhado do botão que o abriu.
+document.getElementById('historico-lista')?.addEventListener('scroll', fecharChatOptionsMenu, { passive: true });
+window.addEventListener('resize', fecharChatOptionsMenu);
 
 async function acaoFixar(id, fixar) {
     fecharChatOptionsMenu();

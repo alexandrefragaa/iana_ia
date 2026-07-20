@@ -29,8 +29,8 @@ const TELAS = [
 ];
 
 /* ── UTILS ────────────────────────────────────────────────────── */
-function sleep(ms) { 
-    return new Promise(r => setTimeout(r, ms)); 
+function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
 }
 
 function sanitizarHTML(html) {
@@ -41,10 +41,10 @@ function sanitizarHTML(html) {
 const CONFIG_KEY = 'iana_config';
 
 function obterConfigSalva() {
-    try { 
-        return JSON.parse(localStorage.getItem(CONFIG_KEY)) || {}; 
-    } catch { 
-        return {}; 
+    try {
+        return JSON.parse(localStorage.getItem(CONFIG_KEY)) || {};
+    } catch {
+        return {};
     }
 }
 
@@ -97,8 +97,8 @@ function falar(texto) {
         ut.pitch = 1.05;
         speechSynthesis.cancel();
         speechSynthesis.speak(ut);
-    } catch (e) { 
-        console.warn('TTS falhou:', e); 
+    } catch (e) {
+        console.warn('TTS falhou:', e);
     }
 }
 
@@ -134,9 +134,9 @@ async function abrirCamera() {
 
 function fecharCamera() {
     const overlay = document.getElementById('overlay-camera');
-    if (streamCamera) { 
-        streamCamera.getTracks().forEach(t => t.stop()); 
-        streamCamera = null; 
+    if (streamCamera) {
+        streamCamera.getTracks().forEach(t => t.stop());
+        streamCamera = null;
     }
     if (overlay) overlay.style.display = 'none';
 }
@@ -165,12 +165,12 @@ function abrirVoz() {
 function fecharVoz() {
     const overlay = document.getElementById('overlay-voz');
     if (overlay) overlay.style.display = 'none';
-    if (window._recognitionVoz) { 
-        try { window._recognitionVoz.stop(); } catch (e) { } 
+    if (window._recognitionVoz) {
+        try { window._recognitionVoz.stop(); } catch (e) { }
     }
-    if (streamVoz) { 
-        streamVoz.getTracks().forEach(t => t.stop()); 
-        streamVoz = null; 
+    if (streamVoz) {
+        streamVoz.getTracks().forEach(t => t.stop());
+        streamVoz = null;
     }
 }
 
@@ -178,12 +178,12 @@ function iniciarReconhecimentoVoz() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const statusEl = document.getElementById('voz-status');
     const transcriptEl = document.getElementById('voz-transcript');
-    
+
     if (!SpeechRecognition) {
         if (statusEl) statusEl.textContent = 'Reconhecimento de voz não suportado neste navegador.';
         return;
     }
-    
+
     const rec = new SpeechRecognition();
     rec.lang = 'pt-BR';
     rec.continuous = true;
@@ -205,11 +205,11 @@ function iniciarReconhecimentoVoz() {
             });
         }
     };
-    
-    rec.onerror = () => { 
-        if (statusEl) statusEl.textContent = 'Erro ao ouvir. Tente novamente.'; 
+
+    rec.onerror = () => {
+        if (statusEl) statusEl.textContent = 'Erro ao ouvir. Tente novamente.';
     };
-    
+
     rec.start();
 }
 
@@ -240,15 +240,15 @@ function iniciarMenuUpload() {
         menu.style.display = (menu.style.display === 'flex') ? 'none' : 'flex';
     });
 
-    document.addEventListener('click', () => { 
-        menu.style.display = 'none'; 
+    document.addEventListener('click', () => {
+        menu.style.display = 'none';
     });
-    
+
     menu.addEventListener('click', (e) => e.stopPropagation());
 
-    document.getElementById('up-foto')?.addEventListener('click', () => { 
-        menu.style.display = 'none'; 
-        abrirCamera(); 
+    document.getElementById('up-foto')?.addEventListener('click', () => {
+        menu.style.display = 'none';
+        abrirCamera();
     });
 
     document.getElementById('up-imagem')?.addEventListener('click', () => {
@@ -266,16 +266,16 @@ function iniciarMenuUpload() {
         if (fileInput) { fileInput.accept = 'audio/*'; fileInput.click(); }
     });
 
-    document.getElementById('up-tela')?.addEventListener('click', () => { 
-        menu.style.display = 'none'; 
-        compartilharTela(); 
+    document.getElementById('up-tela')?.addEventListener('click', () => {
+        menu.style.display = 'none';
+        compartilharTela();
     });
 }
 
 function iniciarUpload() {
     const fileInput = document.getElementById('file-input');
     if (!fileInput) return;
-    
+
     fileInput.addEventListener('change', async () => {
         const file = fileInput.files?.[0];
         if (!file) return;
@@ -353,8 +353,8 @@ async function verificarSessao() {
         } else {
             atualizarUIVisitante();
         }
-    } catch (e) { 
-        atualizarUIVisitante(); 
+    } catch (e) {
+        atualizarUIVisitante();
     }
 }
 
@@ -401,16 +401,16 @@ function mostrarErroTela(id, msg) {
 async function realizarLogin() {
     const email = document.getElementById('login-email')?.value.trim();
     const senha = document.getElementById('login-senha')?.value;
-    if (!email || !senha) { 
-        mostrarErroTela('login-erro', 'Preencha e-mail e senha.'); 
-        return; 
+    if (!email || !senha) {
+        mostrarErroTela('login-erro', 'Preencha e-mail e senha.');
+        return;
     }
 
     const btn = document.getElementById('btn-login');
-    const orig = btn.textContent; 
-    btn.textContent = 'Entrando...'; 
+    const orig = btn.textContent;
+    btn.textContent = 'Entrando...';
     btn.disabled = true;
-    
+
     try {
         const res = await fetch('/auth/login', {
             method: 'POST', credentials: 'include',
@@ -420,15 +420,15 @@ async function realizarLogin() {
         const data = await res.json();
         if (!res.ok) {
             mostrarErroTela('login-erro', mensagemErroAuth(data.erro, 'Falha no login.'));
-        } else { 
-            fecharAuth(); 
-            atualizarUILogado(data.usuario); 
+        } else {
+            fecharAuth();
+            atualizarUILogado(data.usuario);
         }
-    } catch (e) { 
-        mostrarErroTela('login-erro', 'Erro de conexão.'); 
-    } finally { 
-        btn.textContent = orig; 
-        btn.disabled = false; 
+    } catch (e) {
+        mostrarErroTela('login-erro', 'Erro de conexão.');
+    } finally {
+        btn.textContent = orig;
+        btn.disabled = false;
     }
 }
 
@@ -436,17 +436,17 @@ async function realizarCadastro() {
     const nome = document.getElementById('cad-nome')?.value.trim();
     const email = document.getElementById('cad-email')?.value.trim();
     const senha = document.getElementById('cad-senha')?.value;
-    
-    if (!nome || !email || !senha) { 
-        mostrarErroTela('cad-erro', 'Preencha todos os campos.'); 
-        return; 
+
+    if (!nome || !email || !senha) {
+        mostrarErroTela('cad-erro', 'Preencha todos os campos.');
+        return;
     }
 
     const btn = document.getElementById('btn-cadastrar');
-    const orig = btn.textContent; 
-    btn.textContent = 'Criando...'; 
+    const orig = btn.textContent;
+    btn.textContent = 'Criando...';
     btn.disabled = true;
-    
+
     try {
         const res = await fetch('/auth/registro', {
             method: 'POST', credentials: 'include',
@@ -456,23 +456,23 @@ async function realizarCadastro() {
         const data = await res.json();
         if (!res.ok) {
             mostrarErroTela('cad-erro', mensagemErroAuth(data.erro, 'Falha no cadastro.'));
-        } else { 
-            fecharAuth(); 
-            atualizarUILogado(data.usuario); 
+        } else {
+            fecharAuth();
+            atualizarUILogado(data.usuario);
         }
-    } catch (e) { 
-        mostrarErroTela('cad-erro', 'Erro de conexão.'); 
-    } finally { 
-        btn.textContent = orig; 
-        btn.disabled = false; 
+    } catch (e) {
+        mostrarErroTela('cad-erro', 'Erro de conexão.');
+    } finally {
+        btn.textContent = orig;
+        btn.disabled = false;
     }
 }
 
 async function realizarLogout() {
-    try { 
-        await fetch('/auth/logout', { method: 'POST', credentials: 'include' }); 
-    } catch (e) { 
-        console.warn('Logout falhou:', e); 
+    try {
+        await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch (e) {
+        console.warn('Logout falhou:', e);
     }
     atualizarUIVisitante();
     resetarChat();
@@ -480,11 +480,11 @@ async function realizarLogout() {
 
 async function enviarCodigoRecuperacao() {
     const email = document.getElementById('esq-email')?.value.trim();
-    if (!email) { 
-        mostrarErroTela('esq-erro', 'Digite seu e-mail.'); 
-        return; 
+    if (!email) {
+        mostrarErroTela('esq-erro', 'Digite seu e-mail.');
+        return;
     }
-    
+
     mostrarErroTela('esq-erro', '');
     try {
         const res = await fetch('/auth/esqueci-senha', {
@@ -501,19 +501,19 @@ async function enviarCodigoRecuperacao() {
             if (label) label.textContent = `Código enviado para ${email}`;
             mostrarTela('tela-codigo');
         }
-    } catch (e) { 
-        mostrarErroTela('esq-erro', 'Erro de conexão.'); 
+    } catch (e) {
+        mostrarErroTela('esq-erro', 'Erro de conexão.');
     }
 }
 
 async function alterarSenha() {
     const codigo = document.getElementById('cod-input')?.value.trim();
     const novaSenha = document.getElementById('cod-nova-senha')?.value;
-    if (!codigo || !novaSenha) { 
-        mostrarErroTela('cod-erro', 'Preencha o código e a nova senha.'); 
-        return; 
+    if (!codigo || !novaSenha) {
+        mostrarErroTela('cod-erro', 'Preencha o código e a nova senha.');
+        return;
     }
-    
+
     try {
         const res = await fetch('/auth/mudar-senha', {
             method: 'POST', credentials: 'include',
@@ -523,12 +523,12 @@ async function alterarSenha() {
         const data = await res.json();
         if (!res.ok) {
             mostrarErroTela('cod-erro', mensagemErroAuth(data.erro, 'Código inválido.'));
-        } else { 
-            alert('✅ Senha alterada! Faça login.'); 
-            mostrarTela('tela-login'); 
+        } else {
+            alert('✅ Senha alterada! Faça login.');
+            mostrarTela('tela-login');
         }
-    } catch (e) { 
-        mostrarErroTela('cod-erro', 'Erro de conexão.'); 
+    } catch (e) {
+        mostrarErroTela('cod-erro', 'Erro de conexão.');
     }
 }
 
@@ -538,11 +538,11 @@ async function carregarHistorico() {
     if (!container) return;
     try {
         const res = await fetch('/chat/conversas', { credentials: 'include' });
-        if (!res.ok) { 
-            container.innerHTML = '<p class="sidebar-hint">Erro ao carregar o histórico.</p>'; 
-            return; 
+        if (!res.ok) {
+            container.innerHTML = '<p class="sidebar-hint">Erro ao carregar o histórico.</p>';
+            return;
         }
-        
+
         const { conversas } = await res.json();
         container.innerHTML = '';
 
@@ -581,31 +581,35 @@ async function carregarHistorico() {
             item.querySelector('.btn-chat-options').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const menu = item.querySelector('.chat-options-menu');
-                document.querySelectorAll('.chat-options-menu').forEach(m => { 
-                    if (m !== menu) m.classList.remove('ativo'); 
-                });
-                menu.classList.toggle('ativo');
+                const isOpen = menu.classList.contains('ativo');
+
+                // Fecha todos os outros menus abertos no histórico
+                document.querySelectorAll('.chat-options-menu').forEach(m => m.classList.remove('ativo'));
+
+                if (!isOpen) {
+                    menu.classList.add('ativo');
+                }
             });
 
-            item.querySelector('[data-acao="fixar"]').addEventListener('click', (e) => { 
-                e.stopPropagation(); 
-                acaoFixar(c.id_conversa, !c.fixada); 
+            item.querySelector('[data-acao="fixar"]').addEventListener('click', (e) => {
+                e.stopPropagation();
+                acaoFixar(c.id_conversa, !c.fixada);
             });
-            
-            item.querySelector('[data-acao="renomear"]').addEventListener('click', (e) => { 
-                e.stopPropagation(); 
+
+            item.querySelector('[data-acao="renomear"]').addEventListener('click', (e) => {
+                e.stopPropagation();
                 acaoRenomear(c.id_conversa, tituloOriginal); // Passando a string diretamente sem escapes prejudiciais
             });
-            
-            item.querySelector('[data-acao="excluir"]').addEventListener('click', (e) => { 
-                e.stopPropagation(); 
-                acaoExcluir(c.id_conversa); 
+
+            item.querySelector('[data-acao="excluir"]').addEventListener('click', (e) => {
+                e.stopPropagation();
+                acaoExcluir(c.id_conversa);
             });
 
             container.appendChild(item);
         });
-    } catch (e) { 
-        console.error('Histórico:', e); 
+    } catch (e) {
+        console.error('Histórico:', e);
     }
 }
 
@@ -633,9 +637,9 @@ function acaoRenomear(id, tituloAtual) {
 
 async function salvarRenomear() {
     const novo = document.getElementById('rename-input')?.value.trim();
-    if (!novo || !idConversaRenomear) { 
-        fecharAuth(); 
-        return; 
+    if (!novo || !idConversaRenomear) {
+        fecharAuth();
+        return;
     }
     await fetch(`/chat/conversas/${idConversaRenomear}`, {
         method: 'PUT', credentials: 'include',
@@ -653,9 +657,9 @@ function acaoExcluir(id) {
 }
 
 async function confirmarExcluir() {
-    if (!idConversaExcluir) { 
-        fecharAuth(); 
-        return; 
+    if (!idConversaExcluir) {
+        fecharAuth();
+        return;
     }
     await fetch(`/chat/conversas/${idConversaExcluir}`, { method: 'DELETE', credentials: 'include' });
     fecharAuth();
@@ -671,31 +675,31 @@ async function pesquisarConversas(termo) {
     const resultados = document.getElementById('pesquisa-resultados');
     if (!resultados) return;
     resultados.innerHTML = '';
-    
+
     if (!termo.trim()) return;
-    
+
     try {
         const res = await fetch('/chat/conversas', { credentials: 'include' });
         const { conversas } = await res.json();
         const found = (conversas || []).filter(c => c.titulo?.toLowerCase().includes(termo.toLowerCase()));
-        
-        if (!found.length) { 
-            resultados.innerHTML = '<p class="sidebar-hint">Nenhuma conversa encontrada.</p>'; 
-            return; 
+
+        if (!found.length) {
+            resultados.innerHTML = '<p class="sidebar-hint">Nenhuma conversa encontrada.</p>';
+            return;
         }
-        
+
         found.forEach(c => {
             const item = document.createElement('div');
             item.className = 'chat-item';
             item.textContent = c.titulo || 'Sem título';
-            item.addEventListener('click', () => { 
-                ativarConversa(c.id_conversa, c.titulo); 
-                fecharAuth(); 
+            item.addEventListener('click', () => {
+                ativarConversa(c.id_conversa, c.titulo);
+                fecharAuth();
             });
             resultados.appendChild(item);
         });
-    } catch (e) { 
-        console.error('Pesquisa:', e); 
+    } catch (e) {
+        console.error('Pesquisa:', e);
     }
 }
 
@@ -712,10 +716,10 @@ function criarBotaoCopiar(getTexto) {
     btn.type = 'button';
     btn.className = 'msg-action-btn';
     btn.title = 'Copiar';
-    
+
     // Atualizado para o nome exato da imagem: copia.png
     btn.innerHTML = '<img src="/img/copia.png" style="width:16px; filter:invert(.7);" alt="Copiar">';
-    
+
     btn.addEventListener('click', () => {
         const texto = getTexto();
         navigator.clipboard?.writeText(texto).then(() => {
@@ -732,10 +736,10 @@ function criarBotaoEditar(texto) {
     btn.type = 'button';
     btn.className = 'msg-action-btn';
     btn.title = 'Editar mensagem';
-    
+
     // Atualizado para usar lapis.png
     btn.innerHTML = '<img src="/img/lapis.png" style="width:16px; filter:invert(.7);" alt="Editar">';
-    
+
     btn.addEventListener('click', () => {
         const input = document.getElementById('chat-input');
         if (!input) return;
@@ -749,7 +753,7 @@ function criarBotaoEditar(texto) {
 
 function configurarExpandir(bubble, linhaAcoes) {
     bubble.classList.add('msg-clamped');
-    
+
     // Pequeno timeout para garantir que o DOM processou a altura corretamente
     setTimeout(() => {
         const ultrapassou = bubble.scrollHeight > bubble.clientHeight + 1;
@@ -763,13 +767,13 @@ function configurarExpandir(bubble, linhaAcoes) {
         btn.className = 'msg-expand-btn';
         btn.textContent = '▼ Expandir';
         let expandido = false;
-        
+
         btn.addEventListener('click', () => {
             expandido = !expandido;
             bubble.classList.toggle('msg-clamped', !expandido);
             btn.textContent = expandido ? '▲ Recolher' : '▼ Expandir';
         });
-        
+
         linhaAcoes.appendChild(btn);
     }, 50);
 }
@@ -841,9 +845,9 @@ function adicionarRespostaIA(texto) {
     configurarExpandir(bubble, acoes);
     scrollParaFim();
 
-    if (ttsNextResponse) { 
-        falar(texto); 
-        ttsNextResponse = false; 
+    if (ttsNextResponse) {
+        falar(texto);
+        ttsNextResponse = false;
     }
 }
 
@@ -899,12 +903,12 @@ async function processarEnvioIA(conteudo) {
     const sendBtn = document.getElementById('btn-send');
     const stopBtn = document.getElementById('btn-stop');
     const input = document.getElementById('chat-input');
-    
+
     if (sendBtn) sendBtn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = 'flex';
-    if (input) { 
-        input.disabled = true; 
-        input.placeholder = 'Iana está pensando...'; 
+    if (input) {
+        input.disabled = true;
+        input.placeholder = 'Iana está pensando...';
     }
 
     controller = new AbortController();
@@ -929,7 +933,7 @@ async function processarEnvioIA(conteudo) {
         }
 
         const data = await res.json();
-        
+
         if (data.idConversa && !idConversaAtiva) {
             idConversaAtiva = data.idConversa;
             if (usuarioAtual) carregarHistorico();
@@ -948,9 +952,9 @@ async function processarEnvioIA(conteudo) {
         aguardandoResposta = false;
         if (sendBtn) sendBtn.style.display = 'flex';
         if (stopBtn) stopBtn.style.display = 'none';
-        if (input) { 
-            input.disabled = false; 
-            input.placeholder = 'Peça à Iana...'; 
+        if (input) {
+            input.disabled = false;
+            input.placeholder = 'Peça à Iana...';
             input.focus();
         }
     }
@@ -960,16 +964,16 @@ function pararRespostaIA() {
     try { controller.abort(); } catch (e) { }
     aguardandoResposta = false;
     esconderTypingIndicator();
-    
+
     const sendBtn = document.getElementById('btn-send');
     const stopBtn = document.getElementById('btn-stop');
     const input = document.getElementById('chat-input');
-    
+
     if (sendBtn) sendBtn.style.display = 'flex';
     if (stopBtn) stopBtn.style.display = 'none';
-    if (input) { 
-        input.disabled = false; 
-        input.placeholder = 'Peça à Iana...'; 
+    if (input) {
+        input.disabled = false;
+        input.placeholder = 'Peça à Iana...';
     }
 }
 
@@ -989,7 +993,7 @@ async function ativarConversa(id, titulo) {
             msgs.innerHTML = '<p class="sidebar-hint">Não consegui carregar esta conversa.</p>';
             return;
         }
-        
+
         const { mensagens } = await res.json();
         if (!mensagens?.length) {
             msgs.innerHTML = '<p class="sidebar-hint">Esta conversa ainda não tem mensagens.</p>';
@@ -1000,8 +1004,8 @@ async function ativarConversa(id, titulo) {
             });
         }
         scrollParaFim();
-    } catch (e) { 
-        console.error('Erro ao carregar histórico:', e); 
+    } catch (e) {
+        console.error('Erro ao carregar histórico:', e);
     }
 }
 
@@ -1019,15 +1023,15 @@ async function enviarFeedback() {
     const texto = document.getElementById('fb-texto')?.value.trim();
     const autoriza = document.getElementById('fb-autoriza')?.checked;
     const btn = document.getElementById('btn-fb-enviar');
-    
+
     if (!assunto) { alert('Preencha o assunto.'); return; }
     if (!texto) { alert('Descreva seu feedback.'); return; }
     if (!autoriza) { alert('Marque a autorização de uso.'); return; }
 
-    const orig = btn.textContent; 
-    btn.textContent = 'Enviando...'; 
+    const orig = btn.textContent;
+    btn.textContent = 'Enviando...';
     btn.disabled = true;
-    
+
     try {
         const body = {
             _subject: `[Iana Feedback] ${assunto}`,
@@ -1042,7 +1046,7 @@ async function enviarFeedback() {
             headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             body: JSON.stringify(body)
         });
-        
+
         if (res.ok) {
             alert('✅ Feedback enviado! Obrigado.');
             fecharAuth();
@@ -1052,11 +1056,11 @@ async function enviarFeedback() {
         } else {
             alert('Erro ao enviar feedback.');
         }
-    } catch (e) { 
-        alert('Erro de conexão.'); 
-    } finally { 
-        btn.textContent = orig; 
-        btn.disabled = false; 
+    } catch (e) {
+        alert('Erro de conexão.');
+    } finally {
+        btn.textContent = orig;
+        btn.disabled = false;
     }
 }
 
@@ -1077,15 +1081,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // Menu do usuário (footer da sidebar)
     const btnMenu = document.getElementById('btn-user-menu');
     const dropdown = document.getElementById('user-dropdown');
-    
-    btnMenu?.addEventListener('click', (e) => { 
-        e.stopPropagation(); 
-        dropdown?.classList.toggle('aberto'); 
+
+    btnMenu?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown?.classList.toggle('aberto');
     });
-    
-    document.addEventListener('click', () => { 
-        dropdown?.classList.remove('aberto'); 
-        fecharChatOptionsMenu(); 
+
+    document.addEventListener('click', () => {
+        dropdown?.classList.remove('aberto');
+        fecharChatOptionsMenu();
     });
 
     document.getElementById('dd-config')?.addEventListener('click', () => { window.location.href = '/configuracoes'; });
@@ -1126,12 +1130,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const textarea = document.getElementById('chat-input');
     textarea?.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && !e.shiftKey) { 
-            e.preventDefault(); 
-            enviarMensagem(); 
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            enviarMensagem();
         }
     });
-    
+
     textarea?.addEventListener('input', function () {
         this.style.height = 'auto';
         this.style.height = this.scrollHeight + 'px';

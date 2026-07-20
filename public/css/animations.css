@@ -290,49 +290,24 @@
     overflow: hidden;
 }
 
-/* O ícone do menu padrão permanece visível e limpo */
+/* 1. ESTADO PADRÃO (Sem o mouse em cima): 
+   A imagem do menu fica visível, limpa e na posição normal */
 #sidebar-toggle img {
-    opacity: 1;
-    transform: translateX(0);
+    opacity: 0.85;
+    transform: scale(1) rotate(0deg);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* A setinha fica oculta por padrão */
-#sidebar-toggle::after {
-    content: '❮';
-    position: absolute;
-    right: 4px;
-    font-size: 12px;
-    font-weight: bold;
-    color: #22d3ee;
-    opacity: 0;
-    transform: translateX(8px);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    pointer-events: none;
-}
-
-/* 1. AO ENCOSTAR O MOUSE (Hover - Sidebar Aberta): O menu desliza levemente e a setinha de fechar aparece suavemente */
+/* 2. QUANDO ENCOSTA O MOUSE (Hover - Sidebar Aberta):
+   O ícone se espelha horizontalmente (scaleX(-1)), fazendo a setinha inverter e apontar para a esquerda para fechar/encurtar */
 #sidebar:not(.collapsed) #sidebar-toggle:hover img {
-    transform: translateX(-4px);
-    opacity: 0.7;
-}
-
-#sidebar:not(.collapsed) #sidebar-toggle:hover::after {
-    content: '❮';
     opacity: 1;
-    transform: translateX(0);
+    transform: scale(1.05) scaleX(-1);
 }
 
-/* 2. AO ENCOSTAR O MOUSE (Hover - Sidebar Fechada): Mostra a setinha indicando que vai abrir */
+/* 3. QUANDO A SIDEBAR ESTÁ FECHADA (Collapsed):
+   Quando o mouse encosta com ela fechada, ela mantém a posição original para indicar que vai abrir */
 .sidebar.collapsed #sidebar-toggle:hover img {
-    transform: translateX(4px);
-    opacity: 0.7;
-}
-
-.sidebar.collapsed #sidebar-toggle:hover::after {
-    content: '❯';
-    left: 4px;
-    right: auto;
     opacity: 1;
-    transform: translateX(0);
+    transform: scale(1.05) rotate(0deg);
 }

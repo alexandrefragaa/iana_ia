@@ -71,7 +71,10 @@
             </header>
 
             <div class="chatbox" id="chatbox">
-                <div class="welcome" id="welcome">
+                <div class="iana-label-container" id="iana-label">
+                    <span class="iana-label">Assistente de Games & Conquistas</span>
+                </div>
+                <div class="welcome welcome-container" id="welcome">
                     <div class="welcome-avatar-wrap">
                         <img src="/img/iana-avatar.png" class="welcome-avatar" alt="Iana">
                     </div>
@@ -93,10 +96,16 @@
                             Dicas</button>
                     </div>
                 </div>
+                <div class="thinking-container" id="thinking-view" style="display:none;">
+                    <div class="thinking-status">
+                        <span class="thinking-dot" id="thinking-view-dot"></span>
+                        <p id="thinking-view-texto">Pensando</p>
+                    </div>
+                </div>
                 <div class="msgs" id="msgs"></div>
             </div>
 
-            <div class="input-wrap">
+            <div class="input-wrap input-area-wrapper">
                 <div class="input-pill" id="input-pill">
                     <button class="pill-btn btn-mais" id="btn-mais" title="Anexar">
                         <img src="/img/mais.png" style="width:22px;filter:invert(.7);">
@@ -258,6 +267,7 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="/js/features.js"></script>
+    <script src="/js/animation-controller.js"></script>
     <script src="/js/chat.js"></script>
 </body>
 

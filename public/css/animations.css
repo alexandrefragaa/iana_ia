@@ -255,6 +255,19 @@
     color: rgba(255, 255, 255, 0.3);
 }
 
+/* FIX: a classe real do pill no HTML é .input-pill (o .search-pill acima
+   nunca existiu em nenhuma página — mantido só por retrocompatibilidade
+   caso algo externo dependa dele). Esta é a regra que realmente entra
+   em ação quando o animation-controller.js desabilita o input. */
+.input-pill.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.input-pill.disabled textarea {
+    color: rgba(255, 255, 255, 0.3);
+}
+
 /* ========== RESPONSIVO ========== */
 
 @media (max-width: 768px) {

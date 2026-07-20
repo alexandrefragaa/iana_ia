@@ -1,6 +1,5 @@
 import express from 'express';
 import session from 'express-session';
-import MySQLStore from 'express-mysql-session';
 import passport from 'passport';
 import { Strategy as LocalStrategy } from 'passport-local';
 import mysql from 'mysql2/promise';
@@ -19,39 +18,13 @@ dotenv.config();
 console.log('[DEBUG] ALLOWED_ORIGINS =', JSON.stringify(process.env.ALLOWED_ORIGINS));
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const app = express();
-const codigos = new Map();
+const __dirname  = path.dirname(__filename);
+const app        = express();
+const codigos    = new Map();
 
 if (!process.env.SESSION_SECRET) {
     console.error('❌ SESSION_SECRET não definido no .env'); process.exit(1);
 }
-
-/* ── MYSQL (Criado ANTES para o store da sessão usar) ────────────────── */
-const pool = mysql.createPool({
-    host: process.env.DB_HOST || 'mysql-7ddcebe.aivencloud.com',
-    port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 12788,
-    user: process.env.DB_USER || 'avnadmin',
-    password: process.env.DB_PASS || '',
-    database: process.env.DB_NAME || 'defaultdb',
-    waitForConnections: true,
-    connectionLimit: 10,
-    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined
-});
-
-(async () => {
-    try {
-        const conn = await pool.getConnection();
-        console.log(`✅ MySQL conectado: ${process.env.DB_NAME}`);
-        conn.release();
-    } catch (e) {
-        console.error('❌ MySQL erro:', e.message);
-    }
-})();
-
-// Configuração do Session Store no MySQL do Aiven (agora com o pool disponível)
-const MySQLStoreSession = MySQLStore(session);
-const sessionStore = new MySQLStoreSession({}, pool);
 
 /* ── MIDDLEWARES ──────────────────────────────────────────────── */
 app.use(express.json({ limit: '25mb' }));
@@ -69,10 +42,8 @@ app.use(cors({
 }));
 
 app.use(express.static(path.join(__dirname, 'public')));
-
 app.use(session({
     secret: process.env.SESSION_SECRET,
-    store: sessionStore, // Salva as sessões com segurança no Aiven
     resave: false,
     saveUninitialized: false,
     rolling: true,
@@ -83,10 +54,36 @@ app.use(session({
         sameSite: 'lax',
         maxAge: 7 * 24 * 60 * 60 * 1000
     }
+    // ATENÇÃO: sem "store" configurado, isto usa MemoryStore.
+    // Funciona para teste, mas em produção real no Render:
+    // - todo mundo é deslogado a cada deploy/restart
+    // - quebra se você escalar para mais de 1 instância
+    // Recomendo trocar por connect-mysql2/express-mysql-session usando o pool abaixo.
 }));
-
 app.use(passport.initialize());
 app.use(passport.session());
+
+/* ── MYSQL ────────────────────────────────────────────────────── */
+const pool = mysql.createPool({
+    host:     process.env.DB_HOST || 'mysql-7ddcebe.aivencloud.com',
+    port:     process.env.DB_PORT ? Number(process.env.DB_PORT) : 12788,
+    user:     process.env.DB_USER || 'avnadmin',
+    password: process.env.DB_PASS || '',
+    database: process.env.DB_NAME || 'defaultdb',
+    waitForConnections: true,
+    connectionLimit: 10,
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined
+});
+
+(async () => {
+    try {
+        const conn = await pool.getConnection();
+        console.log(`✅ MySQL conectado: ${process.env.DB_NAME}`);
+        conn.release();
+    } catch (e) {
+        console.error('❌ MySQL erro:', e.message);
+    }
+})();
 
 /* ── GEMINI ───────────────────────────────────────────────────── */
 let genAI = null;
@@ -100,6 +97,8 @@ try {
 } catch (e) { console.error('❌ Gemini erro:', e.message); }
 
 /* ── SENDGRID ─────────────────────────────────────────────────── */
+// Usa Single Sender Verification (settings.sendgrid.com > Sender Authentication),
+// que não exige domínio próprio — só verifica um e-mail comum (Gmail, etc.)
 let sendgridPronto = false;
 if (process.env.SENDGRID_API_KEY) {
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -112,8 +111,8 @@ if (process.env.SENDGRID_API_KEY) {
 function detectarHumor(texto) {
     if (!texto) return 'normal';
     const letras = (texto.match(/[A-Za-z]/g) || []).length;
-    const caps = (texto.match(/[A-Z]/g) || []).length;
-    const pct = letras > 0 ? (caps / letras) * 100 : 0;
+    const caps   = (texto.match(/[A-Z]/g) || []).length;
+    const pct    = letras > 0 ? (caps / letras) * 100 : 0;
     if (pct > 70 || /\*{4,}/.test(texto)) return 'raiva';
     if (/!{2,}|\?{2,}/.test(texto)) return 'estressado';
     return 'normal';
@@ -121,16 +120,16 @@ function detectarHumor(texto) {
 
 function instrucaoHumor(humor) {
     return {
-        raiva: 'O usuário está irritado. Responda com empatia, calma, sem ser seco.',
+        raiva:      'O usuário está irritado. Responda com empatia, calma, sem ser seco.',
         estressado: 'O usuário está estressado. Responda com leveza e tranquilidade.',
-        normal: ''
+        normal:     ''
     }[humor] || '';
 }
 
 const MODELOS = [
     process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
     'gemini-2.5-flash-lite',
-    'gemini-3.1-flash-lite',
+    'gemini-3.1-flash-lite', // substitui os 1.5 mortos
 ];
 
 async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
@@ -152,7 +151,7 @@ async function askGemini(mensagem, historico = [], instrucaoEmocional = '', conf
     if (!genAI) return null;
 
     const system = (process.env.SYSTEM_PROMPT ||
-        'Você é a Iana, assistente gamer animada, criativa, humanizada e solidária. Fala naturalmente, com personalidade, usa emojis quando cabe.')
+        'Você é a Iana, assistente gamer animada, criativa, humanizada e solidária. Fala naturalmente, com personalidade, usa emojis quando cabe. Especialista em jogos, platinas, conquistas, builds, itens, chefões e estratégias. Também fala sobre filmes, séries e cultura nerd.')
         + (instrucaoEmocional ? `\n\n[TOM]: ${instrucaoEmocional}` : '')
         + (configPrompt ? `\n\n[PERSONALIZAÇÃO]:\n${configPrompt}` : '');
 
@@ -162,7 +161,7 @@ async function askGemini(mensagem, historico = [], instrucaoEmocional = '', conf
                 return await chamarGemini(modelo, mensagem, historico, system);
             } catch (err) {
                 const status = err?.status || '';
-                console.error(`[GEMINI] modelo=${modelo} tentativa=${t + 1}:`, err.message);
+                console.error(`[GEMINI] modelo=${modelo} tentativa=${t+1}:`, err.message);
                 if ([429, 503].includes(status) || /overloaded|unavailable/i.test(err.message)) {
                     await new Promise(r => setTimeout(r, 800));
                     continue;
@@ -183,25 +182,16 @@ function respostaSistema(mensagem) {
     return `Ei! 😊 Estou tendo uma instabilidade de conexão agora, mas já volto ao normal. Você pode repetir ou tentar em instantes?`;
 }
 
-async function askPython(nome, conversa, mensagem, historico = [], idUser = null) {
+async function askPython(nome, conversa, mensagem, historico = []) {
     return new Promise((resolve, reject) => {
         const py = process.env.IANA_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
+        // O histórico da conversa (buscado do MySQL logo acima) é passado
+        // pro Python como um argumento JSON separado (argv[4]). O iana.py
+        // precisa ler exatamente esse 4º argumento como histórico — ver
+        // fix correspondente em iana.py (antes ele estava sendo colado
+        // dentro da própria mensagem por engano).
         const historicoJSON = JSON.stringify(historico);
-        const scriptPath = path.join(__dirname, 'core', 'iana.py');
-
-        const args = [
-            scriptPath,
-            nome,
-            conversa,
-            mensagem,
-            historicoJSON,
-            idUser ? idUser.toString() : ''
-        ];
-
-        const proc = spawn(py, args, {
-            env: { ...process.env, PYTHONPATH: __dirname }
-        });
-
+        const proc = spawn(py, [path.join(__dirname, 'iana.py'), nome, conversa, mensagem, historicoJSON]);
         let out = '', err = '';
         let finalizado = false;
 
@@ -209,26 +199,18 @@ async function askPython(nome, conversa, mensagem, historico = [], idUser = null
             if (finalizado) return;
             finalizado = true;
             proc.kill();
-            reject(new Error('Timeout: processo Python demorou mais de 25s'));
+            reject(new Error('Timeout: processo Python demorou demais (25s)'));
         }, 25000);
 
         proc.stdout.on('data', d => out += d.toString());
         proc.stderr.on('data', d => err += d.toString());
-
         proc.on('close', code => {
             if (finalizado) return;
             finalizado = true;
             clearTimeout(timeout);
-
-            if (code !== 0) {
-                reject(new Error(`Python falhou com código ${code}: ${err}`));
-            } else if (!out.trim()) {
-                reject(new Error('Python retornou vazio: ' + err));
-            } else {
-                resolve(out.trim());
-            }
+            if (code !== 0 || !out.trim()) return reject(new Error(err || `exit ${code}`));
+            resolve(out.trim());
         });
-
         proc.on('error', e => {
             if (finalizado) return;
             finalizado = true;
@@ -262,7 +244,7 @@ passport.deserializeUser(async (id, done) => {
 
 const auth = (req, res, next) => req.isAuthenticated() ? next() : res.status(401).json({ erro: 'Login necessário.' });
 
-/* ── RATE LIMIT ───────────────────────────────────────────────── */
+/* ── RATE LIMIT (protege sua chave do Gemini e login de brute-force) ── */
 const chatLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 20,
@@ -334,6 +316,10 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
             if (sendgridPronto) {
                 try {
                     await sgMail.send({
+                        // Precisa ser o e-mail verificado no SendGrid via
+                        // Single Sender Verification (Settings > Sender
+                        // Authentication). Não pode ser qualquer endereço —
+                        // só o que você verificou lá vai funcionar.
                         from: process.env.EMAIL_FROM || 'iana@example.com',
                         to: email,
                         subject: 'Código de recuperação — Iana',
@@ -347,6 +333,9 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
                         </div>`
                     });
                 } catch (sgErro) {
+                    // SDK do SendGrid lança exceção em erro de API (diferente do
+                    // Resend), então esse catch interno pega direto. O corpo do
+                    // erro costuma vir em sgErro.response.body.errors.
                     const detalhe = sgErro.response?.body?.errors?.map(e => e.message).join('; ') || sgErro.message;
                     const dicaSender = /does not match a verified Sender|from address/i.test(detalhe)
                         ? ' → Causa provável: o remetente em EMAIL_FROM não foi verificado no SendGrid (Settings > Sender Authentication > Single Sender Verification).'
@@ -380,11 +369,50 @@ app.post('/auth/mudar-senha', async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro ao salvar.' }); }
 });
 
+/* ── FEEDBACK ─────────────────────────────────────────────────── */
+// FIX: o chat.js mandava o feedback direto pro formsubmit.co com um
+// e-mail placeholder ("SEU_EMAIL_AQUI") nunca preenchido — todo envio
+// falhava. Agora o feedback passa pelo backend, reaproveitando o
+// SendGrid que já está configurado (mesma infra do "esqueci a senha").
+app.post('/feedback', chatLimiter, async (req, res) => {
+    const assunto = req.body.assunto?.trim();
+    const texto = req.body.texto?.trim();
+    const autorizou = !!req.body.autorizou;
+
+    if (!assunto || !texto) return res.status(400).json({ erro: 'Preencha assunto e mensagem.' });
+    if (!autorizou) return res.status(400).json({ erro: 'É necessário autorizar o uso do feedback.' });
+
+    if (!sendgridPronto) {
+        console.warn('[FEEDBACK] Recebido mas SENDGRID_API_KEY não configurada:', { assunto, texto });
+        return res.status(503).json({ erro: 'Envio de feedback temporariamente indisponível.' });
+    }
+
+    try {
+        await sgMail.send({
+            from: process.env.EMAIL_FROM || 'iana@example.com',
+            to: process.env.FEEDBACK_TO_EMAIL || process.env.EMAIL_FROM,
+            replyTo: req.user?.email || undefined,
+            subject: `[Iana Feedback] ${assunto}`,
+            html: `<div style="font-family:sans-serif;padding:20px">
+                <p><strong>De:</strong> ${req.user?.nome || 'Visitante'} (${req.user?.email || 'sem login'})</p>
+                <p><strong>Assunto:</strong> ${assunto}</p>
+                <p><strong>Mensagem:</strong></p>
+                <p>${texto.replace(/\n/g, '<br>')}</p>
+            </div>`
+        });
+        res.json({ ok: true });
+    } catch (e) {
+        const detalhe = e.response?.body?.errors?.map(er => er.message).join('; ') || e.message;
+        console.error('[FEEDBACK] SendGrid recusou o envio:', detalhe);
+        res.status(500).json({ erro: 'Erro ao enviar feedback.' });
+    }
+});
+
 /* ── CONVERSAS ────────────────────────────────────────────────── */
 async function garantirConversa(idUsuario, idConversa, mensagem) {
     if (!idUsuario) return idConversa || null;
     const id = idConversa || `conv_${idUsuario}_${Date.now()}`;
-    const titulo = mensagem.replace(/\[.*?\]/g, '').trim().slice(0, 40) || 'Nova Conversa';
+    const titulo = mensagem.replace(/\[.*?\]/g,'').trim().slice(0,40) || 'Nova Conversa';
     try {
         await pool.query(
             'INSERT INTO conversas (id,usuario_id,titulo) VALUES (?,?,?) ON DUPLICATE KEY UPDATE titulo=titulo',
@@ -393,11 +421,6 @@ async function garantirConversa(idUsuario, idConversa, mensagem) {
     } catch (e) { console.error('[DB garantirConversa]', e.message); }
     return id;
 }
-
-// FIX: essas rotas tinham desaparecido inteiramente na última versão do
-// server.js (a que adicionou o MySQLStore) — por isso o 404 em
-// /chat/conversas. A sidebar (chat.js) depende 100% delas pra listar,
-// carregar, fixar, renomear e excluir conversas.
 
 app.get('/chat/conversas', auth, async (req, res) => {
     try {
@@ -454,10 +477,10 @@ app.delete('/chat/conversas/:id', auth, async (req, res) => {
 
 /* ── CHAT STREAM ──────────────────────────────────────────────── */
 app.post('/chat/stream', chatLimiter, async (req, res) => {
-    const nome = req.user?.nome || 'Visitante';
-    const idUser = req.user?.id || null;
-    const msg = req.body.mensagem?.trim();
-    const config = req.body.configPrompt || '';
+    const nome    = req.user?.nome || 'Visitante';
+    const idUser  = req.user?.id || null;
+    const msg     = req.body.mensagem?.trim();
+    const config  = req.body.configPrompt || '';
 
     if (!msg) return res.status(400).json({ erro: 'Mensagem vazia.' });
     if (msg.length > 8000) return res.status(400).json({ erro: 'Mensagem muito longa.' });
@@ -483,20 +506,25 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
     let resposta = null;
     let origem = null;
 
+    // 1) CAMINHO PRINCIPAL: Python — tem memória (ChromaDB) e a
+    //    personalidade completa (REGRA 1-6). ENABLE_PYTHON=false só
+    //    deve ser usado se você quiser desligar isso de propósito.
     if (process.env.ENABLE_PYTHON !== 'false') {
         try {
-            resposta = await askPython(nome, idConv || 'geral', msg, historico, idUser);
+            resposta = await askPython(nome, idConv || 'geral', msg, historico);
             origem = 'python';
         } catch (e) {
             console.error('[Python] falhou, caindo pro Gemini via Node:', e.message);
         }
     }
 
+    // 2) FALLBACK: Gemini via SDK do Node (sem memória, prompt simples)
     if (!resposta) {
         resposta = await askGemini(msg, historico, instrucaoHumor(humor), config);
         origem = resposta ? 'gemini-node' : origem;
     }
 
+    // 3) ÚLTIMO RECURSO: resposta fixa do sistema
     if (!resposta) {
         resposta = respostaSistema(msg);
         origem = 'sistema-fixo';

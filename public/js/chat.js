@@ -37,6 +37,19 @@ function sanitizarHTML(html) {
     return typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(html) : html;
 }
 
+// FIX (XSS): títulos de conversa vêm do usuário (mensagem original ou
+// renomeação via /chat/conversas/:id) e o server não sanitiza. Antes,
+// carregarHistorico() jogava o título direto num innerHTML sem escapar,
+// permitindo injetar HTML/JS armazenado (ex: renomear pra
+// "<img src=x onerror=alert(1)>"), que rodava pra qualquer um que
+// abrisse a sidebar depois. Esta função escapa entidades HTML antes de
+// qualquer título entrar em innerHTML.
+function escaparHTML(texto) {
+    const div = document.createElement('div');
+    div.textContent = String(texto ?? '');
+    return div.innerHTML;
+}
+
 /* ── CONFIGURAÇÕES (lidas do localStorage) ────────────────────── */
 const CONFIG_KEY = 'iana_config';
 
@@ -555,9 +568,10 @@ async function carregarHistorico() {
             const item = document.createElement('div');
             item.className = `chat-item ${idConversaAtiva === c.id_conversa ? 'active' : ''} ${c.fixada ? 'fixada' : ''}`;
             const tituloOriginal = c.titulo || 'Conversa';
+            const tituloEscapado = escaparHTML(tituloOriginal);
 
             item.innerHTML = `
-                <span class="chat-titulo">${tituloOriginal}</span>
+                <span class="chat-titulo">${tituloEscapado}</span>
                 <div class="chat-options-wrapper">
                     <button class="btn-chat-options" type="button">⋮</button>
                     <div class="chat-options-menu">
@@ -897,8 +911,24 @@ async function processarEnvioIA(conteudo) {
     if (typeof conteudo !== 'string' || !conteudo.trim()) return;
     aguardandoResposta = true;
 
-    adicionarBolhaUsuario(conteudo);
-    mostrarTypingIndicator();
+    // FIX (integração real do animation-controller.js): a transição
+    // "cheia" (welcome sai de cena, status Pensando/Analisando/
+    // Respondendo aparece) só roda na 1ª mensagem da sessão/conversa,
+    // enquanto a tela de welcome ainda está visível. Nas mensagens
+    // seguintes, usamos o indicador de digitação simples de sempre —
+    // repetir a transição cheia a cada mensagem esconderia o histórico
+    // do chat toda vez, o que seria ruim.
+    const welcomeEl = document.getElementById('welcome');
+    const primeiraMensagem = typeof animacaoChat !== 'undefined'
+        && welcomeEl && welcomeEl.style.display !== 'none'
+        && !animacaoChat.primeiraMensagemFeita;
+
+    if (primeiraMensagem) {
+        await animacaoChat.iniciarPensamento();
+    } else {
+        adicionarBolhaUsuario(conteudo);
+        mostrarTypingIndicator();
+    }
 
     const sendBtn = document.getElementById('btn-send');
     const stopBtn = document.getElementById('btn-stop');
@@ -912,6 +942,18 @@ async function processarEnvioIA(conteudo) {
     }
 
     controller = new AbortController();
+
+    // Esconde o indicador certo (transição cheia OU digitando simples) e,
+    // se foi a 1ª mensagem, só agora insere a bolha do usuário — welcome
+    // já sumiu suavemente pela animação nesse ponto.
+    async function esconderIndicador() {
+        if (primeiraMensagem) {
+            await animacaoChat.finalizarPensamento();
+            adicionarBolhaUsuario(conteudo);
+        } else {
+            esconderTypingIndicator();
+        }
+    }
 
     try {
         const res = await fetch('/chat/stream', {
@@ -939,11 +981,11 @@ async function processarEnvioIA(conteudo) {
             if (usuarioAtual) carregarHistorico();
         }
 
-        esconderTypingIndicator();
+        await esconderIndicador();
         adicionarRespostaIA(data.resposta);
 
     } catch (e) {
-        esconderTypingIndicator();
+        await esconderIndicador();
         if (e.name !== 'AbortError') {
             adicionarRespostaIA('Desculpe, não consegui processar sua solicitação no momento.');
             console.error('Erro no envio:', e);
@@ -1014,6 +1056,9 @@ function resetarChat() {
     const msgs = document.getElementById('msgs');
     if (msgs) msgs.innerHTML = '';
     mostrarWelcome(true);
+    // Novo chat = welcome volta a aparecer; permite a transição
+    // welcome->pensando tocar de novo na próxima mensagem.
+    if (typeof animacaoChat !== 'undefined') animacaoChat.primeiraMensagemFeita = false;
     if (usuarioAtual) carregarHistorico();
 }
 
@@ -1033,18 +1078,15 @@ async function enviarFeedback() {
     btn.disabled = true;
 
     try {
-        const body = {
-            _subject: `[Iana Feedback] ${assunto}`,
-            Assunto: assunto,
-            Mensagem: texto,
-            Autorizou: autoriza ? 'Sim' : 'Não',
-            _template: 'box',
-            _captcha: 'false'
-        };
-        const res = await fetch('https://formsubmit.co/ajax/SEU_EMAIL_AQUI', { // Substitua pelo seu email válido se for usar em prod
+        // FIX: antes ia direto pro formsubmit.co com um e-mail placeholder
+        // nunca preenchido (SEU_EMAIL_AQUI) — nenhum feedback era enviado.
+        // Agora passa pelo backend (/feedback), que usa o SendGrid já
+        // configurado no server.js.
+        const res = await fetch('/feedback', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify(body)
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ assunto, texto, autorizou: autoriza })
         });
 
         if (res.ok) {

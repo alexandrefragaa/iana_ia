@@ -1,224 +1,142 @@
 /* =================================================================
-   CONTROLADOR DE ANIMAÇÕES - TRANSIÇÕES DE CHAT
+   IANA — animation-controller.js
+   Transição welcome -> "pensando" (Pensando/Analisando/Respondendo)
+   Roda só na 1ª mensagem da sessão/conversa; chamado pelo chat.js.
+
+   FIX (ativação real): este arquivo antes definia seu PRÓPRIO
+   enviarMensagem() e seus próprios listeners de teclado/clique nos
+   MESMOS elementos que o chat.js já usa (#chat-input, #send-btn), e
+   usava IDs/classes (welcome-view, thinking-view, .search-pill,
+   .iana-label-container) que não existiam no HTML. Como não estava
+   incluído no index.html, nunca rodava — mas se alguém adicionasse o
+   <script> sem perceber, ele sobrescrevia o enviarMensagem() de
+   verdade (o do chat.js, com histórico/config/abort controller) por
+   uma versão incompleta que nem mostrava a resposta na tela.
+
+   Agora: só expõe a classe AnimacaoChat + uma instância global
+   `animacaoChat`. Toda a lógica de envio continua 100% no chat.js,
+   que chama animacaoChat.iniciarPensamento()/finalizarPensamento()
+   quando for o caso.
    ================================================================= */
 
 class AnimacaoChat {
     constructor() {
         this.em_transicao = false;
         this.estado_atual = 'repouso'; // repouso, pensando, respondendo
+        this.primeiraMensagemFeita = false;
+        this._timersFase = [];
+    }
+
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    getEstado() {
+        return this.estado_atual;
+    }
+
+    emTransicao() {
+        return this.em_transicao;
     }
 
     /**
-     * Inicia a transição para o estado de pensamento
-     * Move o welcome-container pra cima e mostra o thinking-view
+     * Move o welcome pra fora de cena e mostra o thinking-view no lugar,
+     * com o status ciclando Pensando -> Analisando -> Respondendo.
      */
     async iniciarPensamento() {
-        if (this.em_transicao) return;
+        if (this.em_transicao || this.primeiraMensagemFeita) return;
         this.em_transicao = true;
 
-        const welcomeContainer = document.getElementById('welcome-view');
+        const welcomeContainer = document.getElementById('welcome');
         const thinkingContainer = document.getElementById('thinking-view');
-        const inputWrapper = document.querySelector('.input-area-wrapper');
+        const inputWrapper = document.querySelector('.input-wrap');
         const ianaLabel = document.querySelector('.iana-label-container');
-        const pilula = document.querySelector('.search-pill');
+        const pilula = document.querySelector('.input-pill');
 
         if (!welcomeContainer || !thinkingContainer) {
+            // Elementos não existem nesta página — não quebra nada,
+            // só não anima (ex: outra tela que reusa este script).
             this.em_transicao = false;
             return;
         }
 
-        // 1. Fazer o label desaparecer
         if (ianaLabel) {
             ianaLabel.classList.add('sumir');
             await this.sleep(200);
         }
 
-        // 2. Animar welcome container pra cima
         welcomeContainer.classList.add('transitando');
         if (inputWrapper) inputWrapper.classList.add('transitando');
         if (pilula) pilula.classList.add('disabled');
 
-        // 3. Mostrar thinking container
         thinkingContainer.style.display = 'flex';
         await this.sleep(100);
         thinkingContainer.classList.add('ativo');
 
         this.estado_atual = 'pensando';
         this.em_transicao = false;
+
+        this._cicloDeFases();
     }
 
     /**
-     * Retorna ao estado normal após receber resposta
+     * Alterna o texto/cor do status enquanto espera a resposta da API.
+     * Fica parado em "Respondendo" até finalizarPensamento() rodar.
+     */
+    _cicloDeFases() {
+        const dot = document.getElementById('thinking-view-dot');
+        const texto = document.getElementById('thinking-view-texto');
+        if (!dot || !texto) return;
+
+        const fases = [
+            { classe: 'thinking-dot', texto: 'Pensando' },
+            { classe: 'analyzing-dot', texto: 'Analisando' },
+            { classe: 'speaking-dot', texto: 'Respondendo' }
+        ];
+
+        this._limparTimersFase();
+        fases.forEach((fase, i) => {
+            const t = setTimeout(() => {
+                dot.className = fase.classe;
+                texto.textContent = fase.texto;
+            }, i * 1200);
+            this._timersFase.push(t);
+        });
+    }
+
+    _limparTimersFase() {
+        this._timersFase.forEach(t => clearTimeout(t));
+        this._timersFase = [];
+    }
+
+    /**
+     * Esconde o thinking-view. A partir daqui já estamos em modo chat —
+     * mensagens seguintes usam o typing indicator normal do chat.js.
      */
     async finalizarPensamento() {
         if (this.em_transicao) return;
         this.em_transicao = true;
+        this._limparTimersFase();
 
-        const welcomeContainer = document.getElementById('welcome-view');
         const thinkingContainer = document.getElementById('thinking-view');
-        const inputWrapper = document.querySelector('.input-area-wrapper');
-        const ianaLabel = document.querySelector('.iana-label-container');
-        const pilula = document.querySelector('.search-pill');
+        const inputWrapper = document.querySelector('.input-wrap');
+        const pilula = document.querySelector('.input-pill');
 
-        // 1. Esconder thinking container
         if (thinkingContainer) {
             thinkingContainer.classList.remove('ativo');
             await this.sleep(400);
             thinkingContainer.style.display = 'none';
         }
 
-        // 2. Animar welcome container voltando
-        if (welcomeContainer) {
-            welcomeContainer.classList.remove('transitando');
-            welcomeContainer.classList.add('voltando');
-        }
-        if (inputWrapper) {
-            inputWrapper.classList.remove('transitando');
-            inputWrapper.classList.add('voltando');
-        }
-
-        // 3. Label reaparece
-        if (ianaLabel) {
-            ianaLabel.classList.remove('sumir');
-            ianaLabel.classList.add('reaparecer');
-        }
-
+        if (inputWrapper) inputWrapper.classList.remove('transitando');
         if (pilula) pilula.classList.remove('disabled');
 
-        await this.sleep(600);
-
-        // Limpar classes de animação
-        if (welcomeContainer) welcomeContainer.classList.remove('voltando');
-        if (inputWrapper) inputWrapper.classList.remove('voltando');
-        if (ianaLabel) ianaLabel.classList.remove('reaparecer');
-
+        this.primeiraMensagemFeita = true;
         this.estado_atual = 'repouso';
         this.em_transicao = false;
     }
-
-    /**
-     * Promise simples para delay
-     */
-    sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    /**
-     * Obtém o estado atual
-     */
-    getEstado() {
-        return this.estado_atual;
-    }
-
-    /**
-     * Verifica se está em transição
-     */
-    emTransicao() {
-        return this.em_transicao;
-    }
 }
 
-// Instância global
+// Instância global usada pelo chat.js
 const animacaoChat = new AnimacaoChat();
-
-/* =================================================================
-   INTEGRAÇÃO COM ENVIO DE MENSAGEM
-   ================================================================= */
-
-/**
- * Envia uma mensagem para a IA
- * Integra animações, detecção emocional e chamada de API
- */
-async function enviarMensagem() {
-    const textarea = document.getElementById('chat-input');
-    const mensagem = textarea.value.trim();
-
-    if (!mensagem || aguardandoResposta) return;
-
-    // Limpar input
-    textarea.value = '';
-    textarea.style.height = 'auto';
-
-    // Iniciar animação de pensamento
-    await animacaoChat.iniciarPensamento();
-
-    try {
-        // Detectar estado emocional (se feature.js estiver carregado)
-        let estadoEmocional = 'normal';
-        if (typeof detectarEstadoEmocional === 'function') {
-            estadoEmocional = detectarEstadoEmocional(mensagem);
-        }
-
-        aguardandoResposta = true;
-
-        // Chamar API do chat
-        const response = await fetch('/chat/stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                mensagem: mensagem,
-                idConversa: idConversaAtiva || 'chat_geral',
-                estadoEmocional: estadoEmocional
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        const dados = await response.json();
-
-        // Se tiver resposta, mostrar
-        if (dados.resposta) {
-            console.log('✅ Resposta recebida:', dados.resposta);
-            
-            // Aqui você pode adicionar a resposta ao chat
-            // exibirMensagemIana(dados.resposta);
-        }
-
-    } catch (erro) {
-        console.error('❌ Erro ao enviar mensagem:', erro);
-    } finally {
-        aguardandoResposta = false;
-        
-        // Retornar ao estado normal com pequeno delay
-        await animacaoChat.sleep(500);
-        await animacaoChat.finalizarPensamento();
-    }
-}
-
-/**
- * Adiciona evento de teclado ao input
- */
-document.addEventListener('DOMContentLoaded', () => {
-    const textarea = document.getElementById('chat-input');
-    const sendBtn = document.getElementById('send-btn');
-
-    if (textarea) {
-        textarea.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                enviarMensagem();
-            }
-        });
-    }
-
-    if (sendBtn) {
-        sendBtn.addEventListener('click', enviarMensagem);
-    }
-});
-
-/* =================================================================
-   AUTO-RESIZE DO TEXTAREA
-   ================================================================= */
-
-document.addEventListener('DOMContentLoaded', () => {
-    const textarea = document.getElementById('chat-input');
-    
-    if (textarea) {
-        textarea.addEventListener('input', () => {
-            textarea.style.height = 'auto';
-            textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
-        });
-    }
-});
+window.animacaoChat = animacaoChat;

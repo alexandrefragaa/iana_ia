@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 try:
-    from learning_engine import learn
+    from core.learning_engine import learn
 except ImportError:
     print("❌ Erro: Não foi possível importar learning_engine.")
     sys.exit(1)

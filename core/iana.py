@@ -164,6 +164,7 @@ instrucao_humor = {
 }.get(detectar_humor(msg_final), '')
 
 def chamar_gemini():
+    sys.stderr.write(f"[DEBUG] Contexto enviado para Gemini: {bloco_contexto[:500]}\n")
     if not chave:
         sys.stderr.write('[Gemini] ⚠️ GEMINI_API_KEY não configurada\n')
         return None

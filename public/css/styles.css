@@ -1283,7 +1283,7 @@ main {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;   /* em vez de center */
 }
 
 .chatbox::-webkit-scrollbar {

@@ -1440,13 +1440,90 @@ main {
 }
 
 /* Itens de ação dentro do menu (Fixar, Renomear, Excluir) */
+.chat-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.chat-item:hover {
+    background: rgba(168, 85, 247, 0.08);
+}
+
+.chat-titulo {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.9rem;
+    color: #e3e3e3;
+}
+
+/* Wrapper que segura o botão de três pontos */
+.chat-options-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+/* O botão de três pontos (⋮) */
+.btn-chat-options {
+    background: transparent;
+    border: none;
+    color: rgba(168, 85, 247, 0.7);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.btn-chat-options:hover {
+    color: #fff;
+    background: rgba(168, 85, 247, 0.2);
+}
+
+/* A "Box" do menu flutuante posicionada EXATAMENTE AO LADO do botão */
+.chat-options-menu {
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 8px);
+    transform: translateY(-50%) scale(0.95);
+    background: #141418;
+    border: 1px solid rgba(168, 85, 247, 0.25);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    display: none;
+    flex-direction: column;
+    padding: 6px;
+    z-index: 9999;
+    min-width: 140px;
+    opacity: 0;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Classe ativada via JS para exibir o menu com efeito suave */
+.chat-options-menu.ativo {
+    display: flex;
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+}
+
+/* Botões internos do menu (Fixar, Renomear, Excluir) */
 .chat-option-btn {
     display: flex;
     align-items: center;
     gap: 10px;
     background: transparent;
     border: none;
-    color: #d1d5db; /* Cor padrão harmoniosa com o fundo */
+    color: #d1d5db;
     font-size: 0.85rem;
     padding: 8px 10px;
     border-radius: 8px;
@@ -1456,16 +1533,16 @@ main {
     transition: all 0.2s ease;
 }
 
-/* Unificando a cor de todos os ícones usando filtro para combinar com o tom geral */
+/* Ícones padronizados com o tom da IA */
 .chat-option-btn .menu-icon {
     width: 16px;
     height: 16px;
-    filter: invert(80%) sepia(20%) saturate(400%) hue-rotate(220deg); /* Tom suave que combina com a paleta */
+    filter: invert(80%) sepia(20%) saturate(400%) hue-rotate(220deg);
     opacity: 0.85;
     transition: opacity 0.2s;
 }
 
-/* Hover unificado para as opções normais (Fixar e Renomear) */
+/* Efeito ao passar o mouse nas opções normais */
 .chat-option-btn:hover {
     background: rgba(168, 85, 247, 0.15);
     color: #fff;
@@ -1475,7 +1552,7 @@ main {
     opacity: 1;
 }
 
-/* Tratamento especial para o botão de Excluir (mantém o destaque de alerta sutil) */
+/* Estilo dedicado para a opção de Excluir */
 .chat-option-btn.excluir {
     color: #f87171;
 }

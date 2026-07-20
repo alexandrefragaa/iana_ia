@@ -1,5 +1,6 @@
 import express from 'express';
 import session from 'express-session';
+import MySQLStoreFactory from 'express-mysql-session';
 import passport from 'passport';
 import { Strategy as LocalStrategy } from 'passport-local';
 import mysql from 'mysql2/promise';
@@ -26,6 +27,8 @@ if (!process.env.SESSION_SECRET) {
     console.error('❌ SESSION_SECRET não definido no .env'); process.exit(1);
 }
 
+const MySQLStore = MySQLStoreFactory(session);
+
 /* ── MIDDLEWARES ──────────────────────────────────────────────── */
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
@@ -42,37 +45,21 @@ app.use(cors({
 }));
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(session({
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    rolling: true,
-    name: 'iana.sid',
-    cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        httpOnly: true,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000
-    }
-    // ATENÇÃO: sem "store" configurado, isto usa MemoryStore.
-    // Funciona para teste, mas em produção real no Render:
-    // - todo mundo é deslogado a cada deploy/restart
-    // - quebra se você escalar para mais de 1 instância
-    // Recomendo trocar por connect-mysql2/express-mysql-session usando o pool abaixo.
-}));
-app.use(passport.initialize());
-app.use(passport.session());
 
 /* ── MYSQL ────────────────────────────────────────────────────── */
-const pool = mysql.createPool({
+const dbConfig = {
     host:     process.env.DB_HOST || 'mysql-7ddcebe.aivencloud.com',
     port:     process.env.DB_PORT ? Number(process.env.DB_PORT) : 12788,
     user:     process.env.DB_USER || 'avnadmin',
     password: process.env.DB_PASS || '',
     database: process.env.DB_NAME || 'defaultdb',
-    waitForConnections: true,
-    connectionLimit: 10,
     ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined
+};
+
+const pool = mysql.createPool({
+    ...dbConfig,
+    waitForConnections: true,
+    connectionLimit: 10
 });
 
 (async () => {
@@ -84,6 +71,34 @@ const pool = mysql.createPool({
         console.error('❌ MySQL erro:', e.message);
     }
 })();
+
+// Store de sessão persistente no MySQL/Aiven. Substitui o MemoryStore
+// padrão do express-session, que perdia todas as sessões ativas
+// sempre que o Render reiniciava/dormia o processo — causando 401
+// inesperado em /chat/conversas, /chat/historico e efetivamente
+// "esquecendo" a conversa ativa no meio do uso.
+const sessionStore = new MySQLStore(dbConfig);
+
+sessionStore.onReady()
+    .then(() => console.log('✅ Session store (MySQL) pronto'))
+    .catch(e => console.error('❌ Session store erro:', e.message));
+
+app.use(session({
+    secret: process.env.SESSION_SECRET,
+    store: sessionStore,
+    resave: false,
+    saveUninitialized: false,
+    rolling: true,
+    name: 'iana.sid',
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000
+    }
+}));
+app.use(passport.initialize());
+app.use(passport.session());
 
 /* ── GEMINI ───────────────────────────────────────────────────── */
 let genAI = null;
@@ -97,8 +112,6 @@ try {
 } catch (e) { console.error('❌ Gemini erro:', e.message); }
 
 /* ── SENDGRID ─────────────────────────────────────────────────── */
-// Usa Single Sender Verification (settings.sendgrid.com > Sender Authentication),
-// que não exige domínio próprio — só verifica um e-mail comum (Gmail, etc.)
 let sendgridPronto = false;
 if (process.env.SENDGRID_API_KEY) {
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -129,7 +142,7 @@ function instrucaoHumor(humor) {
 const MODELOS = [
     process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
     'gemini-2.5-flash-lite',
-    'gemini-3.1-flash-lite', // substitui os 1.5 mortos
+    'gemini-3.1-flash-lite',
 ];
 
 async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
@@ -185,11 +198,6 @@ function respostaSistema(mensagem) {
 async function askPython(nome, conversa, mensagem, historico = []) {
     return new Promise((resolve, reject) => {
         const py = process.env.IANA_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
-        // O histórico da conversa (buscado do MySQL logo acima) é passado
-        // pro Python como um argumento JSON separado (argv[4]). O iana.py
-        // precisa ler exatamente esse 4º argumento como histórico — ver
-        // fix correspondente em iana.py (antes ele estava sendo colado
-        // dentro da própria mensagem por engano).
         const historicoJSON = JSON.stringify(historico);
         const proc = spawn(py, [path.join(__dirname, 'iana.py'), nome, conversa, mensagem, historicoJSON]);
         let out = '', err = '';
@@ -244,7 +252,7 @@ passport.deserializeUser(async (id, done) => {
 
 const auth = (req, res, next) => req.isAuthenticated() ? next() : res.status(401).json({ erro: 'Login necessário.' });
 
-/* ── RATE LIMIT (protege sua chave do Gemini e login de brute-force) ── */
+/* ── RATE LIMIT ───────────────────────────────────────────────── */
 const chatLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 20,
@@ -316,10 +324,6 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
             if (sendgridPronto) {
                 try {
                     await sgMail.send({
-                        // Precisa ser o e-mail verificado no SendGrid via
-                        // Single Sender Verification (Settings > Sender
-                        // Authentication). Não pode ser qualquer endereço —
-                        // só o que você verificou lá vai funcionar.
                         from: process.env.EMAIL_FROM || 'iana@example.com',
                         to: email,
                         subject: 'Código de recuperação — Iana',
@@ -333,9 +337,6 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
                         </div>`
                     });
                 } catch (sgErro) {
-                    // SDK do SendGrid lança exceção em erro de API (diferente do
-                    // Resend), então esse catch interno pega direto. O corpo do
-                    // erro costuma vir em sgErro.response.body.errors.
                     const detalhe = sgErro.response?.body?.errors?.map(e => e.message).join('; ') || sgErro.message;
                     const dicaSender = /does not match a verified Sender|from address/i.test(detalhe)
                         ? ' → Causa provável: o remetente em EMAIL_FROM não foi verificado no SendGrid (Settings > Sender Authentication > Single Sender Verification).'
@@ -370,10 +371,6 @@ app.post('/auth/mudar-senha', async (req, res) => {
 });
 
 /* ── FEEDBACK ─────────────────────────────────────────────────── */
-// FIX: o chat.js mandava o feedback direto pro formsubmit.co com um
-// e-mail placeholder ("SEU_EMAIL_AQUI") nunca preenchido — todo envio
-// falhava. Agora o feedback passa pelo backend, reaproveitando o
-// SendGrid que já está configurado (mesma infra do "esqueci a senha").
 app.post('/feedback', chatLimiter, async (req, res) => {
     const assunto = req.body.assunto?.trim();
     const texto = req.body.texto?.trim();
@@ -506,9 +503,6 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
     let resposta = null;
     let origem = null;
 
-    // 1) CAMINHO PRINCIPAL: Python — tem memória (ChromaDB) e a
-    //    personalidade completa (REGRA 1-6). ENABLE_PYTHON=false só
-    //    deve ser usado se você quiser desligar isso de propósito.
     if (process.env.ENABLE_PYTHON !== 'false') {
         try {
             resposta = await askPython(nome, idConv || 'geral', msg, historico);
@@ -518,13 +512,11 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
         }
     }
 
-    // 2) FALLBACK: Gemini via SDK do Node (sem memória, prompt simples)
     if (!resposta) {
         resposta = await askGemini(msg, historico, instrucaoHumor(humor), config);
         origem = resposta ? 'gemini-node' : origem;
     }
 
-    // 3) ÚLTIMO RECURSO: resposta fixa do sistema
     if (!resposta) {
         resposta = respostaSistema(msg);
         origem = 'sistema-fixo';

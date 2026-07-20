@@ -712,24 +712,32 @@ function criarBotaoCopiar(getTexto) {
     btn.type = 'button';
     btn.className = 'msg-action-btn';
     btn.title = 'Copiar';
-    btn.innerHTML = '📋';
+    
+    // Substitua 'copiar.png' pelo nome exato do arquivo de ícone de cópia que você tem na pasta /img
+    btn.innerHTML = '<img src="/img/copiar.png" style="width:16px; filter:invert(.7);" alt="Copiar">';
+    
     btn.addEventListener('click', () => {
         const texto = getTexto();
         navigator.clipboard?.writeText(texto).then(() => {
             const original = btn.innerHTML;
-            btn.innerHTML = '✅';
+            // Feedback visual rápido ao copiar
+            btn.innerHTML = '<span style="font-size:12px; color:#a855f7; font-weight:bold;">Copiado!</span>';
             setTimeout(() => { btn.innerHTML = original; }, 1200);
         }).catch(() => { });
     });
     return btn;
 }
 
+/* Botão de editar — padronizado com imagem da pasta /img */
 function criarBotaoEditar(texto) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'msg-action-btn';
     btn.title = 'Editar mensagem';
-    btn.innerHTML = '✏️';
+    
+    // Usando o mesmo ícone de escrever que você já usa no sidebar ("escrever.png")
+    btn.innerHTML = '<img src="/img/escrever.png" style="width:16px; filter:invert(.7);" alt="Editar">';
+    
     btn.addEventListener('click', () => {
         const input = document.getElementById('chat-input');
         if (!input) return;

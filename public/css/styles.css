@@ -1440,6 +1440,15 @@ main {
 }
 
 /* Itens de ação dentro do menu (Fixar, Renomear, Excluir) */
+/* =========================================
+   ESTILIZAÇÃO DO ITEM DE HISTÓRICO E MENU LATERAL
+   ========================================= */
+
+.sidebar-historico {
+    overflow-y: auto;
+    overflow-x: visible !important; /* Permite que o menu flutuante saia da barra lateral se necessário */
+}
+
 .chat-item {
     position: relative;
     display: flex;
@@ -1490,20 +1499,20 @@ main {
     background: rgba(168, 85, 247, 0.2);
 }
 
-/* A "Box" do menu flutuante posicionada EXATAMENTE AO LADO do botão */
+/* A "Box" do menu flutuante posicionada EXATAMENTE AO LADO */
 .chat-options-menu {
     position: absolute;
     top: 50%;
-    left: calc(100% + 8px);
+    right: calc(100% + 8px); /* Abre para o lado esquerdo se estiver muito na borda, ou use left: calc(100% + 8px) para a direita */
     transform: translateY(-50%) scale(0.95);
     background: #141418;
     border: 1px solid rgba(168, 85, 247, 0.25);
     border-radius: 12px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
     display: none;
     flex-direction: column;
     padding: 6px;
-    z-index: 9999;
+    z-index: 99999;
     min-width: 140px;
     opacity: 0;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);

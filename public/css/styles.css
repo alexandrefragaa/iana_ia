@@ -1391,50 +1391,100 @@ main {
     }
 }
 
-.btn-chat-options{
-    width:34px;
-    height:34px;
-    border:none;
-    background:transparent;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    cursor:pointer;
+.btn-chat-options {
+    background: transparent;
+    border: none;
+    color: rgba(168, 85, 247, 0.7); /* Tom roxo alinhado com a identidade da IA */
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
 }
 
-.menu-icon-menu{
-    width:18px;
-    height:18px;
-    object-fit:contain;
+.btn-chat-options:hover {
+    color: #fff;
+    background: rgba(168, 85, 247, 0.15);
 }
 
-.chat-option-btn{
-    display:flex;
-    align-items:center;
-    gap:10px;
-    width:100%;
-    border:none;
-    background:transparent;
-    color:#fff;
-    padding:10px 14px;
-    cursor:pointer;
-    transition:.2s;
+/* O menu flutuante */
+.chat-options-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: #141418; /* Fundo escuro que combina com o tema da sidebar */
+    border: 1px solid rgba(168, 85, 247, 0.25);
+    border-radius: 12px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    display: none;
+    flex-direction: column;
+    padding: 6px;
+    z-index: 999;
+    min-width: 140px;
+    animation: fadeUpMenu 0.2s ease;
 }
 
-.chat-option-btn:hover{
-    background:#2f2f39;
+.chat-options-menu.ativo {
+    display: flex;
 }
 
-.menu-icon{
-    width:18px;
-    height:18px;
-    object-fit:contain;
+@keyframes fadeUpMenu {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
-.chat-option-btn.excluir{
-    color:#ff5b5b;
+/* Itens de ação dentro do menu (Fixar, Renomear, Excluir) */
+.chat-option-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: transparent;
+    border: none;
+    color: #d1d5db; /* Cor padrão harmoniosa com o fundo */
+    font-size: 0.85rem;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    transition: all 0.2s ease;
 }
 
-.chat-option-btn.excluir:hover{
-    background:#401b1b;
+/* Unificando a cor de todos os ícones usando filtro para combinar com o tom geral */
+.chat-option-btn .menu-icon {
+    width: 16px;
+    height: 16px;
+    filter: invert(80%) sepia(20%) saturate(400%) hue-rotate(220deg); /* Tom suave que combina com a paleta */
+    opacity: 0.85;
+    transition: opacity 0.2s;
+}
+
+/* Hover unificado para as opções normais (Fixar e Renomear) */
+.chat-option-btn:hover {
+    background: rgba(168, 85, 247, 0.15);
+    color: #fff;
+}
+
+.chat-option-btn:hover .menu-icon {
+    opacity: 1;
+}
+
+/* Tratamento especial para o botão de Excluir (mantém o destaque de alerta sutil) */
+.chat-option-btn.excluir {
+    color: #f87171;
+}
+
+.chat-option-btn.excluir .menu-icon {
+    filter: invert(55%) sepia(85%) saturate(500%) hue-rotate(320deg);
+}
+
+.chat-option-btn.excluir:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
 }

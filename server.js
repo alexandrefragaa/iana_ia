@@ -75,6 +75,8 @@ app.use(session({
     store: sessionStore, // Salva as sessões com segurança no Aiven
     resave: false,
     saveUninitialized: false,
+    rolling: true,
+    name: 'iana.sid',
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
@@ -175,9 +177,9 @@ async function askGemini(mensagem, historico = [], instrucaoEmocional = '', conf
 function respostaSistema(mensagem) {
     const msg = mensagem.toLowerCase();
     if (/oi|olá|ola|hey|bom dia|boa tarde|boa noite/.test(msg))
-        return `Oi! 👋 Que bom te ver aqui!`;
+        return `Oi! 👋 Que bom te ver aqui! Sou a Iana, sua parceira gamer. Como posso te ajudar hoje? 🎮`;
     if (/como.*vai|tudo bem|tudo bom/.test(msg))
-        return `Tudo ótimo por aqui! 😊`;
+        return `Tudo ótimo por aqui! 😊 Pronta pra te ajudar com qualquer conquista ou questão. O que você precisa?`;
     return `Ei! 😊 Estou tendo uma instabilidade de conexão agora, mas já volto ao normal. Você pode repetir ou tentar em instantes?`;
 }
 
@@ -277,10 +279,11 @@ const loginLimiter = rateLimit({
     message: { erro: 'Muitas tentativas de login. Tente novamente mais tarde.' }
 });
 
-/* ── PÁGINAS & ROTAS ──────────────────────────────────────────── */
+/* ── PÁGINAS ──────────────────────────────────────────────────── */
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/configuracoes', (req, res) => res.sendFile(path.join(__dirname, 'public', 'configuracoes.html')));
 
+/* ── AUTH ─────────────────────────────────────────────────────── */
 app.post('/auth/registro', loginLimiter, async (req, res) => {
     const { nome, email, senha } = req.body;
     if (!nome || !email || !senha) return res.status(400).json({ erro: 'Preencha todos os campos.' });
@@ -319,7 +322,65 @@ app.get('/auth/me', (req, res) => {
     res.json({ logado: true, usuario: { id: req.user.id, nome: req.user.nome, email: req.user.email } });
 });
 
-/* ── CONVERSAS & STREAM ───────────────────────────────────────── */
+app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
+    const email = req.body.email?.trim().toLowerCase();
+    if (!email) return res.status(400).json({ erro: 'E-mail obrigatório.' });
+    try {
+        const [r] = await pool.query('SELECT id FROM usuarios WHERE email=?', [email]);
+        if (r.length) {
+            const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+            codigos.set(email, { codigo, exp: Date.now() + 15 * 60 * 1000 });
+
+            if (sendgridPronto) {
+                try {
+                    await sgMail.send({
+                        from: process.env.EMAIL_FROM || 'iana@example.com',
+                        to: email,
+                        subject: 'Código de recuperação — Iana',
+                        html: `<div style="font-family:sans-serif;background:#111;color:#fff;padding:30px;border-radius:12px;max-width:400px;margin:auto">
+                            <h2 style="color:#a855f7">🎮 Iana</h2>
+                            <p>Seu código:</p>
+                            <div style="background:#1e1f20;border-radius:8px;padding:20px;text-align:center;margin:20px 0">
+                                <span style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#a855f7">${codigo}</span>
+                            </div>
+                            <p style="color:#aaa;font-size:13px">Expira em 15 minutos.</p>
+                        </div>`
+                    });
+                } catch (sgErro) {
+                    const detalhe = sgErro.response?.body?.errors?.map(e => e.message).join('; ') || sgErro.message;
+                    const dicaSender = /does not match a verified Sender|from address/i.test(detalhe)
+                        ? ' → Causa provável: o remetente em EMAIL_FROM não foi verificado no SendGrid (Settings > Sender Authentication > Single Sender Verification).'
+                        : '';
+                    console.error(`[ESQUECI] SendGrid recusou o envio para ${email}:`, detalhe, dicaSender);
+                }
+            } else {
+                console.warn(`[ESQUECI] Código gerado para ${email}, mas SENDGRID_API_KEY não está configurada.`);
+            }
+        }
+        res.json({ ok: true, msg: 'Se o e-mail existir, um código foi enviado.' });
+    } catch (e) {
+        console.error('[ESQUECI] Falha ao enviar e-mail:', e.message);
+        res.status(500).json({ erro: 'Erro ao enviar.' });
+    }
+});
+
+app.post('/auth/mudar-senha', async (req, res) => {
+    const { codigo, nova_senha } = req.body;
+    const email = req.body.email?.trim().toLowerCase();
+    if (!email || !codigo || !nova_senha) return res.status(400).json({ erro: 'Dados incompletos.' });
+    const token = codigos.get(email);
+    if (!token || token.codigo !== codigo.trim() || Date.now() > token.exp)
+        return res.status(400).json({ erro: 'Código inválido ou expirado.' });
+    if (nova_senha.trim().length < 8) return res.status(400).json({ erro: 'Senha mínima: 8 caracteres.' });
+    try {
+        const hash = await bcrypt.hash(nova_senha.trim(), 12);
+        await pool.query('UPDATE usuarios SET senha=? WHERE email=?', [hash, email]);
+        codigos.delete(email);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar.' }); }
+});
+
+/* ── CONVERSAS ────────────────────────────────────────────────── */
 async function garantirConversa(idUsuario, idConversa, mensagem) {
     if (!idUsuario) return idConversa || null;
     const id = idConversa || `conv_${idUsuario}_${Date.now()}`;
@@ -333,6 +394,65 @@ async function garantirConversa(idUsuario, idConversa, mensagem) {
     return id;
 }
 
+// FIX: essas rotas tinham desaparecido inteiramente na última versão do
+// server.js (a que adicionou o MySQLStore) — por isso o 404 em
+// /chat/conversas. A sidebar (chat.js) depende 100% delas pra listar,
+// carregar, fixar, renomear e excluir conversas.
+
+app.get('/chat/conversas', auth, async (req, res) => {
+    try {
+        const [r] = await pool.query(
+            'SELECT id, titulo, fixada FROM conversas WHERE usuario_id=? ORDER BY fixada DESC, id DESC',
+            [req.user.id]
+        );
+        res.json({ conversas: r.map(c => ({ id_conversa: c.id, titulo: c.titulo, fixada: !!c.fixada })) });
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+app.get('/chat/historico/:id', auth, async (req, res) => {
+    try {
+        const [r] = await pool.query(
+            'SELECT mensagem, remetente, criado_em FROM mensagens WHERE conversa_id=? AND usuario_id=? ORDER BY id ASC',
+            [req.params.id, req.user.id]
+        );
+        res.json({ mensagens: r.map(m => ({ conteudo: m.mensagem, tipo_sender: m.remetente === 'user' ? 'usuario' : 'iana', criado_em: m.criado_em })) });
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+app.post('/chat/conversas', auth, async (req, res) => {
+    const { titulo } = req.body;
+    const id = `conv_${req.user.id}_${Date.now()}`;
+    try {
+        await pool.query('INSERT INTO conversas (id,usuario_id,titulo) VALUES (?,?,?)', [id, req.user.id, titulo || 'Nova Conversa']);
+        res.json({ id_conversa: id });
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+app.put('/chat/conversas/:id', auth, async (req, res) => {
+    const { novoTitulo } = req.body;
+    if (!novoTitulo?.trim()) return res.status(400).json({ erro: 'Título obrigatório.' });
+    try {
+        await pool.query('UPDATE conversas SET titulo=? WHERE id=? AND usuario_id=?', [novoTitulo.trim(), req.params.id, req.user.id]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+app.patch('/chat/conversas/:id/fixar', auth, async (req, res) => {
+    try {
+        await pool.query('UPDATE conversas SET fixada=? WHERE id=? AND usuario_id=?', [req.body.fixada ? 1 : 0, req.params.id, req.user.id]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+app.delete('/chat/conversas/:id', auth, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM mensagens WHERE conversa_id=? AND usuario_id=?', [req.params.id, req.user.id]);
+        await pool.query('DELETE FROM conversas WHERE id=? AND usuario_id=?', [req.params.id, req.user.id]);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
+/* ── CHAT STREAM ──────────────────────────────────────────────── */
 app.post('/chat/stream', chatLimiter, async (req, res) => {
     const nome = req.user?.nome || 'Visitante';
     const idUser = req.user?.id || null;
@@ -380,7 +500,10 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
     if (!resposta) {
         resposta = respostaSistema(msg);
         origem = 'sistema-fixo';
+        console.warn('[AVISO] Python e Gemini falharam. Usando resposta do sistema.');
     }
+
+    console.log(`[CHAT] origem=${origem}`);
 
     if (idUser && idConv) {
         pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'iana', resposta]).catch(e => console.error('[DB msg iana]', e.message));
@@ -389,8 +512,10 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
     res.json({ resposta, idConversa: idConv });
 });
 
+/* ── 404 ──────────────────────────────────────────────────────── */
 app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.' }));
 
+/* ── ERROR HANDLER GLOBAL ──────────────────────────────────────── */
 app.use((err, req, res, next) => {
     console.error('[ERRO NÃO TRATADO]', err.message);
     if (err.message === 'Origem não permitida por CORS') {
@@ -399,5 +524,6 @@ app.use((err, req, res, next) => {
     res.status(500).json({ erro: 'Erro interno no servidor.' });
 });
 
+/* ── START ────────────────────────────────────────────────────── */
 const PORT = process.env.PORT || 3333;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Iana rodando na porta ${PORT}`));

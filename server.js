@@ -13,6 +13,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import sgMail from '@sendgrid/mail';
+import dns from 'dns';
+import * as cheerio from 'cheerio';
+import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
+import crypto from 'crypto';
 
 dotenv.config();
 
@@ -22,6 +27,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const app        = express();
 const codigos    = new Map();
+const dnsLookup  = dns.promises.lookup;
 
 if (!process.env.SESSION_SECRET) {
     console.error('❌ SESSION_SECRET não definido no .env'); process.exit(1);
@@ -29,7 +35,7 @@ if (!process.env.SESSION_SECRET) {
 
 const MySQLStore = MySQLStoreFactory(session);
 
-/* ── MIDDLEWARES ──────────────────────────────────────────────── */
+/* ── MIDDLEWARES BÁSICOS ──────────────────────────────────────── */
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.set('trust proxy', 1);
@@ -72,18 +78,13 @@ const pool = mysql.createPool({
     }
 })();
 
-// Store de sessão persistente no MySQL/Aiven. Substitui o MemoryStore
-// padrão do express-session, que perdia todas as sessões ativas
-// sempre que o Render reiniciava/dormia o processo — causando 401
-// inesperado em /chat/conversas, /chat/historico e efetivamente
-// "esquecendo" a conversa ativa no meio do uso.
+/* ── SESSÃO (persistente no MySQL — sobrevive a restart/sleep do Render) ── */
 const sessionStore = new MySQLStore(dbConfig);
-
 sessionStore.onReady()
     .then(() => console.log('✅ Session store (MySQL) pronto'))
     .catch(e => console.error('❌ Session store erro:', e.message));
 
-app.use(session({
+const sessionMiddleware = session({
     secret: process.env.SESSION_SECRET,
     store: sessionStore,
     resave: false,
@@ -96,9 +97,32 @@ app.use(session({
         sameSite: 'lax',
         maxAge: 7 * 24 * 60 * 60 * 1000
     }
-}));
+});
+
+app.use(sessionMiddleware);
 app.use(passport.initialize());
 app.use(passport.session());
+
+/* ── SOCKET.IO (mensagens em tempo real — usado pela sessão de visão) ── */
+const server = http.createServer(app);
+const io = new SocketIOServer(server, {
+    cors: { origin: origensPermitidas, credentials: true }
+});
+
+io.engine.use((req, res, next) => sessionMiddleware(req, res, next));
+io.use((socket, next) => {
+    passport.initialize()(socket.request, {}, () => {
+        passport.session()(socket.request, {}, () => {
+            if (socket.request.isAuthenticated?.()) return next();
+            next(new Error('não autenticado'));
+        });
+    });
+});
+
+io.on('connection', (socket) => {
+    const idUser = socket.request.user?.id;
+    if (idUser) socket.join(`user_${idUser}`);
+});
 
 /* ── GEMINI ───────────────────────────────────────────────────── */
 let genAI = null;
@@ -228,6 +252,122 @@ async function askPython(nome, conversa, mensagem, historico = []) {
     });
 }
 
+/* Gera a resposta da IA reaproveitando a cadeia Python → Gemini → fixo.
+   Usado tanto pelo /chat/stream quanto pelo /chat/visao. */
+async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config }) {
+    let resposta = null, origem = null;
+
+    if (process.env.ENABLE_PYTHON !== 'false') {
+        try {
+            resposta = await askPython(nome, idConv || 'geral', msg, historico);
+            origem = 'python';
+        } catch (e) { console.error('[Python] falhou, caindo pro Gemini via Node:', e.message); }
+    }
+    if (!resposta) {
+        resposta = await askGemini(msg, historico, instrucaoHumor(humor), config);
+        origem = resposta ? 'gemini-node' : origem;
+    }
+    if (!resposta) {
+        resposta = respostaSistema(msg);
+        origem = 'sistema-fixo';
+        console.warn('[AVISO] Python e Gemini falharam. Usando resposta do sistema.');
+    }
+    console.log(`[CHAT] origem=${origem}`);
+    return resposta;
+}
+
+/* ── LEITURA DE LINKS ─────────────────────────────────────────── */
+function extrairLinks(texto) {
+    const regex = /https?:\/\/[^\s<>"']+/gi;
+    const found = texto.match(regex) || [];
+    return [...new Set(found.map(u => u.replace(/[.,;:)\]}]+$/, '')))].slice(0, 3);
+}
+
+function ipEhPrivado(ip) {
+    if (ip.includes(':')) {
+        const ipLower = ip.toLowerCase();
+        return ipLower === '::1' || ipLower.startsWith('fe80:') ||
+               ipLower.startsWith('fc') || ipLower.startsWith('fd');
+    }
+    const partes = ip.split('.').map(Number);
+    if (partes.length !== 4 || partes.some(isNaN)) return true;
+    const [a, b] = partes;
+    if (a === 127) return true;
+    if (a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 0) return true;
+    if (a >= 224) return true;
+    return false;
+}
+
+async function buscarConteudoLink(url) {
+    let parsed;
+    try { parsed = new URL(url); } catch { return null; }
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+
+    try {
+        const { address } = await dnsLookup(parsed.hostname);
+        if (ipEhPrivado(address)) {
+            console.warn(`[LINK] Bloqueado (IP privado): ${url} → ${address}`);
+            return null;
+        }
+    } catch (e) {
+        console.warn(`[LINK] DNS falhou para ${url}:`, e.message);
+        return null;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+        const res = await fetch(parsed.toString(), {
+            signal: controller.signal,
+            redirect: 'follow',
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; IanaBot/1.0)' }
+        });
+        clearTimeout(timeout);
+
+        const tipo = res.headers.get('content-type') || '';
+        if (!res.ok || !tipo.includes('text/html')) return null;
+
+        const reader = res.body.getReader();
+        let recebido = '';
+        let bytes = 0;
+        const LIMITE = 1_500_000;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            bytes += value.length;
+            if (bytes > LIMITE) { controller.abort(); break; }
+            recebido += Buffer.from(value).toString('utf-8');
+        }
+
+        const $ = cheerio.load(recebido);
+        $('script, style, nav, footer, noscript, svg, iframe').remove();
+        const titulo = $('title').first().text().trim();
+        const texto = $('body').text().replace(/\s+/g, ' ').trim();
+
+        if (!texto) return null;
+
+        return { url: parsed.toString(), titulo: titulo || parsed.hostname, texto: texto.slice(0, 4000) };
+    } catch (e) {
+        clearTimeout(timeout);
+        console.warn(`[LINK] Falha ao ler ${url}:`, e.message);
+        return null;
+    }
+}
+
+async function montarContextoLinks(mensagem) {
+    const links = extrairLinks(mensagem);
+    if (!links.length) return '';
+    const resultados = await Promise.all(links.map(buscarConteudoLink));
+    const validos = resultados.filter(Boolean);
+    if (!validos.length) return '';
+    return validos.map(r => `[Conteúdo do link ${r.url} — "${r.titulo}"]:\n${r.texto}`).join('\n\n');
+}
+
 /* ── PASSPORT ─────────────────────────────────────────────────── */
 passport.use(new LocalStrategy(
     { usernameField: 'email', passwordField: 'senha' },
@@ -252,21 +392,37 @@ passport.deserializeUser(async (id, done) => {
 
 const auth = (req, res, next) => req.isAuthenticated() ? next() : res.status(401).json({ erro: 'Login necessário.' });
 
+/* Autenticação por token — usada pelo app local de visão (iana_visao.py),
+   que não tem cookie de navegador. */
+function gerarToken() { return crypto.randomBytes(32).toString('hex'); }
+function hashToken(token) { return crypto.createHash('sha256').update(token).digest('hex'); }
+
+const authToken = async (req, res, next) => {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!token) return res.status(401).json({ erro: 'Token ausente.' });
+    try {
+        const [r] = await pool.query('SELECT id,nome,email FROM usuarios WHERE api_token_hash=?', [hashToken(token)]);
+        if (!r.length) return res.status(401).json({ erro: 'Token inválido.' });
+        req.user = r[0];
+        next();
+    } catch (e) { res.status(500).json({ erro: 'Erro de autenticação.' }); }
+};
+
 /* ── RATE LIMIT ───────────────────────────────────────────────── */
 const chatLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 20,
-    standardHeaders: true,
-    legacyHeaders: false,
+    windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false,
     message: { erro: 'Muitas mensagens em pouco tempo. Aguarde um instante.' }
 });
 
 const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 10,
-    standardHeaders: true,
-    legacyHeaders: false,
+    windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
     message: { erro: 'Muitas tentativas de login. Tente novamente mais tarde.' }
+});
+
+const visionLimiter = rateLimit({
+    windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false,
+    message: { erro: 'Muitas análises de tela em pouco tempo.' }
 });
 
 /* ── PÁGINAS ──────────────────────────────────────────────────── */
@@ -310,6 +466,16 @@ app.post('/auth/logout', (req, res) => {
 app.get('/auth/me', (req, res) => {
     if (!req.isAuthenticated()) return res.json({ logado: false });
     res.json({ logado: true, usuario: { id: req.user.id, nome: req.user.nome, email: req.user.email } });
+});
+
+// Gera (ou renova) o token pro app local de visão. Chamar autenticado
+// no navegador; o token só é mostrado nessa resposta.
+app.post('/auth/gerar-token', auth, async (req, res) => {
+    const token = gerarToken();
+    try {
+        await pool.query('UPDATE usuarios SET api_token_hash=? WHERE id=?', [hashToken(token), req.user.id]);
+        res.json({ token });
+    } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
 app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
@@ -482,6 +648,8 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
     if (!msg) return res.status(400).json({ erro: 'Mensagem vazia.' });
     if (msg.length > 8000) return res.status(400).json({ erro: 'Mensagem muito longa.' });
 
+    const contextoLinks = await montarContextoLinks(msg);
+
     const idConv = await garantirConversa(idUser, req.body.idConversa, msg);
 
     if (idUser && idConv) {
@@ -499,35 +667,48 @@ app.post('/chat/stream', chatLimiter, async (req, res) => {
         } catch (e) { console.error('[DB historico]', e.message); }
     }
 
+    const msgParaIA = contextoLinks
+        ? `${msg}\n\n[CONTEXTO — conteúdo extraído do(s) link(s) enviado(s) pelo usuário, use isso pra responder]:\n${contextoLinks}`
+        : msg;
+
     const humor = req.body.estadoEmocional || detectarHumor(msg);
-    let resposta = null;
-    let origem = null;
-
-    if (process.env.ENABLE_PYTHON !== 'false') {
-        try {
-            resposta = await askPython(nome, idConv || 'geral', msg, historico);
-            origem = 'python';
-        } catch (e) {
-            console.error('[Python] falhou, caindo pro Gemini via Node:', e.message);
-        }
-    }
-
-    if (!resposta) {
-        resposta = await askGemini(msg, historico, instrucaoHumor(humor), config);
-        origem = resposta ? 'gemini-node' : origem;
-    }
-
-    if (!resposta) {
-        resposta = respostaSistema(msg);
-        origem = 'sistema-fixo';
-        console.warn('[AVISO] Python e Gemini falharam. Usando resposta do sistema.');
-    }
-
-    console.log(`[CHAT] origem=${origem}`);
+    const resposta = await gerarRespostaIA({ nome, idConv, msg: msgParaIA, historico, humor, config });
 
     if (idUser && idConv) {
         pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'iana', resposta]).catch(e => console.error('[DB msg iana]', e.message));
     }
+
+    res.json({ resposta, idConversa: idConv });
+});
+
+/* ── VISÃO EM TEMPO REAL (app local → backend) ──────────────────── */
+app.post('/chat/visao', visionLimiter, authToken, async (req, res) => {
+    const nome    = req.user.nome;
+    const idUser  = req.user.id;
+    const resumo  = req.body.resumo?.trim();
+
+    if (!resumo) return res.status(400).json({ erro: 'Resumo vazio.' });
+    if (resumo.length > 3000) return res.status(400).json({ erro: 'Resumo muito longo.' });
+
+    const idConv = await garantirConversa(idUser, req.body.idConversa, 'Sessão de visão em tempo real');
+
+    let historico = [];
+    try {
+        const [r] = await pool.query(
+            'SELECT mensagem, remetente FROM mensagens WHERE conversa_id=? ORDER BY id DESC LIMIT 6',
+            [idConv]
+        );
+        historico = r.reverse();
+    } catch (e) { console.error('[DB historico visao]', e.message); }
+
+    const msg = `[LEITURA AUTOMÁTICA DE TELA em tempo real — comente de forma breve e útil, como se estivesse acompanhando o jogo ao vivo]:\n${resumo}`;
+
+    const resposta = await gerarRespostaIA({ nome, idConv, msg, historico, humor: 'normal', config: '' });
+
+    pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)',
+        [idConv, idUser, 'iana', resposta]).catch(e => console.error('[DB msg visao]', e.message));
+
+    io.to(`user_${idUser}`).emit('nova_mensagem', { idConversa: idConv, resposta });
 
     res.json({ resposta, idConversa: idConv });
 });
@@ -546,4 +727,4 @@ app.use((err, req, res, next) => {
 
 /* ── START ────────────────────────────────────────────────────── */
 const PORT = process.env.PORT || 3333;
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Iana rodando na porta ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Iana rodando na porta ${PORT}`));

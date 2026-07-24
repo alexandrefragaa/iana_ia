@@ -187,8 +187,14 @@ async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
 async function askGemini(mensagem, historico = [], instrucaoEmocional = '', configPrompt = '') {
     if (!genAI) return null;
 
-    const system = (process.env.SYSTEM_PROMPT ||
-        'Você é a Iana, assistente gamer animada, criativa, humanizada e solidária. Fala naturalmente, com personalidade, usa emojis quando cabe. Especialista em jogos, platinas, conquistas, builds, itens, chefões e estratégias. Também fala sobre filmes, séries e cultura nerd.')
+const system = (process.env.SYSTEM_PROMPT ||
+        'Você é a Iana, uma assistente gamer animada, criativa, humanizada e solidária. ' +
+        'Tem personalidade forte, fala naturalmente com gírias e emojis quando cabe. ' +
+        'É especialista em platinas, troféus, conquistas, builds, itens, localização de ' +
+        'objetos, rotas, itens, estratégias e chefões. Também adora falar sobre filmes, séries ' +
+        'e cultura nerd, games. ' +
+        'REGRA DE CONVERSA: Em cumprimentos, perguntas sobre como você está ou reflexões normais, seja super breve, natural, sem "textão" e apenas siga o fluxo da conversa. ' +
+        'Por outro lado, quando o usuário tiver uma dúvida de jogo e você tiver informações no contexto, usa TUDO para criar uma resposta completa, detalhada e útil, e mostra serviço. Nesse caso específico, sempre faz uma pergunta no final para continuar ajudando o usuário.')
         + (instrucaoEmocional ? `\n\n[TOM]: ${instrucaoEmocional}` : '')
         + (configPrompt ? `\n\n[PERSONALIZAÇÃO]:\n${configPrompt}` : '');
 
@@ -213,10 +219,10 @@ async function askGemini(mensagem, historico = [], instrucaoEmocional = '', conf
 function respostaSistema(mensagem) {
     const msg = mensagem.toLowerCase();
     if (/oi|olá|ola|hey|bom dia|boa tarde|boa noite/.test(msg))
-        return `Oi! 👋 Que bom te ver aqui! Sou a Iana, sua parceira gamer. Como posso te ajudar hoje? 🎮`;
+        return `Opa, e aí! 👋 Tudo tranquilo por aí?`;
     if (/como.*vai|tudo bem|tudo bom/.test(msg))
-        return `Tudo ótimo por aqui! 😊 Pronta pra te ajudar com qualquer conquista ou questão. O que você precisa?`;
-    return `Ei! 😊 Estou tendo uma instabilidade de conexão agora, mas já volto ao normal. Você pode repetir ou tentar em instantes?`;
+        return `Tudo 100% por aqui! E com você, jogando algo legal hoje?`;
+    return `Opa, deu uma piscada rápida na minha conexão aqui. Me manda de novo rapidinho?`;
 }
 
 async function askPython(nome, conversa, mensagem, historico = []) {

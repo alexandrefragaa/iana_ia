@@ -1,8 +1,4 @@
-# scrape_learning.py
-# Roda localmente: python scrape_learning.py
-# Lê links_para_mineracao.txt e titulos_para_buscar.txt
-# Extrai o conteúdo real e salva no ChromaDB da Iana
-
+#!/usr/bin/env python3
 import requests
 import hashlib
 import time
@@ -59,42 +55,34 @@ def extrair_conteudo(url):
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # Remove scripts, estilos, menus, rodapés
-        for tag in soup(["script","style","nav","footer","header","aside","form","iframe"]):
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "iframe"]):
             tag.decompose()
 
         titulo = soup.title.text.strip() if soup.title else url.split("/")[-1]
-
-        # Extrai parágrafos e listas com conteúdo real
         blocos = []
 
-        # Títulos da página (h1, h2, h3) — dão contexto
-        for h in soup.find_all(["h1","h2","h3"]):
+        for h in soup.find_all(["h1", "h2", "h3"]):
             txt = h.get_text(strip=True)
             if len(txt) > 5:
                 blocos.append(f"## {txt}")
 
-        # Parágrafos longos
         for p in soup.find_all("p"):
             txt = p.get_text(strip=True)
             if len(txt) > 40:
                 blocos.append(txt)
 
-        # Listas (itens de conquistas, builds, etc)
         for li in soup.find_all("li"):
             txt = li.get_text(strip=True)
             if len(txt) > 20:
                 blocos.append(f"• {txt}")
 
-        # Tabelas (muito comuns em wikis de jogos)
         for tr in soup.find_all("tr"):
-            celulas = [td.get_text(strip=True) for td in tr.find_all(["td","th"]) if td.get_text(strip=True)]
+            celulas = [td.get_text(strip=True) for td in tr.find_all(["td", "th"]) if td.get_text(strip=True)]
             if celulas:
                 blocos.append(" | ".join(celulas))
 
         conteudo = "\n".join(blocos)
 
-        # Limita o tamanho para não estourar o ChromaDB
         if len(conteudo) > 6000:
             conteudo = conteudo[:6000] + "\n...[continua]"
 
@@ -115,57 +103,45 @@ def minerar_links():
         print(f"⚠️ ARQUIVO NÃO ENCONTRADO: {ARQUIVO_LINKS}")
         return 0, 0
 
-    # LÊ O ARQUIVO BRUTO
     conteudo_arquivo = ARQUIVO_LINKS.read_text(encoding='utf-8')
     linhas = conteudo_arquivo.splitlines()
     
-    # FILTRA URLs
-    urls = []
-    for i, linha in enumerate(linhas):
-        linha_limpa = linha.strip()
-        if linha_limpa.startswith("http"):
-            urls.append(linha_limpa)
+    urls = [linha.strip() for linha in linhas if linha.strip().startswith("http")]
+    print(f"🔍 Encontradas {len(urls)} URLs para análise. Iniciando mineração silenciosa...\n")
     
-    print(f"DEBUG: Total de URLs válidas encontradas: {len(urls)}")
-    
-    # ── AGORA VEM A LÓGICA QUE FALTAVA ──
-    ok = 0
-    err = 0
+    ok, err, pulados = 0, 0, 0
 
     for i, url in enumerate(urls, 1):
-        print(f"[{i}/{len(urls)}] Processando: {url[:60]}...")
-
         if ja_processado(url):
-            print(f"  ⏭️  Já processado — pulando")
+            pulados += 1
             continue
 
         titulo, conteudo = extrair_conteudo(url)
 
         if not conteudo or len(conteudo) < 80:
-            print(f"  ⚠️  Conteúdo insuficiente ou erro — pulando")
             err += 1
             continue
 
-        # Chama a função de aprendizado
-        sucesso = learn(
-            titulo    = titulo,
-            conteudo  = conteudo,
-            categoria = "web_mining",
-            id_documento = uid(url)
+        status = learn(
+            titulo=titulo,
+            conteudo=conteudo,
+            categoria="web_mining",
+            id_documento=uid(url),
+            url=url
         )
 
-        if sucesso:
+        if status == "NOVO":
             marcar_como_feito(url)
-            print(f"  ✅ Aprendido: {titulo[:60]}")
+            print(f"✅ [{i}/{len(urls)}] Aprendido: {titulo[:60]}")
             ok += 1
+        elif status in ["EXISTE", "PARECIDO"]:
+            pulados += 1
         else:
             err += 1
 
-        time.sleep(1) # Respeita o servidor
+        time.sleep(1)
 
-    print(f"\n  ✅ OK: {ok} | ❌ Erro: {err}")
-    
-    # RETORNA OS VALORES PARA A FASE 3 PODER LER
+    print(f"\n📊 Resultados dos Links: {ok} Novos | {pulados} Já conhecidos | {err} Erros")
     return ok, err
 
 # ── FASE 2: TÓPICOS ────────────────────────────────────────────────
@@ -188,25 +164,26 @@ def minerar_topicos():
     for i, topico in enumerate(topicos, 1):
         print(f"[{i}/{len(topicos)}] {topico}")
 
-        # Tenta buscar conteúdo real do tópico via Wikipedia em português
         conteudo = buscar_wikipedia(topico)
 
         if not conteudo:
-            # Se não achou no Wikipedia, salva o tópico como contexto estruturado
             conteudo = gerar_conteudo_estruturado(topico)
 
-        sucesso = learn(
-            titulo   = topico,
-            conteudo = conteudo,
-            categoria= "topico",
-            id_documento = "topic_" + hashlib.md5(topico.lower().encode('utf-8')).hexdigest()
+        status = learn(
+            titulo=topico,
+            conteudo=conteudo,
+            categoria="topico",
+            id_documento="topic_" + hashlib.md5(topico.lower().encode('utf-8')).hexdigest()
         )
 
-        if sucesso:
-            print(f"  ✅ Aprendido")
+        # FIX: Verifica a string exata devolvida pela função learn()
+        if status == "NOVO":
+            print("  ✅ Aprendido (Novo)")
             ok += 1
+        elif status in ["EXISTE", "PARECIDO"]:
+            print("  ⏭️ Já conhecido (Pulado)")
         else:
-            print(f"  ⚠️  Falha")
+            print("  ⚠️ Falha")
 
         time.sleep(0.3)
 
@@ -219,7 +196,7 @@ def buscar_wikipedia(topico):
         url = "https://pt.wikipedia.org/w/api.php"
         params = {
             "action": "query",
-            "prop":   "extracts",
+            "prop": "extracts",
             "exintro": True,
             "explaintext": True,
             "redirects": 1,
@@ -238,11 +215,6 @@ def buscar_wikipedia(topico):
     return None
 
 def gerar_conteudo_estruturado(topico):
-    """
-    Gera um conteúdo estruturado quando não acha na web.
-    Garante que a Iana ao menos saiba que o tópico existe
-    e tenha contexto para elaborar sobre ele.
-    """
     return (
         f"Tópico de conhecimento: {topico}\n\n"
         f"Este é um assunto relevante no universo gamer e de entretenimento. "

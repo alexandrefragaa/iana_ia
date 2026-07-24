@@ -3,6 +3,7 @@
 
 import sys
 import os
+import re
 import requests
 import hashlib
 import time
@@ -42,7 +43,12 @@ try:
 
     path_banco = obter_pasta_banco()
     cliente    = chromadb.PersistentClient(path=str(path_banco))
-    colecao    = cliente.get_or_create_collection(name='memoria_iana')
+    
+    # FIX: Conectado com o parâmetro de cosseno unificado
+    colecao    = cliente.get_or_create_collection(
+        name='memoria_iana',
+        metadata={"hnsw:space": "cosine"}
+    )
     modelo     = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
     banco_ok   = True
     sys.stderr.write(f'[ChromaDB] ✅ Conectado — {colecao.count()} documentos\n')
@@ -63,7 +69,7 @@ def consultar_memoria(query, conversa_id, n=5):
                 n_results=min(3, colecao.count()),
                 where={"tipo": "conversa"}
             )
-            docs_conv = res.get('documents', [[]])[0]
+            docs_conv = res.get('documents', [[]])[0] or []
         except Exception:
             docs_conv = []
 
@@ -72,23 +78,24 @@ def consultar_memoria(query, conversa_id, n=5):
             query_embeddings=[vetor],
             n_results=min(n, colecao.count())
         )
-        docs_geral = res_geral.get('documents', [[]])[0]
-        metas      = res_geral.get('metadatas', [[]])[0]
-        distancias = res_geral.get('distances', [[]])[0]
+        
+        # FIX: Acesso seguro com fallbacks para evitar erros de índice desalinhado
+        docs_geral = res_geral.get('documents', [[]])[0] or []
+        metas      = res_geral.get('metadatas', [[]])[0] or [{}] * len(docs_geral)
+        distancias = res_geral.get('distances', [[]])[0] or [999] * len(docs_geral)
 
-        # Filtra por relevância (distância semântica < 1.5)
         blocos = []
         for doc, meta, dist in zip(docs_geral, metas, distancias):
-            if dist < 1.5:  # relevante o suficiente
-                fonte   = meta.get('titulo', '') if meta else ''
-                tipo    = meta.get('tipo', '')   if meta else ''
-                trecho  = doc[:800]
+            if dist < 1.5:
+                fonte  = meta.get('titulo', '') if isinstance(meta, dict) else ''
+                tipo   = meta.get('tipo', '')   if isinstance(meta, dict) else ''
+                trecho = doc[:800]
                 if fonte:
                     blocos.append(f"[{tipo.upper()} — {fonte}]\n{trecho}")
                 else:
                     blocos.append(trecho)
 
-        todos = docs_conv[:2] + blocos  # histórico + conhecimento
+        todos = docs_conv[:2] + blocos
         return '\n\n---\n\n'.join(todos[:6]) if todos else ''
 
     except Exception as e:
@@ -126,7 +133,6 @@ system_prompt = os.getenv('SYSTEM_PROMPT', '').strip() or (
 # ── BUSCA NO CHROMADB ──────────────────────────────────────────────
 contexto = consultar_memoria(msg_final, id_conversa)
 
-# Monta o bloco de contexto para o Gemini
 bloco_contexto = ''
 if contexto:
     bloco_contexto = f"""
@@ -147,8 +153,6 @@ chave         = os.getenv('GEMINI_API_KEY','').strip().replace('"','').replace("
 modelo_gemini = os.getenv('GEMINI_MODEL','gemini-2.5-flash-lite')
 url_api       = f'https://generativelanguage.googleapis.com/v1beta/models/{modelo_gemini}:generateContent'
 
-# Detecta humor
-import re
 def detectar_humor(texto):
     letras = len(re.findall(r'[A-Za-z]', texto))
     caps   = len(re.findall(r'[A-Z]', texto))
@@ -212,7 +216,6 @@ def chamar_gemini():
 
 # ── FALLBACK COM BASE NO CONTEXTO ─────────────────────────────────
 def resposta_do_contexto():
-    """Quando Gemini falha, usa o contexto do banco pra criar uma resposta."""
     if not contexto:
         return None
     trecho = contexto[:800]
@@ -223,7 +226,6 @@ def resposta_do_contexto():
     )
 
 def resposta_criativa_sem_api():
-    """Última opção — resposta criativa sem depender de nada externo."""
     msg = msg_final.lower()
     if any(p in msg for p in ['platina','troféu','conquista','achievement']):
         return (
@@ -255,7 +257,6 @@ if not resposta:
 if not resposta:
     resposta = resposta_criativa_sem_api()
 
-# Salva a conversa no ChromaDB para memória futura
 salvar_na_memoria(msg_final, resposta, id_conversa)
 
 print(resposta)

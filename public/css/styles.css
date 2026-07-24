@@ -1283,7 +1283,20 @@ main {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: flex-start;   /* em vez de center */
+    justify-content: center;
+}
+
+/* FIX: justify-content:center num container com overflow-y:auto
+   "centraliza" o conteúdo que ultrapassa a altura visível — inclusive
+   pro lado de cima, que fica fora do alcance do scroll (o navegador
+   não deixa rolar até esse trecho "negativo"). Resultado: mensagens
+   antigas somem e não tem como rolar até o início da conversa.
+   O chat.js já alternava essa classe (chatbox.classList.toggle
+   ('has-messages', ...)) esperando por esta regra, que faltava:
+   assim que existem mensagens, alinha ao topo em vez de centralizar,
+   e o scroll volta a funcionar normalmente do início ao fim. */
+.chatbox.has-messages {
+    justify-content: flex-start;
 }
 
 .chatbox::-webkit-scrollbar {

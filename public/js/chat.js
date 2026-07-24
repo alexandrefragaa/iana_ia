@@ -1,5 +1,6 @@
 /* ================================================================
    IANA — chat.js — reescrito e otimizado
+   (com integração do IanaHUD — ver comentários "INTEGRAÇÃO HUD")
    ================================================================ */
 
 'use strict';
@@ -99,6 +100,12 @@ function escolherVozTTS() {
     return ttsVoice;
 }
 
+// INTEGRAÇÃO HUD: dispara 'falando' quando o áudio realmente começa e
+// volta pro estado certo (ouvindo, se estiver em chamada de voz; ocioso,
+// caso contrário) quando o áudio termina. Usar os eventos onstart/onend
+// da utterance é mais preciso que setar o estado na hora de chamar
+// falar(), porque sincroniza com o áudio de verdade, não com o texto
+// chegando.
 function falar(texto) {
     try {
         if (!ttsEnabled || typeof speechSynthesis === 'undefined' || !texto) return;
@@ -108,6 +115,15 @@ function falar(texto) {
         if (voz) ut.voice = voz;
         ut.rate = 1;
         ut.pitch = 1.05;
+
+        ut.onstart = () => {
+            window.IanaHUD?.setEstado('falando');
+        };
+        ut.onend = () => {
+            const emChamada = document.getElementById('overlay-voz')?.style.display === 'flex';
+            window.IanaHUD?.setEstado(emChamada ? 'ouvindo' : 'ocioso');
+        };
+
         speechSynthesis.cancel();
         speechSynthesis.speak(ut);
     } catch (e) {
@@ -185,6 +201,8 @@ function fecharVoz() {
         streamVoz.getTracks().forEach(t => t.stop());
         streamVoz = null;
     }
+    // INTEGRAÇÃO HUD: saiu da chamada, volta ao repouso.
+    window.IanaHUD?.setEstado('ocioso');
 }
 
 function iniciarReconhecimentoVoz() {
@@ -224,6 +242,8 @@ function iniciarReconhecimentoVoz() {
     };
 
     rec.start();
+    // INTEGRAÇÃO HUD: começou a escutar.
+    window.IanaHUD?.setEstado('ouvindo');
 }
 
 function toggleMuteVoz() {
@@ -232,6 +252,8 @@ function toggleMuteVoz() {
         try { window._recognitionVoz.stop(); } catch (e) { }
         window._recognitionVoz = null;
         if (btn) btn.textContent = '🔇';
+        // INTEGRAÇÃO HUD: mutou, volta ao repouso.
+        window.IanaHUD?.setEstado('ocioso');
     } else {
         iniciarReconhecimentoVoz();
         if (btn) btn.textContent = '🎙️';
@@ -890,7 +912,7 @@ function adicionarRespostaIA(texto) {
     scrollParaFim();
 
     if (ttsNextResponse) {
-        falar(texto);
+        falar(texto); // dispara IanaHUD 'falando' via onstart, ver falar()
         ttsNextResponse = false;
     }
 }
@@ -940,6 +962,12 @@ async function enviarMensagem() {
 async function processarEnvioIA(conteudo) {
     if (typeof conteudo !== 'string' || !conteudo.trim()) return;
     aguardandoResposta = true;
+
+    // INTEGRAÇÃO HUD: entrando em processamento. Na 1ª mensagem, o
+    // AnimacaoChat.iniciarPensamento() (chamado abaixo) já seta
+    // 'pensando' sozinho — mas setar aqui também não faz mal e cobre
+    // o caso de mensagens seguintes, que não passam por lá.
+    window.IanaHUD?.setEstado('pensando');
 
     // FIX (integração real do animation-controller.js): a transição
     // "cheia" (welcome sai de cena, status Pensando/Analisando/
@@ -1014,12 +1042,21 @@ async function processarEnvioIA(conteudo) {
         await esconderIndicador();
         adicionarRespostaIA(data.resposta);
 
+        // INTEGRAÇÃO HUD: se não vai tocar TTS (ex: chat de texto puro),
+        // volta pro repouso agora. Se vai tocar TTS, quem assume o
+        // estado 'falando'/'ouvindo' são os eventos onstart/onend dentro
+        // de falar() — não sobrescreve aqui pra não brigar com eles.
+        if (!ttsNextResponse) {
+            window.IanaHUD?.setEstado('ocioso');
+        }
+
     } catch (e) {
         await esconderIndicador();
         if (e.name !== 'AbortError') {
             adicionarRespostaIA('Desculpe, não consegui processar sua solicitação no momento.');
             console.error('Erro no envio:', e);
         }
+        window.IanaHUD?.setEstado('ocioso');
     } finally {
         aguardandoResposta = false;
         if (sendBtn) sendBtn.style.display = 'flex';
@@ -1036,6 +1073,7 @@ function pararRespostaIA() {
     try { controller.abort(); } catch (e) { }
     aguardandoResposta = false;
     esconderTypingIndicator();
+    window.IanaHUD?.setEstado('ocioso');
 
     const sendBtn = document.getElementById('btn-send');
     const stopBtn = document.getElementById('btn-stop');
@@ -1089,6 +1127,7 @@ function resetarChat() {
     // Novo chat = welcome volta a aparecer; permite a transição
     // welcome->pensando tocar de novo na próxima mensagem.
     if (typeof animacaoChat !== 'undefined') animacaoChat.primeiraMensagemFeita = false;
+    window.IanaHUD?.setEstado('ocioso');
     if (usuarioAtual) carregarHistorico();
 }
 
@@ -1142,6 +1181,9 @@ document.addEventListener('DOMContentLoaded', () => {
     iniciarMenuUpload();
     iniciarUpload();
     iniciarGravacaoAudio();
+
+    // INTEGRAÇÃO HUD: container definido na topbar do index.html.
+    window.IanaHUD?.iniciar('iana-hud');
 
     // Sidebar
     document.getElementById('sidebar-toggle')?.addEventListener('click', () => {

@@ -1,24 +1,64 @@
 /* =================================================================
-   IANA — animation-controller.js
-   Transição welcome -> "pensando" (Pensando/Analisando/Respondendo)
-   Roda só na 1ª mensagem da sessão/conversa; chamado pelo chat.js.
+   IANA — animation-controller.js (integrado)
+   Contém DUAS coisas que trabalham juntas:
 
-   FIX (ativação real): este arquivo antes definia seu PRÓPRIO
-   enviarMensagem() e seus próprios listeners de teclado/clique nos
-   MESMOS elementos que o chat.js já usa (#chat-input, #send-btn), e
-   usava IDs/classes (welcome-view, thinking-view, .search-pill,
-   .iana-label-container) que não existiam no HTML. Como não estava
-   incluído no index.html, nunca rodava — mas se alguém adicionasse o
-   <script> sem perceber, ele sobrescrevia o enviarMensagem() de
-   verdade (o do chat.js, com histórico/config/abort controller) por
-   uma versão incompleta que nem mostrava a resposta na tela.
+   1) IanaHUD — controla o estado visual da silhueta do troféu
+      (ocioso | ouvindo | pensando | falando), lendo o CSS em
+      trophy-hud.css via data-estado.
 
-   Agora: só expõe a classe AnimacaoChat + uma instância global
-   `animacaoChat`. Toda a lógica de envio continua 100% no chat.js,
-   que chama animacaoChat.iniciarPensamento()/finalizarPensamento()
-   quando for o caso.
+   2) AnimacaoChat — controla a transição welcome -> thinking-view
+      que roda só na 1ª mensagem da sessão. Chamado pelo chat.js.
+
+   A integração acontece dentro do próprio AnimacaoChat: sempre que
+   ele muda de fase, ele também empurra o estado equivalente pro
+   IanaHUD, então o troféu e o texto "Pensando/Analisando/Respondendo"
+   ficam sincronizados na primeira mensagem.
+
+   Para as mensagens seguintes (fora da 1ª) e para a chamada de voz,
+   quem chama IanaHUD.setEstado(...) é o próprio chat.js diretamente
+   — ver os comentários "INTEGRAÇÃO HUD" nesse arquivo.
    ================================================================= */
+'use strict';
 
+/* ── 1) IanaHUD ──────────────────────────────────────────────── */
+const IanaHUD = (() => {
+    let elHud = null;
+
+    /**
+     * Inicializa o HUD dentro de um container existente.
+     * @param {string} containerId - id do elemento que vai virar o HUD
+     */
+    function iniciar(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) {
+            console.warn(`IanaHUD: container #${containerId} não encontrado.`);
+            return;
+        }
+        container.classList.add('trophy-wrap');
+        container.dataset.estado = 'ocioso';
+        container.innerHTML = '<div class="trophy-silhueta"></div>';
+        elHud = container;
+    }
+
+    /**
+     * Muda o estado visual do HUD.
+     * @param {'ocioso'|'ouvindo'|'pensando'|'falando'} estado
+     */
+    function setEstado(estado) {
+        if (!elHud) return;
+        elHud.dataset.estado = estado;
+    }
+
+    function getEstado() {
+        return elHud ? elHud.dataset.estado : null;
+    }
+
+    return { iniciar, setEstado, getEstado };
+})();
+window.IanaHUD = IanaHUD;
+
+
+/* ── 2) AnimacaoChat ─────────────────────────────────────────── */
 class AnimacaoChat {
     constructor() {
         this.em_transicao = false;
@@ -42,6 +82,8 @@ class AnimacaoChat {
     /**
      * Move o welcome pra fora de cena e mostra o thinking-view no lugar,
      * com o status ciclando Pensando -> Analisando -> Respondendo.
+     * Sincroniza o IanaHUD para 'pensando' assim que a transição entra
+     * em vigor.
      */
     async iniciarPensamento() {
         if (this.em_transicao || this.primeiraMensagemFeita) return;
@@ -75,6 +117,9 @@ class AnimacaoChat {
 
         this.estado_atual = 'pensando';
         this.em_transicao = false;
+
+        // INTEGRAÇÃO HUD: sincroniza o troféu com a fase de pensamento.
+        window.IanaHUD?.setEstado('pensando');
 
         this._cicloDeFases();
     }
@@ -112,6 +157,8 @@ class AnimacaoChat {
     /**
      * Esconde o thinking-view. A partir daqui já estamos em modo chat —
      * mensagens seguintes usam o typing indicator normal do chat.js.
+     * Sincroniza o IanaHUD de volta pra 'ocioso' (chat.js pode
+     * sobrescrever pra 'falando' logo em seguida se for tocar TTS).
      */
     async finalizarPensamento() {
         if (this.em_transicao) return;
@@ -134,6 +181,9 @@ class AnimacaoChat {
         this.primeiraMensagemFeita = true;
         this.estado_atual = 'repouso';
         this.em_transicao = false;
+
+        // INTEGRAÇÃO HUD: volta ao repouso visual.
+        window.IanaHUD?.setEstado('ocioso');
     }
 }
 

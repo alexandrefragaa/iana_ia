@@ -65,7 +65,6 @@
         <main class="main" id="main">
 
             <div class="topbar">
-                <div id="iana-hud"></div>
                 <div class="topbar-right" id="auth-buttons">
                     <button class="btn-entrar" id="btn-entrar">Entrar</button>
                     <button class="btn-registrar" id="btn-registrar">Registrar</button>
@@ -156,8 +155,12 @@
     <!-- MODAL CHAMADA DE VOZ (estilo Jarvis / voice mode) -->
     <div class="overlay jarvis-call" id="overlay-voz" style="display:none;">
         <div class="jarvis-call-inner">
-            <div class="jarvis-hud jarvis-hud--lg" id="voz-hud-grande"></div>
-            <p class="voz-status" id="voz-status">Fale com a Iana</p>
+
+            <!-- Orbe grande, centralizado no meio da tela -->
+            <div class="jarvis-call-centro">
+                <div class="jarvis-hud jarvis-hud--lg" id="voz-hud-grande"></div>
+                <p class="voz-status" id="voz-status">Fale com a Iana</p>
+            </div>
 
             <!-- Transcrição ao vivo dos dois lados da conversa -->
             <div class="voz-feed" id="voz-feed"></div>

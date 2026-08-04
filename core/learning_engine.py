@@ -1,9 +1,18 @@
 import os
 import sys
 import hashlib
+import json
 from pathlib import Path
-import chromadb
-from sentence_transformers import SentenceTransformer
+
+try:
+    import chromadb
+except Exception:  # pragma: no cover - ambiente sem dependência
+    chromadb = None
+
+try:
+    from sentence_transformers import SentenceTransformer
+except Exception:  # pragma: no cover - ambiente sem dependência
+    SentenceTransformer = None
 
 # =========================================================
 # 1. CONEXÃO COM O CÉREBRO DA IANA (ChromaDB)
@@ -22,26 +31,85 @@ path_banco = obter_pasta_banco()
 path_banco.mkdir(parents=True, exist_ok=True)
 
 print(f"🧠 Ligando os motores neurais da Iana... (banco em: {path_banco})")
-try:
-    cliente = chromadb.PersistentClient(path=str(path_banco))
-    if not any(path_banco.iterdir()):
-        print("⚠️ AVISO: O diretório do ChromaDB está vazio. Se você estiver no Render, verifique o Persistent Disk!")
-    
-    # FIX: metadata={"hnsw:space": "cosine"} garante métrica correta para cálculo de similaridade (0 a 1)
-    colecao = cliente.get_or_create_collection(
-        name='memoria_iana',
-        metadata={"hnsw:space": "cosine"}
-    )
-    modelo = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
-except Exception as e:
-    print(f"❌ Falha crítica ao iniciar a memória vetorial: {e}")
-    sys.exit(1)
+cliente = None
+colecao = None
+modelo = None
+modo_fallback = False
+memoria_inicializada = False
+
+
+def _inicializar_memoria():
+    global cliente, colecao, modelo, modo_fallback, memoria_inicializada
+    if memoria_inicializada:
+        return not modo_fallback
+
+    memoria_inicializada = True
+    try:
+        if chromadb is None:
+            raise RuntimeError("Dependências de embeddings não disponíveis")
+
+        cliente = chromadb.PersistentClient(path=str(path_banco))
+        if not any(path_banco.iterdir()):
+            print("⚠️ AVISO: O diretório do ChromaDB está vazio. Se você estiver no Render, verifique o Persistent Disk!")
+
+        colecao = cliente.get_or_create_collection(
+            name='memoria_iana',
+            metadata={"hnsw:space": "cosine"}
+        )
+
+        if SentenceTransformer is None:
+            raise RuntimeError("sentence-transformers não disponível")
+
+        modelo = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
+        print("🧠 Memória vetorial ativa")
+        return True
+    except Exception as e:
+        modo_fallback = True
+        print(f"⚠️ Memória vetorial indisponível, usando fallback simples: {e}")
+        return False
+
+# fallback simples em arquivo JSON para não depender de ChromaDB/embeddings
+arquivo_fallback = path_banco / 'memoria_fallback.json'
+if arquivo_fallback.exists():
+    try:
+        with arquivo_fallback.open('r', encoding='utf-8') as fh:
+            memoria_fallback = json.load(fh)
+    except Exception:
+        memoria_fallback = []
+else:
+    memoria_fallback = []
+
+
+def _salvar_memoria_fallback(doc_id, titulo, conteudo, categoria, url):
+    global memoria_fallback
+    memoria_fallback = [item for item in memoria_fallback if item.get('id') != doc_id]
+    memoria_fallback.append({
+        'id': doc_id,
+        'titulo': titulo,
+        'conteudo': conteudo,
+        'categoria': categoria,
+        'url': url or ''
+    })
+    with arquivo_fallback.open('w', encoding='utf-8') as fh:
+        json.dump(memoria_fallback, fh, ensure_ascii=False, indent=2)
+
+
+def _carregar_memoria_fallback():
+    if not arquivo_fallback.exists():
+        return []
+    try:
+        with arquivo_fallback.open('r', encoding='utf-8') as fh:
+            return json.load(fh)
+    except Exception:
+        return []
 
 # =========================================================
 # 2. VERIFICAÇÕES
 # =========================================================
 def documento_existe(id_documento):
     """Verifica se um documento já existe pelo ID."""
+    if not _inicializar_memoria():
+        return any(item.get('id') == id_documento for item in memoria_fallback)
     try:
         resultado = colecao.get(ids=[id_documento])
         return len(resultado["ids"]) > 0
@@ -50,6 +118,8 @@ def documento_existe(id_documento):
 
 def documento_parecido(vetor, limite=0.985):
     """Evita salvar documentos praticamente iguais com base na similaridade de cosseno."""
+    if not _inicializar_memoria():
+        return False
     try:
         resultado = colecao.query(
             query_embeddings=[vetor],
@@ -77,9 +147,6 @@ def learn(titulo, conteudo, categoria="mining", id_documento=None, url=None):
                 hashlib.md5(titulo.strip().lower().encode("utf-8")).hexdigest()
             )
 
-        if documento_existe(id_documento):
-            return "EXISTE"
-
         texto = f"""
 Título:
 {titulo}
@@ -95,10 +162,30 @@ Conteúdo:
 {conteudo}
 """
 
+        if not _inicializar_memoria():
+            if documento_existe(id_documento):
+                _salvar_memoria_fallback(id_documento, titulo, texto, categoria, url)
+                return "ATUALIZADO"
+            _salvar_memoria_fallback(id_documento, titulo, texto, categoria, url)
+            return "NOVO"
+
         vetor = modelo.encode(
             texto,
             normalize_embeddings=True
         ).tolist()
+
+        if documento_existe(id_documento):
+            colecao.upsert(
+                ids=[id_documento],
+                documents=[texto],
+                embeddings=[vetor],
+                metadatas=[{
+                    "titulo": titulo,
+                    "tipo": categoria,
+                    "url": url if url else ""
+                }]
+            )
+            return "ATUALIZADO"
 
         if documento_parecido(vetor):
             return "PARECIDO"
@@ -126,6 +213,15 @@ Conteúdo:
 def buscar_na_memoria_iana(pergunta_usuario, limite_resultados=2):
     """Transforma a pergunta em vetor e busca os fragmentos mais relevantes no ChromaDB."""
     try:
+        if not _inicializar_memoria():
+            itens = _carregar_memoria_fallback()[-limite_resultados:]
+            if not itens:
+                return "Não encontrei informações específicas sobre isso na minha memória."
+            return "\n\n---\n\n".join(
+                f"[{item.get('categoria', 'memoria')}] {item.get('titulo', '')}\n{item.get('conteudo', '')}"
+                for item in itens
+            )
+
         vetor_pergunta = modelo.encode(pergunta_usuario, normalize_embeddings=True).tolist()
         
         resultados = colecao.query(

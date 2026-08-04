@@ -15,7 +15,7 @@
 4. TESTAR ENDPOINTS COM CURL:
 
    # Teste de Registro
-   curl -X POST http://localhost:3333/auth/register \
+   curl -X POST http://localhost:3333/auth/registro \
      -H "Content-Type: application/json" \
      -d '{"nome":"Teste","email":"teste@example.com","senha":"123456"}'
 
@@ -104,12 +104,13 @@ proximas.forEach(etapa => console.log(`  ${etapa}`));
 
 const endpoints = {
   "Autenticação": {
-    "POST /auth/register": "email, senha, nome",
+    "POST /auth/registro": "nome, email, senha",
     "POST /auth/login": "email, senha",
     "POST /auth/logout": "sem parâmetros",
-    "POST /auth/forgot-password": "email",
-    "POST /auth/reset-password": "email, codigo, novaSenha",
-    "GET /auth/user": "sem parâmetros (requer autenticação)"
+    "POST /auth/esqueci-senha": "email",
+    "POST /auth/mudar-senha": "email, codigo, nova_senha",
+    "POST /auth/trocar-senha": "senhaAtual, novaSenha",
+    "GET /auth/me": "sem parâmetros (requer autenticação)"
   },
 
   "Chat": {

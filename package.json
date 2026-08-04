@@ -4,7 +4,8 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "scrape-learning": "python core/scrape_learning.py"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",

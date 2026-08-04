@@ -145,6 +145,11 @@ if (process.env.SENDGRID_API_KEY) {
     console.warn('⚠️ SENDGRID_API_KEY ausente — envio de e-mail desativado');
 }
 
+const LOCAL_ONLY = process.env.IANA_LOCAL_ONLY === 'true';
+if (LOCAL_ONLY) {
+    console.log('⚠️ IANA_LOCAL_ONLY ativado — respostas sem Gemini / Google / ChatGPT');
+}
+
 function detectarHumor(texto) {
     if (!texto) return 'normal';
     const letras = (texto.match(/[A-Za-z]/g) || []).length;
@@ -185,6 +190,7 @@ async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
 }
 
 async function askGemini(mensagem, historico = [], instrucaoEmocional = '', configPrompt = '') {
+    if (LOCAL_ONLY) return null;
     if (!genAI) return null;
 
 const system = (process.env.SYSTEM_PROMPT ||
@@ -276,7 +282,11 @@ async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config }) 
     if (!resposta) {
         resposta = respostaSistema(msg);
         origem = 'sistema-fixo';
-        console.warn('[AVISO] Python e Gemini falharam. Usando resposta do sistema.');
+        if (LOCAL_ONLY) {
+            console.warn('[AVISO] Modo local ativo: usando resposta interna sem Gemini.');
+        } else {
+            console.warn('[AVISO] Python e Gemini falharam. Usando resposta do sistema.');
+        }
     }
     console.log(`[CHAT] origem=${origem}`);
     return resposta;
@@ -432,6 +442,7 @@ const visionLimiter = rateLimit({
 });
 
 /* ── PÁGINAS ──────────────────────────────────────────────────── */
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/configuracoes', (req, res) => res.sendFile(path.join(__dirname, 'public', 'configuracoes.html')));
 
@@ -467,6 +478,37 @@ app.post('/auth/login', loginLimiter, (req, res, next) => {
 
 app.post('/auth/logout', (req, res) => {
     req.logout(() => req.session.destroy(() => { res.clearCookie('iana.sid'); res.json({ ok: true }); }));
+});
+
+app.post('/auth/trocar-senha', auth, async (req, res) => {
+    const senhaAtual = req.body.senhaAtual?.trim();
+    const novaSenha = req.body.novaSenha?.trim();
+
+    if (!senhaAtual || !novaSenha) {
+        return res.status(400).json({ erro: 'Preencha senha atual e nova senha.' });
+    }
+    if (novaSenha.length < 8) {
+        return res.status(400).json({ erro: 'Senha mínima: 8 caracteres.' });
+    }
+
+    try {
+        const [rows] = await pool.query('SELECT senha FROM usuarios WHERE id=?', [req.user.id]);
+        if (!rows.length) {
+            return res.status(404).json({ erro: 'Usuário não encontrado.' });
+        }
+
+        const ok = await bcrypt.compare(senhaAtual, rows[0].senha || '');
+        if (!ok) {
+            return res.status(400).json({ erro: 'Senha atual incorreta.' });
+        }
+
+        const hash = await bcrypt.hash(novaSenha, 12);
+        await pool.query('UPDATE usuarios SET senha=? WHERE id=?', [hash, req.user.id]);
+        res.json({ ok: true });
+    } catch (e) {
+        console.error('[TROCAR SENHA]', e.message);
+        res.status(500).json({ erro: 'Erro interno.' });
+    }
 });
 
 app.get('/auth/me', (req, res) => {

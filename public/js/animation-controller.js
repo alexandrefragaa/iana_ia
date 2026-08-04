@@ -21,36 +21,55 @@
 'use strict';
 
 /* ── 1) IanaHUD ──────────────────────────────────────────────── */
+// Estilo Jarvis: anéis girando + núcleo pulsante + barrinhas reativas.
+// Suporta MAIS DE UM orbe montado ao mesmo tempo (o pequeno da topbar
+// e o grande da tela de chamada), todos sincronizados no mesmo estado.
 const IanaHUD = (() => {
-    let elHud = null;
+    const elementos = new Set();
+    let estadoAtual = 'ocioso';
+
+    function montarMarkup() {
+        return `
+            <div class="jarvis-ring jarvis-ring-outer"></div>
+            <div class="jarvis-ring jarvis-ring-mid"></div>
+            <div class="jarvis-ring jarvis-ring-inner"></div>
+            <div class="jarvis-core"></div>
+            <div class="jarvis-bars">
+                <span></span><span></span><span></span><span></span><span></span>
+            </div>
+        `;
+    }
 
     /**
-     * Inicializa o HUD dentro de um container existente.
+     * Inicializa (ou reinicializa) um HUD dentro de um container existente.
+     * Pode ser chamado várias vezes com IDs diferentes — cada um vira um
+     * orbe independente, todos atualizados juntos por setEstado().
      * @param {string} containerId - id do elemento que vai virar o HUD
+     * @param {'sm'|'lg'} tamanho - 'sm' (topbar, ~40px) ou 'lg' (chamada, grande)
      */
-    function iniciar(containerId) {
+    function iniciar(containerId, tamanho = 'sm') {
         const container = document.getElementById(containerId);
         if (!container) {
             console.warn(`IanaHUD: container #${containerId} não encontrado.`);
             return;
         }
-        container.classList.add('trophy-wrap');
-        container.dataset.estado = 'ocioso';
-        container.innerHTML = '<div class="trophy-silhueta"></div>';
-        elHud = container;
+        container.classList.add('jarvis-hud', `jarvis-hud--${tamanho}`);
+        container.dataset.estado = estadoAtual;
+        container.innerHTML = montarMarkup();
+        elementos.add(container);
     }
 
     /**
-     * Muda o estado visual do HUD.
+     * Muda o estado visual de TODOS os orbes montados.
      * @param {'ocioso'|'ouvindo'|'pensando'|'falando'} estado
      */
     function setEstado(estado) {
-        if (!elHud) return;
-        elHud.dataset.estado = estado;
+        estadoAtual = estado;
+        elementos.forEach(el => { el.dataset.estado = estado; });
     }
 
     function getEstado() {
-        return elHud ? elHud.dataset.estado : null;
+        return estadoAtual;
     }
 
     return { iniciar, setEstado, getEstado };

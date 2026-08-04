@@ -24,6 +24,15 @@ let gravandoAudio = false;
 let streamCamera = null;
 let streamVoz = null;
 
+// Chamada de voz: feed ao vivo (ver abrirVoz/fecharVoz) e visualização
+// real do microfone (Web Audio API), separada do SpeechRecognition —
+// só serve pra alimentar as barrinhas do orbe com o volume de verdade.
+let emChamadaVoz = false;
+let audioCtxVoz = null;
+let analyserVoz = null;
+let streamAudioVozBars = null;
+let rafVozId = null;
+
 const TELAS = [
     'tela-login', 'tela-cadastro', 'tela-esqueci', 'tela-codigo',
     'tela-pesquisa', 'tela-feedback', 'tela-renomear', 'tela-confirmar'
@@ -184,10 +193,15 @@ async function capturarFoto() {
     await processarEnvioIA('[Usuário enviou uma foto capturada pela câmera.]');
 }
 
-/* ── MODAL CHAMADA DE VOZ ─────────────────────────────────────── */
+/* ── MODAL CHAMADA DE VOZ (estilo Jarvis) ─────────────────────── */
 function abrirVoz() {
     const overlay = document.getElementById('overlay-voz');
     if (overlay) overlay.style.display = 'flex';
+
+    emChamadaVoz = true;
+    window.IanaHUD?.iniciar('voz-hud-grande', 'lg');
+    limparFeedVoz();
+    iniciarVisualizacaoAudio();
     iniciarReconhecimentoVoz();
 }
 
@@ -196,19 +210,90 @@ function fecharVoz() {
     if (overlay) overlay.style.display = 'none';
     if (window._recognitionVoz) {
         try { window._recognitionVoz.stop(); } catch (e) { }
+        window._recognitionVoz = null;
     }
     if (streamVoz) {
         streamVoz.getTracks().forEach(t => t.stop());
         streamVoz = null;
     }
+    speechSynthesis?.cancel();
+    pararVisualizacaoAudio();
+    emChamadaVoz = false;
+
+    const interim = document.getElementById('voz-interim');
+    if (interim) interim.textContent = '';
+
+    const btnMute = document.getElementById('btn-voz-mute');
+    if (btnMute) { btnMute.classList.remove('mutado'); btnMute.textContent = '🎙️'; }
+
     // INTEGRAÇÃO HUD: saiu da chamada, volta ao repouso.
     window.IanaHUD?.setEstado('ocioso');
+}
+
+/* Volume real do microfone -> alimenta as barrinhas do orbe (--nivel).
+   Roda em paralelo ao SpeechRecognition (que não expõe volume). */
+async function iniciarVisualizacaoAudio() {
+    try {
+        streamAudioVozBars = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioCtxVoz = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtxVoz.createMediaStreamSource(streamAudioVozBars);
+        analyserVoz = audioCtxVoz.createAnalyser();
+        analyserVoz.fftSize = 32;
+        source.connect(analyserVoz);
+        loopVisualizacaoAudio();
+    } catch (e) {
+        console.warn('Visualização de áudio do microfone indisponível:', e.message);
+    }
+}
+
+function loopVisualizacaoAudio() {
+    if (!analyserVoz) return;
+    const dados = new Uint8Array(analyserVoz.frequencyBinCount);
+    analyserVoz.getByteFrequencyData(dados);
+    const media = dados.reduce((a, b) => a + b, 0) / dados.length;
+    const nivel = Math.min(1, media / 90);
+    document.querySelectorAll('.jarvis-bars').forEach(bars => {
+        bars.style.setProperty('--nivel', nivel.toFixed(2));
+    });
+    rafVozId = requestAnimationFrame(loopVisualizacaoAudio);
+}
+
+function pararVisualizacaoAudio() {
+    if (rafVozId) cancelAnimationFrame(rafVozId);
+    rafVozId = null;
+    if (streamAudioVozBars) {
+        streamAudioVozBars.getTracks().forEach(t => t.stop());
+        streamAudioVozBars = null;
+    }
+    if (audioCtxVoz) {
+        audioCtxVoz.close().catch(() => { });
+        audioCtxVoz = null;
+    }
+    analyserVoz = null;
+}
+
+/* ── FEED AO VIVO DA CHAMADA ──────────────────────────────────── */
+function limparFeedVoz() {
+    const feed = document.getElementById('voz-feed');
+    if (feed) feed.innerHTML = '';
+    const interim = document.getElementById('voz-interim');
+    if (interim) interim.textContent = '';
+}
+
+function adicionarNaFeedVoz(tipo, texto) {
+    const feed = document.getElementById('voz-feed');
+    if (!feed || !texto?.trim()) return;
+    const bolha = document.createElement('div');
+    bolha.className = `voz-feed-msg ${tipo === 'user' ? 'voz-feed-user' : 'voz-feed-iana'}`;
+    bolha.textContent = texto;
+    feed.appendChild(bolha);
+    feed.scrollTop = feed.scrollHeight;
 }
 
 function iniciarReconhecimentoVoz() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const statusEl = document.getElementById('voz-status');
-    const transcriptEl = document.getElementById('voz-transcript');
+    const transcriptEl = document.getElementById('voz-interim');
 
     if (!SpeechRecognition) {
         if (statusEl) statusEl.textContent = 'Reconhecimento de voz não suportado neste navegador.';
@@ -231,7 +316,7 @@ function iniciarReconhecimentoVoz() {
             if (statusEl) statusEl.textContent = 'Processando...';
             ttsNextResponse = true;
             processarEnvioIA(texto.trim()).then(() => {
-                if (statusEl) statusEl.textContent = 'Fale sua pergunta';
+                if (statusEl) statusEl.textContent = 'Fale com a Iana';
                 if (transcriptEl) transcriptEl.textContent = '';
             });
         }
@@ -251,12 +336,12 @@ function toggleMuteVoz() {
     if (window._recognitionVoz) {
         try { window._recognitionVoz.stop(); } catch (e) { }
         window._recognitionVoz = null;
-        if (btn) btn.textContent = '🔇';
+        if (btn) { btn.textContent = '🔇'; btn.classList.add('mutado'); }
         // INTEGRAÇÃO HUD: mutou, volta ao repouso.
         window.IanaHUD?.setEstado('ocioso');
     } else {
         iniciarReconhecimentoVoz();
-        if (btn) btn.textContent = '🎙️';
+        if (btn) { btn.textContent = '🎙️'; btn.classList.remove('mutado'); }
     }
 }
 
@@ -866,6 +951,9 @@ function adicionarBolhaUsuario(texto) {
     msgs.appendChild(wrap);
     configurarExpandir(bubble, acoes);
     scrollParaFim();
+
+    // Em chamada de voz, a mesma fala também aparece no feed ao vivo.
+    if (emChamadaVoz) adicionarNaFeedVoz('user', texto);
 }
 
 function adicionarImagemUsuario(dataUrl) {
@@ -915,6 +1003,9 @@ function adicionarRespostaIA(texto) {
         falar(texto); // dispara IanaHUD 'falando' via onstart, ver falar()
         ttsNextResponse = false;
     }
+
+    // Em chamada de voz, a resposta dela também aparece no feed ao vivo.
+    if (emChamadaVoz) adicionarNaFeedVoz('iana', texto);
 }
 
 function scrollParaFim() {

@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/css/styles.css">
     <link rel="stylesheet" href="/css/animations.css">
     <link rel="stylesheet" href="/css/mensagens.css">
+    <link rel="stylesheet" href="/css/jarvis.css">
 </head>
 
 <body>
@@ -152,20 +153,19 @@
         </div>
     </div>
 
-    <!-- MODAL CHAMADA DE VOZ -->
-    <div class="overlay" id="overlay-voz" style="display:none;">
-        <div class="modal-voz">
-            <div class="voz-avatar-wrap">
-                <img src="/img/iana-avatar.png" class="voz-avatar" id="voz-avatar">
-                <div class="voz-ondas" id="voz-ondas">
-                    <span></span><span></span><span></span><span></span><span></span>
-                </div>
-            </div>
-            <h2 class="voz-titulo">Iana está ouvindo...</h2>
-            <p class="voz-status" id="voz-status">Fale sua pergunta</p>
-            <p class="voz-transcript" id="voz-transcript"></p>
+    <!-- MODAL CHAMADA DE VOZ (estilo Jarvis / voice mode) -->
+    <div class="overlay jarvis-call" id="overlay-voz" style="display:none;">
+        <div class="jarvis-call-inner">
+            <div class="jarvis-hud jarvis-hud--lg" id="voz-hud-grande"></div>
+            <p class="voz-status" id="voz-status">Fale com a Iana</p>
+
+            <!-- Transcrição ao vivo dos dois lados da conversa -->
+            <div class="voz-feed" id="voz-feed"></div>
+            <!-- Legenda ao vivo enquanto você ainda está falando (antes de confirmar) -->
+            <p class="voz-interim" id="voz-interim"></p>
+
             <div class="voz-acoes">
-                <button class="btn-voz-mute" id="btn-voz-mute">🎙️</button>
+                <button class="btn-voz-mute" id="btn-voz-mute" title="Mutar">🎙️</button>
                 <button class="btn-voz-encerrar" id="btn-voz-encerrar">Encerrar chamada</button>
             </div>
         </div>

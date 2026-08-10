@@ -935,7 +935,7 @@ function adicionarBolhaUsuario(texto) {
     mostrarWelcome(false);
 
     const wrap = document.createElement('div');
-    wrap.className = 'user-msg-wrap';
+    wrap.className = 'user-msg-wrap nova-mensagem';
 
     const bubble = document.createElement('div');
     bubble.className = 'user-msg-bubble';
@@ -973,7 +973,7 @@ function adicionarRespostaIA(texto) {
     if (!msgs) return;
 
     const container = document.createElement('div');
-    container.className = 'iana-response-container';
+    container.className = 'iana-response-container nova-mensagem';
 
     const av = document.createElement('img');
     av.src = '/img/iana-avatar.png';
@@ -1127,8 +1127,11 @@ async function processarEnvioIA(conteudo) {
 
         if (data.idConversa && !idConversaAtiva) {
             idConversaAtiva = data.idConversa;
-            if (usuarioAtual) carregarHistorico();
         }
+
+        // Reordena a sidebar: a conversa que acabou de receber mensagem
+        // sobe pro topo (fixadas continuam por cima; as outras descem).
+        if (usuarioAtual) carregarHistorico();
 
         await esconderIndicador();
         adicionarRespostaIA(data.resposta);
@@ -1273,8 +1276,8 @@ document.addEventListener('DOMContentLoaded', () => {
     iniciarUpload();
     iniciarGravacaoAudio();
 
-    // INTEGRAÇÃO HUD: container definido na topbar do index.html.
-    window.IanaHUD?.iniciar('iana-hud');
+    // O orbe estilo Jarvis agora só existe na tela de chamada de voz
+    // (ver abrirVoz() em vez daqui) — fica separado do chat de texto.
 
     // Sidebar
     document.getElementById('sidebar-toggle')?.addEventListener('click', () => {

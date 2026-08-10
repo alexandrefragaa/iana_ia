@@ -625,8 +625,14 @@ async function garantirConversa(idUsuario, idConversa, mensagem) {
     const id = idConversa || `conv_${idUsuario}_${Date.now()}`;
     const titulo = mensagem.replace(/\[.*?\]/g,'').trim().slice(0,40) || 'Nova Conversa';
     try {
+        // FIX (ordenação da sidebar): antes o ON DUPLICATE KEY UPDATE não
+        // tocava em nada (titulo=titulo), então uma conversa já existente
+        // nunca "subia" na lista ao receber mensagem nova — ficava presa
+        // na posição de quando foi criada. Agora toda vez que essa função
+        // roda (ou seja, toda vez que o usuário manda mensagem numa
+        // conversa, nova ou existente), atualizado_em é setado pra agora.
         await pool.query(
-            'INSERT INTO conversas (id,usuario_id,titulo) VALUES (?,?,?) ON DUPLICATE KEY UPDATE titulo=titulo',
+            'INSERT INTO conversas (id,usuario_id,titulo,atualizado_em) VALUES (?,?,?,NOW()) ON DUPLICATE KEY UPDATE atualizado_em=NOW()',
             [id, idUsuario, titulo + (titulo.length >= 40 ? '...' : '')]
         );
     } catch (e) { console.error('[DB garantirConversa]', e.message); }
@@ -636,7 +642,7 @@ async function garantirConversa(idUsuario, idConversa, mensagem) {
 app.get('/chat/conversas', auth, async (req, res) => {
     try {
         const [r] = await pool.query(
-            'SELECT id, titulo, fixada FROM conversas WHERE usuario_id=? ORDER BY fixada DESC, id DESC',
+            'SELECT id, titulo, fixada FROM conversas WHERE usuario_id=? ORDER BY fixada DESC, atualizado_em DESC, id DESC',
             [req.user.id]
         );
         res.json({ conversas: r.map(c => ({ id_conversa: c.id, titulo: c.titulo, fixada: !!c.fixada })) });
@@ -657,7 +663,7 @@ app.post('/chat/conversas', auth, async (req, res) => {
     const { titulo } = req.body;
     const id = `conv_${req.user.id}_${Date.now()}`;
     try {
-        await pool.query('INSERT INTO conversas (id,usuario_id,titulo) VALUES (?,?,?)', [id, req.user.id, titulo || 'Nova Conversa']);
+        await pool.query('INSERT INTO conversas (id,usuario_id,titulo,atualizado_em) VALUES (?,?,?,NOW())', [id, req.user.id, titulo || 'Nova Conversa']);
         res.json({ id_conversa: id });
     } catch (e) { res.status(500).json({ erro: e.message }); }
 });

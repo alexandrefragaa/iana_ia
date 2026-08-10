@@ -248,6 +248,9 @@ io.use(
 
 /* =========================================================
    VOZ EM TEMPO REAL: GEMINI LIVE + ELEVENLABS
+   - Gemini Live cria a resposta dinamicamente.
+   - A transcrição chega em pedaços e é enviada ao ElevenLabs por frases.
+   - O navegador recebe PCM 24 kHz em streaming.
 ========================================================= */
 const ELEVEN_API_KEY = process.env.ELEVENLABS_API_KEY;
 const ELEVEN_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
@@ -255,43 +258,126 @@ const elevenlabsPronto = Boolean(ELEVEN_API_KEY && ELEVEN_VOICE_ID);
 const liveAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview';
 const sessoesVoz = new Map();
-const SYSTEM_PROMPT_VOZ = process.env.SYSTEM_PROMPT_VOZ || 'Você é a Iana, assistente gamer, em uma chamada de voz em tempo real. Responda sempre em português do Brasil. Seja natural, curta e conversacional.';
+const SYSTEM_PROMPT_VOZ = process.env.SYSTEM_PROMPT_VOZ || [
+    'Você é a Iana, assistente gamer nerd, empolgada e extremamente natural em uma chamada de voz em tempo real.',
+    'Responda sempre em português do Brasil.',
+    'Crie cada resposta na hora; nunca use respostas prontas ou frases decoradas.',
+    'Fale de forma espontânea, inteligente, divertida e conversacional, como uma gamer nerd falando com outro gamer.',
+    'Seja objetiva, mas aprofunde quando necessário.',
+    'Use pontuação natural para favorecer pausas e entonação na voz.',
+    'Nunca diga que está pensando, processando ou gerando a resposta.'
+].join(' ');
 
-function sintetizarVozIana(texto, onChunk, onDone, onError) {
-    const controller = new AbortController();
-    (async () => {
-        try {
-            const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(ELEVEN_VOICE_ID)}/stream?output_format=pcm_24000`, {
-                method: 'POST',
-                signal: controller.signal,
-                headers: { 'xi-api-key': ELEVEN_API_KEY, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: texto, model_id: process.env.ELEVENLABS_MODEL || 'eleven_flash_v2_5', voice_settings: { stability: 0.5, similarity_boost: 0.8 } })
-            });
-            if (!response.ok || !response.body) throw new Error(`ElevenLabs respondeu ${response.status}`);
-            const reader = response.body.getReader();
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                onChunk(Buffer.from(value).toString('base64'));
-            }
-            onDone();
-        } catch (e) {
-            if (e.name !== 'AbortError') onError(e);
+function normalizarTextoVoz(texto) {
+    return String(texto || '').replace(/```[\s\S]*?```/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function quebrarTrechosVoz(buffer, final = false) {
+    let restante = String(buffer || '');
+    const trechos = [];
+    const regexFrase = /([\s\S]*?[.!?…]+(?:["'”’)]*)\s+)/;
+    while (true) {
+        const match = restante.match(regexFrase);
+        if (!match) break;
+        const trecho = normalizarTextoVoz(match[1]);
+        if (trecho) trechos.push(trecho);
+        restante = restante.slice(match[0].length);
+    }
+    while (restante.length >= 140) {
+        const corte = restante.lastIndexOf(' ', 140);
+        if (corte < 60) break;
+        const trecho = normalizarTextoVoz(restante.slice(0, corte));
+        if (trecho) trechos.push(trecho + ',');
+        restante = restante.slice(corte + 1);
+    }
+    if (final) {
+        const ultimo = normalizarTextoVoz(restante);
+        if (ultimo) trechos.push(ultimo);
+        restante = '';
+    }
+    return { trechos, restante };
+}
+
+async function sintetizarVozIana(texto, onChunk, onError) {
+    const textoLimpo = normalizarTextoVoz(texto);
+    if (!textoLimpo) return;
+    try {
+        const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(ELEVEN_VOICE_ID)}/stream?output_format=pcm_24000`, {
+            method: 'POST',
+            headers: { 'xi-api-key': ELEVEN_API_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text: textoLimpo,
+                model_id: process.env.ELEVENLABS_MODEL || 'eleven_flash_v2_5',
+                voice_settings: { stability: 0.5, similarity_boost: 0.8, style: 0.65, use_speaker_boost: true }
+            })
+        });
+        if (!response.ok || !response.body) {
+            const detalhe = await response.text().catch(() => '');
+            throw new Error(`ElevenLabs respondeu ${response.status}${detalhe ? `: ${detalhe.slice(0, 300)}` : ''}`);
         }
-    })();
-    return controller;
+        const reader = response.body.getReader();
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value?.length) onChunk(Buffer.from(value).toString('base64'));
+        }
+    } catch (e) {
+        onError?.(e);
+    }
 }
 
 io.on('connection', (socket) => {
     const idUser = socket.request.user?.id;
     if (idUser) socket.join(`user_${idUser}`);
     let textoAcumulado = '';
-    let sinteseEmAndamento = null;
+    let filaSintese = Promise.resolve();
+    let vozCancelada = false;
+    let controllersAtivos = new Set();
+
+    const emitirTrechoParaEleven = (trecho) => {
+        const texto = normalizarTextoVoz(trecho);
+        if (!texto || vozCancelada) return;
+        filaSintese = filaSintese.then(async () => {
+            if (vozCancelada) return;
+            const controller = new AbortController();
+            controllersAtivos.add(controller);
+            try {
+                const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(ELEVEN_VOICE_ID)}/stream?output_format=pcm_24000`, {
+                    method: 'POST', signal: controller.signal,
+                    headers: { 'xi-api-key': ELEVEN_API_KEY, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text, model_id: process.env.ELEVENLABS_MODEL || 'eleven_flash_v2_5', voice_settings: { stability: 0.5, similarity_boost: 0.8, style: 0.65, use_speaker_boost: true } })
+                });
+                if (!response.ok || !response.body) throw new Error(`ElevenLabs respondeu ${response.status}`);
+                const reader = response.body.getReader();
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (!vozCancelada && value?.length) socket.emit('voz:audio-resposta', { audio: Buffer.from(value).toString('base64') });
+                }
+            } catch (e) {
+                if (e.name !== 'AbortError' && !vozCancelada) {
+                    console.error('[VOZ] ElevenLabs:', e.message);
+                    socket.emit('voz:erro', { mensagem: 'Falha ao gerar a voz.' });
+                }
+            } finally { controllersAtivos.delete(controller); }
+        });
+    };
+
+    const encerrarVoz = () => {
+        vozCancelada = true;
+        textoAcumulado = '';
+        for (const controller of controllersAtivos) { try { controller.abort(); } catch {} }
+        controllersAtivos.clear();
+        filaSintese = Promise.resolve();
+        const liveSession = sessoesVoz.get(socket.id);
+        if (liveSession) { try { liveSession.close(); } catch {} sessoesVoz.delete(socket.id); }
+    };
 
     socket.on('voz:iniciar', async () => {
         if (!liveAI) return socket.emit('voz:erro', { mensagem: 'GEMINI_API_KEY não configurada.' });
         if (!elevenlabsPronto) return socket.emit('voz:erro', { mensagem: 'ELEVENLABS_API_KEY/ELEVENLABS_VOICE_ID ausentes.' });
         if (sessoesVoz.has(socket.id)) return;
+        vozCancelada = false; textoAcumulado = '';
         try {
             const liveSession = await liveAI.live.connect({
                 model: LIVE_MODEL,
@@ -300,26 +386,29 @@ io.on('connection', (socket) => {
                     onopen: () => socket.emit('voz:pronto'),
                     onmessage: (message) => {
                         const sc = message.serverContent;
-                        if (!sc) return;
+                        if (!sc || vozCancelada) return;
                         if (sc.inputTranscription?.text) socket.emit('voz:transcricao-usuario', { texto: sc.inputTranscription.text, final: false });
-                        if (sc.outputTranscription?.text) { textoAcumulado += sc.outputTranscription.text; socket.emit('voz:transcricao-iana', { texto: textoAcumulado, final: false }); }
+                        if (sc.outputTranscription?.text) {
+                            const fragmento = normalizarTextoVoz(sc.outputTranscription.text);
+                            if (fragmento) {
+                                textoAcumulado += (textoAcumulado ? ' ' : '') + fragmento;
+                                socket.emit('voz:transcricao-iana', { texto: textoAcumulado, final: false });
+                                const partes = quebrarTrechosVoz(textoAcumulado, false);
+                                textoAcumulado = partes.restante;
+                                partes.trechos.forEach(emitirTrechoParaEleven);
+                            }
+                        }
                         if (sc.interrupted) {
-                            sinteseEmAndamento?.abort();
-                            sinteseEmAndamento = null;
                             textoAcumulado = '';
-                            socket.emit('voz:interrompido');
+                            for (const controller of controllersAtivos) { try { controller.abort(); } catch {} }
+                            controllersAtivos.clear(); filaSintese = Promise.resolve(); socket.emit('voz:interrompido');
                         }
                         if (sc.turnComplete) {
-                            const textoParaFalar = textoAcumulado.trim();
-                            socket.emit('voz:transcricao-iana', { texto: textoParaFalar, final: true });
+                            const partes = quebrarTrechosVoz(textoAcumulado, true);
                             textoAcumulado = '';
-                            if (textoParaFalar) {
-                                sinteseEmAndamento = sintetizarVozIana(textoParaFalar,
-                                    (audio) => socket.emit('voz:audio-resposta', { audio }),
-                                    () => { sinteseEmAndamento = null; },
-                                    (e) => { sinteseEmAndamento = null; console.error('[VOZ] ElevenLabs:', e.message); socket.emit('voz:erro', { mensagem: 'Falha ao gerar a voz.' }); }
-                                );
-                            }
+                            partes.trechos.forEach(emitirTrechoParaEleven);
+                            socket.emit('voz:transcricao-iana', { texto: partes.trechos.join(' '), final: true });
+                            socket.emit('voz:fala-finalizada');
                         }
                     },
                     onerror: (e) => { console.error('[VOZ LIVE]', e.message); socket.emit('voz:erro', { mensagem: 'Erro na conexão de voz.' }); },
@@ -333,6 +422,15 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('voz:texto', (texto) => {
+        const liveSession = sessoesVoz.get(socket.id);
+        const mensagem = normalizarTextoVoz(texto);
+        if (!liveSession || !mensagem || mensagem.length > 8000) return;
+        vozCancelada = false;
+        try { liveSession.sendRealtimeInput({ text: mensagem }); }
+        catch (e) { console.error('[VOZ LIVE] envio de texto:', e.message); socket.emit('voz:erro', { mensagem: 'Não consegui enviar sua fala para a Iana.' }); }
+    });
+
     socket.on('voz:audio', (base64Audio) => {
         const liveSession = sessoesVoz.get(socket.id);
         if (!liveSession || typeof base64Audio !== 'string' || base64Audio.length > 1_000_000) return;
@@ -340,12 +438,13 @@ io.on('connection', (socket) => {
         catch (e) { console.error('[VOZ LIVE] envio:', e.message); }
     });
 
-    const encerrarVoz = () => {
-        sinteseEmAndamento?.abort();
-        sinteseEmAndamento = null;
-        const liveSession = sessoesVoz.get(socket.id);
-        if (liveSession) { try { liveSession.close(); } catch {} sessoesVoz.delete(socket.id); }
-    };
+    socket.on('voz:interromper', () => {
+        textoAcumulado = '';
+        for (const controller of controllersAtivos) { try { controller.abort(); } catch {} }
+        controllersAtivos.clear(); filaSintese = Promise.resolve();
+        socket.emit('voz:interrompido');
+    });
+
     socket.on('voz:encerrar', encerrarVoz);
     socket.on('disconnect', encerrarVoz);
 });
@@ -400,12 +499,6 @@ const LOCAL_ONLY =
     process.env.IANA_LOCAL_ONLY ===
     'true';
 
-const PYTHON_CORE_PATH = path.join(__dirname, 'core', 'iana.py');
-const PYTHON_AVAILABLE = existsSync(PYTHON_CORE_PATH);
-if (process.env.ENABLE_PYTHON !== 'false' && !PYTHON_AVAILABLE) {
-    console.warn('⚠️ Python desativado: core/iana.py não foi encontrado. O Gemini Node será usado como fallback.');
-}
-
 if (LOCAL_ONLY) {
     console.log(
         '⚠️ IANA_LOCAL_ONLY ativado — respostas sem Gemini / Google / ChatGPT'
@@ -450,13 +543,6 @@ function detectarHumor(
     }
 
     if (
-        /[!?][!?]/.test(texto) &&
-        !/!{2,}|\?{2,}/.test(texto)
-    ) {
-        return 'frustrado';
-    }
-
-    if (
         /!{2,}|\?{2,}/.test(texto)
     ) {
         return 'estressado';
@@ -475,9 +561,6 @@ function instrucaoHumor(
 
             estressado:
                 'O usuário está estressado. Responda com leveza e tranquilidade.',
-
-            frustrado:
-                'O usuário parece frustrado. Seja objetivo, acolhedor e ajude a destravar o problema.',
 
             normal: ''
         }[humor] || ''
@@ -501,26 +584,22 @@ const MODELOS = [
    CHAMAR GEMINI
 ========================================================= */
 
-async function chamarGemini(modelo, mensagem, historico, systemPrompt, anexo = null) {
+async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
     if (!genAI) throw new Error('Gemini não inicializado');
 
-    const contents = historico.map((h) => ({
-        role: h.remetente === 'iana' ? 'model' : 'user',
-        parts: [{ text: String(h.mensagem || '') }]
-    }));
-
-    const parts = [{ text: mensagem }];
-    if (anexo?.tipo === 'imagem' || anexo?.tipo === 'audio') {
-        parts.push({ inlineData: { mimeType: anexo.mimeType, data: anexo.data } });
-    }
-    contents.push({ role: 'user', parts });
-
-    const result = await genAI.models.generateContent({
+    const chat = genAI.chats.create({
         model: modelo,
-        contents,
-        config: { systemInstruction: systemPrompt, maxOutputTokens: 2048 }
+        history: historico.map((h) => ({
+            role: h.remetente === 'iana' ? 'model' : 'user',
+            parts: [{ text: h.mensagem }]
+        })),
+        config: {
+            systemInstruction: systemPrompt,
+            maxOutputTokens: 2048
+        }
     });
 
+    const result = await chat.sendMessage({ message: mensagem });
     const txt = result?.text;
     if (!txt?.trim()) throw new Error('Resposta vazia');
     return txt.trim();
@@ -534,8 +613,7 @@ async function askGemini(
     mensagem,
     historico = [],
     instrucaoEmocional = '',
-    configPrompt = '',
-    anexo = null
+    configPrompt = ''
 ) {
     if (LOCAL_ONLY) {
         return null;
@@ -582,8 +660,7 @@ async function askGemini(
                     modelo,
                     mensagem,
                     historico,
-                    system,
-                    anexo
+                    system
                 );
             } catch (err) {
                 const status =
@@ -690,6 +767,7 @@ async function askPython(
             const coreScript = path.join(__dirname, 'core', 'iana.py');
             const rootScript = path.join(__dirname, 'iana.py');
             const scriptPath = existsSync(coreScript) ? coreScript : rootScript;
+            if (!existsSync(scriptPath)) throw new Error('Script Python da Iana não encontrado');
 
             const args = [
                 scriptPath,
@@ -837,17 +915,14 @@ async function gerarRespostaIA({
     msg,
     historico,
     humor,
-    config,
-    anexo = null
+    config
 }) {
     let resposta = null;
     let origem = null;
 
     if (
-        !anexo &&
-        PYTHON_AVAILABLE &&
-        process.env.ENABLE_PYTHON !==
-        'false'
+        process.env.ENABLE_PYTHON !== 'false' &&
+        (existsSync(path.join(__dirname, 'core', 'iana.py')) || existsSync(path.join(__dirname, 'iana.py')))
     ) {
         try {
             resposta =
@@ -876,8 +951,7 @@ async function gerarRespostaIA({
                 instrucaoHumor(
                     humor
                 ),
-                config,
-                anexo
+                config
             );
 
         origem =
@@ -928,15 +1002,6 @@ function extrairLinks(
             )
         )
     ].slice(0, 3);
-}
-
-function extrairDataUrl(dataUrl, prefixoMime) {
-    if (typeof dataUrl !== 'string') return null;
-    const match = dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/i);
-    if (!match) return null;
-    const mimeType = match[1].toLowerCase();
-    if (prefixoMime && !mimeType.startsWith(prefixoMime)) return null;
-    return { mimeType, data: match[2] };
 }
 
 function ipEhPrivado(ip) {
@@ -2621,19 +2686,6 @@ app.post(
                     });
             }
 
-            let anexo = null;
-            if (req.body.imagem) {
-                const parsed = extrairDataUrl(req.body.imagem, 'image/');
-                if (!parsed) return res.status(400).json({ erro: 'Imagem inválida.' });
-                if (Buffer.byteLength(parsed.data, 'base64') > 7 * 1024 * 1024) return res.status(413).json({ erro: 'Imagem muito grande. Limite: 7 MB.' });
-                anexo = { tipo: 'imagem', ...parsed };
-            } else if (req.body.audio) {
-                const parsed = extrairDataUrl(req.body.audio, 'audio/');
-                if (!parsed) return res.status(400).json({ erro: 'Áudio inválido.' });
-                if (Buffer.byteLength(parsed.data, 'base64') > 10 * 1024 * 1024) return res.status(413).json({ erro: 'Áudio muito grande. Limite: 10 MB.' });
-                anexo = { tipo: 'audio', ...parsed };
-            }
-
             const contextoLinks =
                 await montarContextoLinks(
                     msg
@@ -2723,8 +2775,7 @@ app.post(
                             msgParaIA,
                         historico,
                         humor,
-                        config,
-                        anexo
+                        config
                     }
                 );
 

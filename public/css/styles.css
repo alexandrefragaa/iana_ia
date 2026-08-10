@@ -1,3 +1,9 @@
+
+/* ==========================================================================
+   styles.css — Estilos principais da IANA
+   ========================================================================== */
+
+
 /* ==========================================================================
    1. RESET & ESTILOS GERAIS
    ========================================================================== */
@@ -9,18 +15,27 @@
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
+html,
+body {
+    width: 100%;
+    height: 100%;
+}
+
 body {
     background:
-        radial-gradient(circle at center,
+        radial-gradient(
+            circle at center,
             rgba(34, 211, 238, .05) 0%,
             rgba(147, 51, 234, .05) 50%,
-            #05060a 100%);
+            #05060a 100%
+        );
     background-color: #05060a;
     color: #e3e3e3;
     height: 100vh;
     height: 100dvh;
     overflow: hidden;
 }
+
 
 /* ==========================================================================
    2. APP / LAYOUT PRINCIPAL
@@ -45,8 +60,9 @@ main {
     min-width: 0;
 }
 
+
 /* ==========================================================================
-   3. TOPBAR (Barra Superior)
+   3. TOPBAR
    ========================================================================== */
 
 .topbar {
@@ -55,9 +71,10 @@ main {
     align-items: center;
     justify-content: space-between;
     padding: 12px 20px;
-    background: rgba(5, 6, 10, 0.8);
+    background: rgba(5, 6, 10, .8);
     backdrop-filter: blur(10px);
-    border-bottom: 1px solid rgba(34, 211, 238, 0.1);
+    -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(34, 211, 238, .1);
     flex-shrink: 0;
     z-index: 100;
 }
@@ -87,7 +104,7 @@ main {
     width: 28px;
     height: 28px;
     border-radius: 50%;
-    border: 1px solid rgba(34, 211, 238, 0.5);
+    border: 1px solid rgba(34, 211, 238, .5);
 }
 
 .topbar-brand span {
@@ -99,14 +116,6 @@ main {
     -webkit-text-fill-color: transparent;
 }
 
-/* FIX: .topbar usa "justify-content: space-between", o que só funciona
-   como esperado (brand à esquerda, ações à direita) se houver DOIS
-   filhos flex dentro de .topbar. No HTML atual só existe
-   ".topbar-right" (o .topbar-left/.topbar-brand não está no markup),
-   então com um único item "space-between" o alinha no INÍCIO do
-   container — ou seja, os botões Entrar/Registrar apareceriam à
-   ESQUERDA, não à direita. "margin-left: auto" resolve isso sozinho,
-   funcionando tanto se .topbar-left existir quanto se não existir. */
 .topbar-right {
     margin-left: auto;
     display: flex;
@@ -114,11 +123,17 @@ main {
     gap: 10px;
 }
 
+
+/* ==========================================================================
+   3.1 OVERLAY DA SIDEBAR
+   ========================================================================== */
+
 .sidebar-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, .6);
     backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     z-index: 9998;
     display: none;
 }
@@ -127,14 +142,21 @@ main {
     display: block;
 }
 
+
 /* ==========================================================================
-   4. SIDEBAR (Barra Lateral)
+   4. SIDEBAR
    ========================================================================== */
 
 .sidebar {
     width: 260px;
     min-width: 260px;
-    background: linear-gradient(180deg, #160424 0%, #3b0764 50%, #4c1d95 100%);
+    background:
+        linear-gradient(
+            180deg,
+            #160424 0%,
+            #3b0764 50%,
+            #4c1d95 100%
+        );
     border-right: 1px solid rgba(168, 85, 247, .3);
     padding: 15px;
     display: flex;
@@ -142,17 +164,24 @@ main {
     overflow: hidden;
     flex-shrink: 0;
     z-index: 1000;
-    transition: width .3s ease, min-width .3s ease, padding .3s ease;
+    transition:
+        width .3s ease,
+        min-width .3s ease,
+        padding .3s ease;
 }
 
-/* Única definição de largura do sidebar colapsado. A duplicata que
-   existia em animations.css (width:72px, sem min-width) foi removida
-   de lá — ver comentário nesse arquivo. Esta aqui é a fonte única
-   da verdade. */
+
+/* ── Sidebar recolhida ───────────────────────────────────────── */
+
 .sidebar.collapsed {
     width: 68px;
     min-width: 68px;
 }
+
+
+/* ==========================================================================
+   4.1 TOPO DA SIDEBAR
+   ========================================================================== */
 
 .sidebar-top {
     display: flex;
@@ -210,11 +239,11 @@ main {
     transform: scale(1.08);
 }
 
-.sidebar.collapsed .brand-name {
-    display: none;
-}
 
-/* ── Ações (Novo Chat / Buscar) ────────────────────────────── */
+/* ==========================================================================
+   4.2 AÇÕES DA SIDEBAR
+   ========================================================================== */
+
 .sidebar-actions {
     width: 100%;
     display: flex;
@@ -256,8 +285,14 @@ main {
     transform: scale(.98);
 }
 
-.sidebar.collapsed .btn-novo-chat span,
-.sidebar.collapsed .btn-buscar span {
+
+/* ── Sidebar recolhida ───────────────────────────────────────── */
+
+.sidebar.collapsed .brand-name {
+    display: none;
+}
+
+.sidebar.collapsed .sidebar-actions span {
     display: none;
 }
 
@@ -271,7 +306,11 @@ main {
     margin: 0 auto;
 }
 
-/* ── Histórico ──────────────────────────────────────────────── */
+
+/* ==========================================================================
+   4.3 HISTÓRICO
+   ========================================================================== */
+
 .sidebar-historico {
     flex: 1;
     overflow-y: auto;
@@ -301,10 +340,11 @@ main {
     display: none;
 }
 
-/* ── Itens do histórico (gerados pelo chat.js) ─────────────────
-   FIX: chat.js cria .chat-item/.chat-titulo/.chat-options-* dinamicamente
-   pra cada conversa da sidebar, mas nenhuma dessas classes tinha CSS —
-   a lista de conversas renderizava sem estilo nenhum. */
+
+/* ==========================================================================
+   4.4 ITENS DO HISTÓRICO
+   ========================================================================== */
+
 .chat-item {
     position: relative;
     display: flex;
@@ -409,7 +449,11 @@ main {
     filter: invert(.7);
 }
 
-/* ── Rodapé / Perfil do Usuário ─────────────────────────────── */
+
+/* ==========================================================================
+   4.5 RODAPÉ / PERFIL
+   ========================================================================== */
+
 .sidebar-footer {
     padding-top: 16px;
     border-top: 1px solid rgba(168, 85, 247, .3);
@@ -499,13 +543,18 @@ main {
     background: rgba(248, 113, 113, .1);
 }
 
+
 /* ==========================================================================
-   5. ÁREA DE DIGITAÇÃO (INPUT)
+   5. ÁREA DE DIGITAÇÃO
    ========================================================================== */
 
 .input-wrap {
     flex-shrink: 0;
-    padding: 20px 20px calc(20px + env(safe-area-inset-bottom, 0px)) 20px;
+    padding:
+        20px
+        20px
+        calc(20px + env(safe-area-inset-bottom, 0px))
+        20px;
 }
 
 .input-pill {
@@ -566,6 +615,10 @@ main {
     overflow-y: auto;
 }
 
+.chat-textarea::placeholder {
+    color: #71717a;
+}
+
 .chat-textarea::-webkit-scrollbar {
     width: 4px;
 }
@@ -605,6 +658,7 @@ main {
     margin-top: 10px;
 }
 
+
 /* ==========================================================================
    6. MENUS E MODAIS
    ========================================================================== */
@@ -641,17 +695,28 @@ main {
     background: rgba(255, 255, 255, .06);
 }
 
+
+/* ==========================================================================
+   6.1 OVERLAY
+   ========================================================================== */
+
 .overlay {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, .7);
     backdrop-filter: blur(6px);
-    z-index: 10000; /* Sempre acima de tudo */
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 10000;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 20px;
 }
+
+
+/* ==========================================================================
+   6.2 MODAIS
+   ========================================================================== */
 
 .modal-camera,
 .modal-auth {
@@ -673,8 +738,15 @@ main {
 }
 
 @keyframes fadeModal {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .modal-close {
@@ -771,8 +843,13 @@ main {
     transition: .2s;
 }
 
-.btn-modal-acao:hover { filter: brightness(1.1); }
-.btn-modal-acao:active { transform: scale(.98); }
+.btn-modal-acao:hover {
+    filter: brightness(1.1);
+}
+
+.btn-modal-acao:active {
+    transform: scale(.98);
+}
 
 .btn-modal-sec {
     flex: 1;
@@ -796,11 +873,6 @@ main {
     color: #fff;
 }
 
-/* Bloco antigo "Chamada de voz" (.voz-avatar-wrap, .voz-avatar, .voz-ondas,
-   .modal-voz, .voz-titulo, .voz-transcript, e as versões duplicadas de
-   .voz-status/.voz-feed/.voz-feed-msg/.voz-interim/.btn-voz-mute/
-   .btn-voz-encerrar) foi removido daqui — confirmado: não há resíduos.
-   Toda a UI de chamada de voz agora mora só em jarvis.css. */
 
 /* ==========================================================================
    7. PÁGINA DE CONFIGURAÇÕES
@@ -817,7 +889,13 @@ main {
 .config-sidebar {
     width: 260px;
     min-width: 260px;
-    background: linear-gradient(180deg, #160424 0%, #3b0764 50%, #4c1d95 100%);
+    background:
+        linear-gradient(
+            180deg,
+            #160424 0%,
+            #3b0764 50%,
+            #4c1d95 100%
+        );
     border-right: 1px solid rgba(168, 85, 247, .3);
     padding: 20px 15px;
     display: flex;
@@ -918,6 +996,7 @@ main {
     border-bottom: 1px solid rgba(255, 255, 255, .08);
     background: rgba(5, 6, 10, .8);
     backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     flex-shrink: 0;
 }
 
@@ -1027,7 +1106,12 @@ main {
 }
 
 .config-chip.ativo {
-    background: linear-gradient(135deg, rgba(34, 211, 238, .25), rgba(168, 85, 247, .25));
+    background:
+        linear-gradient(
+            135deg,
+            rgba(34, 211, 238, .25),
+            rgba(168, 85, 247, .25)
+        );
     border-color: #22d3ee;
     color: #fff;
     font-weight: 600;
@@ -1108,6 +1192,11 @@ main {
     line-height: 1.3;
 }
 
+
+/* ==========================================================================
+   7.1 TOGGLE
+   ========================================================================== */
+
 .toggle {
     position: relative;
     display: inline-block;
@@ -1156,14 +1245,24 @@ main {
     box-shadow: 0 0 0 3px rgba(34, 211, 238, .4);
 }
 
+
+/* ==========================================================================
+   7.2 BARRA DE SALVAMENTO
+   ========================================================================== */
+
 .config-salvar-bar {
     position: fixed;
     bottom: 0;
     left: 260px;
     right: 0;
-    padding: 14px 30px calc(14px + env(safe-area-inset-bottom, 0px)) 30px;
+    padding:
+        14px
+        30px
+        calc(14px + env(safe-area-inset-bottom, 0px))
+        30px;
     background: rgba(5, 6, 10, .92);
     backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border-top: 1px solid rgba(255, 255, 255, .08);
     display: flex;
     justify-content: flex-end;
@@ -1191,8 +1290,9 @@ main {
     transform: translateY(0) scale(.98);
 }
 
+
 /* ==========================================================================
-   9. TELA DE BOAS-VINDAS (WELCOME)
+   8. TELA DE BOAS-VINDAS
    ========================================================================== */
 
 .welcome {
@@ -1271,23 +1371,53 @@ main {
     transform: translateY(0) scale(.97);
 }
 
+
 /* ==========================================================================
-   8. MEDIA QUERIES (Mobile unificado)
+   9. ACESSIBILIDADE
+   ========================================================================== */
+
+button,
+input,
+textarea,
+select {
+    font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+    outline: 2px solid rgba(34, 211, 238, .8);
+    outline-offset: 2px;
+}
+
+::selection {
+    background: #22d3ee;
+    color: #05060a;
+}
+
+
+/* ==========================================================================
+   10. MEDIA QUERIES — MOBILE
    ========================================================================== */
 
 @media (max-width: 768px) {
-    /* ── Topbar / Barra Superior ── */
+
+    /* ── Topbar ─────────────────────────────────────────────── */
+
     .btn-menu-mobile {
         display: flex;
         align-items: center;
         justify-content: center;
     }
-    
+
     .topbar {
         padding: 10px 14px;
     }
 
-    /* ── Sidebar (Menu Principal) ── */
+
+    /* ── Sidebar ────────────────────────────────────────────── */
+
     .sidebar {
         position: fixed !important;
         left: 0;
@@ -1297,10 +1427,10 @@ main {
         min-width: 280px !important;
         z-index: 9999 !important;
         transform: translateX(0);
-        transition: transform 0.3s ease;
-        box-shadow: 10px 0 30px rgba(0, 0, 0, 0.8);
+        transition: transform .3s ease;
+        box-shadow: 10px 0 30px rgba(0, 0, 0, .8);
     }
-    
+
     .sidebar.collapsed {
         transform: translateX(-100%) !important;
     }
@@ -1319,14 +1449,36 @@ main {
         height: auto !important;
         border-radius: 10px !important;
         justify-content: flex-start !important;
+        margin: 0;
     }
 
-    /* ── Input Wrap ── */
+
+    /* ── Input ─────────────────────────────────────────────── */
+
     .input-wrap {
-        padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0px)) 14px;
+        padding:
+            14px
+            14px
+            calc(14px + env(safe-area-inset-bottom, 0px))
+            14px;
     }
 
-    /* ── Tela de Boas-vindas ── */
+    .input-pill {
+        border-radius: 20px;
+        padding-left: 10px;
+    }
+
+    .chat-textarea {
+        font-size: 1rem;
+    }
+
+
+    /* ── Tela de boas-vindas ───────────────────────────────── */
+
+    .welcome {
+        padding: 20px 14px;
+    }
+
     .welcome-avatar-wrap {
         max-width: 160px;
     }
@@ -1339,13 +1491,27 @@ main {
         font-size: .9rem;
     }
 
-    /* ── Modais ── */
-    .modal-camera,
-    .modal-auth {
+    .sugestoes {
         max-width: 100%;
     }
 
-    /* ── Tela de Configurações ── */
+
+    /* ── Modais ────────────────────────────────────────────── */
+
+    .overlay {
+        padding: 14px;
+    }
+
+    .modal-camera,
+    .modal-auth {
+        max-width: 100%;
+        padding: 20px;
+        border-radius: 18px;
+    }
+
+
+    /* ── Configurações ─────────────────────────────────────── */
+
     .config-sidebar {
         position: absolute;
         left: 0;
@@ -1356,8 +1522,8 @@ main {
         min-width: 220px;
     }
 
-    .config-salvar-bar {
-        left: 0;
+    .config-header {
+        padding: 16px 20px;
     }
 
     .config-scroll {
@@ -1367,5 +1533,68 @@ main {
 
     .config-card {
         max-width: 100%;
+        padding: 18px;
+    }
+
+    .config-salvar-bar {
+        left: 0;
+        padding-left: 20px;
+        padding-right: 20px;
+    }
+}
+
+
+/* ==========================================================================
+   11. TELAS MUITO PEQUENAS
+   ========================================================================== */
+
+@media (max-width: 420px) {
+
+    .topbar-brand span {
+        font-size: 1rem;
+    }
+
+    .input-wrap {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+
+    .welcome-titulo {
+        font-size: 1.25rem;
+    }
+
+    .welcome-avatar-wrap {
+        max-width: 130px;
+    }
+
+    .sugestao-chip {
+        font-size: .82rem;
+        padding: 8px 12px;
+    }
+
+    .config-scroll {
+        padding: 14px;
+        padding-bottom: 90px;
+    }
+
+    .config-card {
+        padding: 16px;
+    }
+}
+
+
+/* ==========================================================================
+   12. REDUÇÃO DE MOVIMENTO
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+        scroll-behavior: auto !important;
     }
 }

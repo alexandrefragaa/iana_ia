@@ -1,8 +1,28 @@
 #!/usr/bin/env python3
 
-# iana.py — Cérebro da Iana: consulta ChromaDB + chama Gemini
+"""
+IANA — cérebro da assistente.
+
+Responsabilidades:
+- consultar memória semântica no ChromaDB;
+- receber histórico recente;
+- montar contexto;
+- aplicar personalidade/configuração;
+- chamar Gemini;
+- salvar pergunta + resposta na memória;
+- fornecer fallback quando a API estiver indisponível.
+
+Argumentos esperados:
+
+argv[1] = nome do usuário
+argv[2] = ID da conversa
+argv[3] = mensagem atual
+argv[4] = histórico JSON
+argv[5] = configuração JSON opcional
+"""
 
 import hashlib
+import json
 import os
 import re
 import sys
@@ -13,12 +33,16 @@ import requests
 from dotenv import load_dotenv
 
 
-# ── CONFIGURAÇÃO ──────────────────────────────────────────────────
+# ================================================================
+# CONFIGURAÇÃO
+# ================================================================
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 except AttributeError:
     pass
+
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -27,15 +51,16 @@ load_dotenv(
 )
 
 
-# ── ARGUMENTOS ────────────────────────────────────────────────────
+# ================================================================
+# ESTADO GLOBAL
+# ================================================================
 
 nome_usuario = "Jogador"
 id_conversa = "chat_geral"
 msg_final = ""
+
 historico = []
-
-
-# ── ESTADO DO PIPELINE ───────────────────────────────────────────
+config_usuario = {}
 
 banco_ok = False
 colecao = None
@@ -49,23 +74,27 @@ modelo_gemini = ""
 url_api = ""
 
 instrucao_humor = ""
+
 resposta = None
 
 
-# ── CHROMADB ──────────────────────────────────────────────────────
+# ================================================================
+# CHROMADB
+# ================================================================
 
 def obter_pasta_banco():
     """
     Retorna o diretório usado pelo ChromaDB.
 
-    Pode ser sobrescrito através de:
+    Pode ser sobrescrito por:
+
         IANA_DB_PATH
     """
 
-    override = os.getenv("IANA_DB_PATH")
+    override = os.getenv("IANA_DB_PATH", "").strip()
 
     if override:
-        return Path(override)
+        return Path(override).expanduser()
 
     if os.name == "nt":
         base = Path(
@@ -89,8 +118,7 @@ def inicializar_chromadb():
     """
     Inicializa o ChromaDB e o modelo de embeddings.
 
-    Se alguma dependência falhar, a Iana continua funcionando
-    utilizando o Gemini/fallback.
+    Se falhar, a Iana continua funcionando com Gemini.
     """
 
     global banco_ok
@@ -130,13 +158,13 @@ def inicializar_chromadb():
         banco_ok = True
 
         sys.stderr.write(
-            f"[ChromaDB] ✅ Conectado — "
+            f"[ChromaDB] OK — "
             f"{colecao.count()} documentos\n"
         )
 
     except Exception as e:
         sys.stderr.write(
-            f"[ChromaDB] ⚠️ Offline: {e}\n"
+            f"[ChromaDB] OFFLINE — {e}\n"
         )
 
 
@@ -146,10 +174,17 @@ def consultar_memoria(
     n=5
 ):
     """
-    Consulta a memória semântica da Iana.
+    Consulta memória semântica.
+
+    A memória recuperada será usada como contexto do Gemini.
     """
 
-    if not banco_ok or colecao is None:
+    if not banco_ok or colecao is None or modelo is None:
+        return ""
+
+    query = str(query or "").strip()
+
+    if not query:
         return ""
 
     try:
@@ -159,120 +194,181 @@ def consultar_memoria(
             return ""
 
         vetor = modelo.encode(
-            query
+            query,
+            normalize_embeddings=True
         ).tolist()
 
-        # ── Memória específica da conversa ───────────────────────
+        documentos = []
+
+        # --------------------------------------------------------
+        # Memória específica da conversa
+        # --------------------------------------------------------
 
         try:
-            res = colecao.query(
+            res_conv = colecao.query(
                 query_embeddings=[vetor],
-                n_results=min(
-                    3,
-                    quantidade
-                ),
+                n_results=min(3, quantidade),
                 where={
-                    "tipo": "conversa"
+                    "tipo": "conversa",
+                    "conversa_id": conversa_id
                 }
             )
 
             docs_conv = (
-                res.get(
+                res_conv.get(
                     "documents",
                     [[]]
                 )[0]
                 or []
             )
 
-        except Exception:
-            docs_conv = []
-
-        # ── Memória geral ────────────────────────────────────────
-
-        res_geral = colecao.query(
-            query_embeddings=[vetor],
-            n_results=min(
-                n,
-                quantidade
+            metas_conv = (
+                res_conv.get(
+                    "metadatas",
+                    [[]]
+                )[0]
+                or []
             )
-        )
 
-        docs_geral = (
-            res_geral.get(
-                "documents",
-                [[]]
-            )[0]
-            or []
-        )
+            dist_conv = (
+                res_conv.get(
+                    "distances",
+                    [[]]
+                )[0]
+                or []
+            )
 
-        metas = (
-            res_geral.get(
-                "metadatas",
-                [[]]
-            )[0]
-            or []
-        )
-
-        distancias = (
-            res_geral.get(
-                "distances",
-                [[]]
-            )[0]
-            or []
-        )
-
-        blocos = []
-
-        for doc, meta, dist in zip(
-            docs_geral,
-            metas,
-            distancias
-        ):
-            if dist < 1.5:
-                if isinstance(meta, dict):
-                    fonte = meta.get(
-                        "titulo",
-                        ""
+            for doc, meta, dist in zip(
+                docs_conv,
+                metas_conv,
+                dist_conv
+            ):
+                if dist <= 1.2:
+                    documentos.append(
+                        formatar_memoria(
+                            doc,
+                            meta,
+                            dist
+                        )
                     )
 
-                    tipo = meta.get(
-                        "tipo",
-                        ""
+        except Exception as e:
+            sys.stderr.write(
+                f"[Memória conversa] {e}\n"
+            )
+
+        # --------------------------------------------------------
+        # Memória geral
+        # --------------------------------------------------------
+
+        try:
+            res_geral = colecao.query(
+                query_embeddings=[vetor],
+                n_results=min(n, quantidade)
+            )
+
+            docs_geral = (
+                res_geral.get(
+                    "documents",
+                    [[]]
+                )[0]
+                or []
+            )
+
+            metas_geral = (
+                res_geral.get(
+                    "metadatas",
+                    [[]]
+                )[0]
+                or []
+            )
+
+            dist_geral = (
+                res_geral.get(
+                    "distances",
+                    [[]]
+                )[0]
+                or []
+            )
+
+            for doc, meta, dist in zip(
+                docs_geral,
+                metas_geral,
+                dist_geral
+            ):
+                if dist <= 1.2:
+                    item = formatar_memoria(
+                        doc,
+                        meta,
+                        dist
                     )
-                else:
-                    fonte = ""
-                    tipo = ""
 
-                trecho = str(doc)[:800]
+                    if item and item not in documentos:
+                        documentos.append(item)
 
-                if fonte:
-                    blocos.append(
-                        f"[{tipo.upper()} — {fonte}]\n"
-                        f"{trecho}"
-                    )
-                else:
-                    blocos.append(
-                        trecho
-                    )
+        except Exception as e:
+            sys.stderr.write(
+                f"[Memória geral] {e}\n"
+            )
 
-        todos = (
-            docs_conv[:2]
-            + blocos
-        )
-
-        if not todos:
+        if not documentos:
             return ""
 
         return "\n\n---\n\n".join(
-            todos[:6]
+            documentos[:6]
         )
 
     except Exception as e:
         sys.stderr.write(
-            f"[Memória] ⚠️ Erro: {e}\n"
+            f"[Memória] Erro: {e}\n"
         )
 
         return ""
+
+
+def formatar_memoria(
+    documento,
+    metadata,
+    distancia
+):
+    """
+    Formata uma memória para ser enviada ao modelo.
+    """
+
+    texto = str(documento or "").strip()
+
+    if not texto:
+        return ""
+
+    texto = texto[:1200]
+
+    if isinstance(metadata, dict):
+        tipo = metadata.get(
+            "tipo",
+            ""
+        )
+
+        titulo = metadata.get(
+            "titulo",
+            ""
+        )
+    else:
+        tipo = ""
+        titulo = ""
+
+    if titulo:
+        cabecalho = (
+            f"[{tipo.upper()} — {titulo}]"
+            if tipo
+            else f"[{titulo}]"
+        )
+
+        return (
+            f"{cabecalho}\n"
+            f"{texto}"
+        )
+
+    return texto
 
 
 def salvar_na_memoria(
@@ -281,30 +377,42 @@ def salvar_na_memoria(
     conversa_id
 ):
     """
-    Salva pergunta + resposta na memória semântica.
+    Salva pergunta + resposta no ChromaDB.
     """
 
-    if not banco_ok or colecao is None:
+    if not banco_ok or colecao is None or modelo is None:
+        return
+
+    pergunta = str(pergunta or "").strip()
+    resposta_texto = str(resposta_texto or "").strip()
+
+    if not pergunta or not resposta_texto:
         return
 
     try:
         texto = (
             f"Usuário ({nome_usuario}): "
             f"{pergunta}\n"
-            f"Iana: {resposta_texto}"
+            f"Iana: "
+            f"{resposta_texto}"
+        )
+
+        identificador_base = (
+            f"{conversa_id}|"
+            f"{pergunta}|"
+            f"{time.time_ns()}"
         )
 
         doc_id = (
             "conv_"
-            + hashlib.md5(
-                f"{pergunta}{time.time()}".encode(
-                    "utf-8"
-                )
+            + hashlib.sha256(
+                identificador_base.encode("utf-8")
             ).hexdigest()
         )
 
         vetor = modelo.encode(
-            texto
+            texto,
+            normalize_embeddings=True
         ).tolist()
 
         colecao.add(
@@ -314,7 +422,8 @@ def salvar_na_memoria(
                 {
                     "tipo": "conversa",
                     "usuario": nome_usuario,
-                    "conversa_id": conversa_id
+                    "conversa_id": conversa_id,
+                    "timestamp": str(int(time.time()))
                 }
             ],
             ids=[doc_id]
@@ -322,57 +431,184 @@ def salvar_na_memoria(
 
     except Exception as e:
         sys.stderr.write(
-            f"[Salvar] ⚠️ {e}\n"
+            f"[Salvar memória] Erro: {e}\n"
         )
 
 
-# ── PERSONALIDADE ─────────────────────────────────────────────────
+# ================================================================
+# PERSONALIDADE
+# ================================================================
+
+DEFAULT_SYSTEM_PROMPT = (
+    "Você é a Iana, uma assistente gamer animada, "
+    "criativa, humanizada e solidária. "
+    "Tem personalidade forte, fala naturalmente, "
+    "pode usar gírias e emojis quando fizer sentido. "
+
+    "É especialista em jogos, platinas, troféus, "
+    "conquistas, builds, itens, localização de objetos, "
+    "rotas, estratégias, chefões e mecânicas. "
+
+    "Também gosta de filmes, séries, cultura nerd e tecnologia. "
+
+    "REGRA DE CONVERSA: "
+    "Em cumprimentos simples, perguntas sobre como você está "
+    "ou conversas casuais, seja breve e natural. "
+
+    "Quando o usuário tiver uma dúvida técnica ou sobre jogos, "
+    "se houver contexto suficiente, seja detalhada, prática "
+    "e útil. "
+
+    "Não invente fatos apresentados como certeza. "
+    "Quando não souber algo, deixe isso claro. "
+
+    "Use o histórico recente para manter continuidade. "
+    "Use a memória semântica como referência, mas não trate "
+    "memórias antigas como verdade absoluta se houver "
+    "contradição com a conversa atual."
+)
+
 
 system_prompt = (
     os.getenv(
         "SYSTEM_PROMPT",
         ""
     ).strip()
-    or
-    (
-        "Você é a Iana, uma assistente gamer animada, criativa, "
-        "humanizada e solidária. "
-        "Tem personalidade forte, fala naturalmente com gírias "
-        "e emojis quando cabe. "
-        "É especialista em platinas, troféus, conquistas, builds, "
-        "itens, localização de objetos, rotas, estratégias e "
-        "chefões. "
-        "Também adora falar sobre filmes, séries, cultura nerd "
-        "e games. "
-        "REGRA DE CONVERSA: Em cumprimentos, perguntas sobre "
-        "como você está ou reflexões normais, seja super breve, "
-        "natural, sem 'textão' e apenas siga o fluxo da conversa. "
-        "Por outro lado, quando o usuário tiver uma dúvida de jogo "
-        "e você tiver informações no contexto, usa TUDO para criar "
-        "uma resposta completa, detalhada e útil, e mostra serviço. "
-        "Nesse caso específico, sempre faz uma pergunta no final "
-        "para continuar ajudando o usuário."
-    )
+    or DEFAULT_SYSTEM_PROMPT
 )
 
 
-# ── HUMOR ─────────────────────────────────────────────────────────
+def montar_config_prompt():
+    """
+    Converte a configuração enviada pelo frontend
+    em instruções para o modelo.
+    """
+
+    if not isinstance(config_usuario, dict):
+        return ""
+
+    linhas = []
+
+    personalidade = config_usuario.get("personalidade")
+    foco = config_usuario.get("foco")
+    plataforma = config_usuario.get("plataforma")
+    voz = config_usuario.get("voz")
+
+    tamanho = config_usuario.get("tamanho")
+    emojis = config_usuario.get("emojis")
+
+    instrucoes = config_usuario.get("instrucoes")
+    sobre_voce = config_usuario.get("sobreVoce")
+
+    if isinstance(personalidade, list) and personalidade:
+        linhas.append(
+            "Estilo de personalidade: "
+            + ", ".join(map(str, personalidade))
+            + "."
+        )
+
+    if isinstance(foco, list) and foco:
+        linhas.append(
+            "Foco principal: "
+            + ", ".join(map(str, foco))
+            + "."
+        )
+
+    if isinstance(plataforma, list) and plataforma:
+        linhas.append(
+            "Plataforma do usuário: "
+            + ", ".join(map(str, plataforma))
+            + "."
+        )
+
+    if isinstance(voz, list) and voz:
+        linhas.append(
+            "Estilo de escrita: "
+            + ", ".join(map(str, voz))
+            + "."
+        )
+
+    if tamanho:
+        linhas.append(
+            f"Tamanho preferido das respostas: {tamanho}."
+        )
+
+    if emojis:
+        linhas.append(
+            f"Uso de emojis: {emojis}."
+        )
+
+    if instrucoes:
+        linhas.append(
+            "Instruções específicas do usuário: "
+            + str(instrucoes)
+        )
+
+    if sobre_voce:
+        linhas.append(
+            "Informações fornecidas pelo usuário sobre si: "
+            + str(sobre_voce)
+        )
+
+    comportamentos = []
+
+    if config_usuario.get("perguntas") is False:
+        comportamentos.append(
+            "Não termine respostas com uma pergunta."
+        )
+
+    if config_usuario.get("humor") is False:
+        comportamentos.append(
+            "Não adapte o tom com base no humor detectado."
+        )
+
+    if config_usuario.get("criatividade") is False:
+        comportamentos.append(
+            "Não invente informações quando não souber."
+        )
+
+    if config_usuario.get("contexto") is False:
+        comportamentos.append(
+            "Não dependa de mensagens anteriores."
+        )
+
+    if comportamentos:
+        linhas.extend(comportamentos)
+
+    if not linhas:
+        return ""
+
+    return (
+        "\n\n"
+        "=== CONFIGURAÇÕES DO USUÁRIO ===\n"
+        + "\n".join(linhas)
+        + "\n"
+        "=== FIM DAS CONFIGURAÇÕES ==="
+    )
+
+
+# ================================================================
+# HUMOR
+# ================================================================
 
 def detectar_humor(texto):
     """
-    Detecta um estado emocional simples baseado na mensagem.
+    Detecta apenas sinais simples de tom.
+    Não é uma análise psicológica.
     """
+
+    texto = str(texto or "")
 
     letras = len(
         re.findall(
-            r"[A-Za-z]",
+            r"[A-Za-zÀ-ÿ]",
             texto
         )
     )
 
     caps = len(
         re.findall(
-            r"[A-Z]",
+            r"[A-ZÁÀÃÂÉÊÍÓÔÕÚÇ]",
             texto
         )
     )
@@ -402,21 +638,22 @@ def detectar_humor(texto):
 
 
 def obter_instrucao_humor(texto):
-    humor = detectar_humor(
-        texto
-    )
+    humor = detectar_humor(texto)
+
+    if config_usuario.get("humor") is False:
+        return ""
 
     return {
         "raiva": (
             "\n\n[TOM]: "
-            "O usuário está irritado. "
-            "Responda com empatia e calma."
+            "O usuário parece irritado. "
+            "Responda com calma, empatia e objetividade."
         ),
 
         "estressado": (
             "\n\n[TOM]: "
-            "O usuário está estressado. "
-            "Seja leve e tranquilizador."
+            "O usuário parece estressado. "
+            "Seja leve, claro e tranquilizador."
         ),
 
         "normal": ""
@@ -426,7 +663,76 @@ def obter_instrucao_humor(texto):
     )
 
 
-# ── GEMINI ────────────────────────────────────────────────────────
+# ================================================================
+# HISTÓRICO
+# ================================================================
+
+def formatar_historico():
+    """
+    Converte o histórico recebido pelo frontend em texto.
+    """
+
+    if not isinstance(historico, list):
+        return ""
+
+    if not historico:
+        return ""
+
+    linhas = []
+
+    # Somente uma quantidade razoável de mensagens recentes.
+    recentes = historico[-12:]
+
+    for item in recentes:
+        if not isinstance(item, dict):
+            continue
+
+        papel = (
+            item.get("role")
+            or item.get("papel")
+            or item.get("autor")
+            or ""
+        )
+
+        texto = (
+            item.get("content")
+            or item.get("texto")
+            or item.get("mensagem")
+            or ""
+        )
+
+        if not texto:
+            continue
+
+        texto = str(texto).strip()
+
+        if not texto:
+            continue
+
+        if papel in ("assistant", "ia", "iana"):
+            nome = "Iana"
+        elif papel in ("user", "usuario", "usuário"):
+            nome = f"Usuário ({nome_usuario})"
+        else:
+            nome = str(papel or "Mensagem")
+
+        linhas.append(
+            f"{nome}: {texto[:3000]}"
+        )
+
+    if not linhas:
+        return ""
+
+    return (
+        "=== HISTÓRICO RECENTE ===\n"
+        + "\n".join(linhas)
+        + "\n=== FIM DO HISTÓRICO ==="
+    )
+
+
+# ================================================================
+# GEMINI
+# ================================================================
 
 def inicializar_gemini():
     global chave
@@ -457,15 +763,45 @@ def inicializar_gemini():
     )
 
 
-def chamar_gemini():
+def construir_prompt_gemini():
     """
-    Envia a mensagem para a API Gemini.
+    Monta o contexto final enviado ao Gemini.
     """
 
-    sys.stderr.write(
-        "[DEBUG] Contexto enviado para Gemini: "
-        f"{bloco_contexto[:500]}\n"
+    partes = []
+
+    if bloco_contexto:
+        partes.append(
+            bloco_contexto
+        )
+
+    historico_texto = formatar_historico()
+
+    if historico_texto:
+        partes.append(
+            historico_texto
+        )
+
+    partes.append(
+        f"=== MENSAGEM ATUAL ===\n"
+        f"Usuário ({nome_usuario}): "
+        f"{msg_final}\n"
+        f"=== FIM DA MENSAGEM ATUAL ==="
     )
+
+    partes.append(
+        "Responda diretamente ao usuário como Iana. "
+        "Não mencione que recebeu um prompt interno, "
+        "memória, contexto ou instruções de sistema."
+    )
+
+    return "\n\n".join(partes)
+
+
+def chamar_gemini():
+    """
+    Envia a mensagem para Gemini.
+    """
 
     local_only = (
         os.getenv(
@@ -477,63 +813,55 @@ def chamar_gemini():
 
     if local_only:
         sys.stderr.write(
-            "[Gemini] modo local ativo — "
-            "não usando Gemini\n"
+            "[Gemini] modo local ativo\n"
         )
-
         return None
 
     if not chave:
         sys.stderr.write(
-            "[Gemini] ⚠️ "
-            "GEMINI_API_KEY não configurada\n"
+            "[Gemini] GEMINI_API_KEY não configurada\n"
         )
-
         return None
 
-    try:
-        prompt_completo = (
-            f"{bloco_contexto}\n\n"
-            f"Usuário ({nome_usuario}): "
-            f"{msg_final}\n\n"
-            "Responda como a Iana — criativa, animada, "
-            "útil e com personalidade. "
-            "Se tiver informações no contexto acima, "
-            "use-as plenamente para guiar, ensinar e "
-            "inspirar. "
-            "Se não tiver, use seu conhecimento geral "
-            "sobre games."
-        )
+    prompt_completo = construir_prompt_gemini()
 
-        payload = {
-            "system_instruction": {
+    sys.stderr.write(
+        "[Gemini] Enviando contexto — "
+        f"{len(prompt_completo)} chars\n"
+    )
+
+    payload = {
+        "system_instruction": {
+            "parts": [
+                {
+                    "text": (
+                        system_prompt
+                        + montar_config_prompt()
+                        + instrucao_humor
+                    )
+                }
+            ]
+        },
+
+        "contents": [
+            {
+                "role": "user",
                 "parts": [
                     {
-                        "text": (
-                            system_prompt
-                            + instrucao_humor
-                        )
+                        "text": prompt_completo
                     }
                 ]
-            },
-
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": prompt_completo
-                        }
-                    ]
-                }
-            ],
-
-            "generationConfig": {
-                "maxOutputTokens": 2048,
-                "temperature": 0.85,
-                "topP": 0.95
             }
-        }
+        ],
 
+        "generationConfig": {
+            "maxOutputTokens": 2048,
+            "temperature": 0.85,
+            "topP": 0.95
+        }
+    }
+
+    try:
         response = requests.post(
             url_api,
             json=payload,
@@ -544,7 +872,16 @@ def chamar_gemini():
             timeout=45
         )
 
-        response.raise_for_status()
+        if not response.ok:
+            detalhe = response.text[:1000]
+
+            sys.stderr.write(
+                f"[Gemini] HTTP "
+                f"{response.status_code}: "
+                f"{detalhe}\n"
+            )
+
+            return None
 
         dados = response.json()
 
@@ -555,128 +892,135 @@ def chamar_gemini():
 
         if not candidatos:
             sys.stderr.write(
-                "[Gemini] ⚠️ Nenhum candidato retornado\n"
+                "[Gemini] nenhum candidato retornado\n"
             )
-
             return None
 
-        texto = (
-            candidatos[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
+        candidato = candidatos[0]
+
+        content = candidato.get(
+            "content",
+            {}
         )
 
-        if not texto:
+        parts = content.get(
+            "parts",
+            []
+        )
+
+        textos = []
+
+        for part in parts:
+            if isinstance(part, dict):
+                texto = part.get("text")
+
+                if texto:
+                    textos.append(
+                        str(texto)
+                    )
+
+        resultado = "\n".join(
+            textos
+        ).strip()
+
+        if not resultado:
+            sys.stderr.write(
+                "[Gemini] resposta vazia\n"
+            )
             return None
 
-        return texto.strip()
+        return resultado
 
     except requests.exceptions.Timeout:
         sys.stderr.write(
-            "[Gemini] ⚠️ Timeout\n"
+            "[Gemini] timeout\n"
         )
 
-    except requests.exceptions.HTTPError as e:
-        status = (
-            e.response.status_code
-            if e.response is not None
-            else "?"
-        )
-
-        detalhe = (
-            e.response.text[:500]
-            if e.response is not None
-            else str(e)
-        )
-
+    except requests.exceptions.RequestException as e:
         sys.stderr.write(
-            f"[Gemini] ⚠️ HTTP {status}: "
-            f"{detalhe}\n"
+            f"[Gemini] erro HTTP: {e}\n"
         )
 
     except Exception as e:
         sys.stderr.write(
-            f"[Gemini] ⚠️ Erro: {e}\n"
+            f"[Gemini] erro: {e}\n"
         )
 
     return None
 
 
-# ── FALLBACKS ─────────────────────────────────────────────────────
+# ================================================================
+# FALLBACKS
+# ================================================================
 
 def resposta_do_contexto():
     """
-    Fallback simples caso exista memória, mas a API esteja
-    indisponível.
-
+    Fallback caso Gemini esteja indisponível.
     """
 
     if not contexto:
         return None
 
-    trecho = contexto[:800]
+    trecho = contexto[:1200]
 
     return (
-        "Tenho algumas informações sobre isso na minha "
-        "memória! 🧠\n\n"
+        "Encontrei algo relevante na minha memória. 🧠\n\n"
         f"{trecho}\n\n"
-        "Quer que eu elabore mais sobre algum ponto específico? 😊"
+        "A conexão com minha IA está temporariamente "
+        "indisponível, então não consegui elaborar "
+        "uma resposta completa agora."
     )
 
 
 def resposta_criativa_sem_api():
     """
-    Resposta local quando Gemini e memória não conseguem
-    produzir uma resposta.
+    Fallback completamente local.
     """
 
     msg = msg_final.lower()
 
     if any(
         palavra in msg
-        for palavra in [
+        for palavra in (
             "platina",
             "troféu",
+            "trofeu",
             "conquista",
             "achievement"
-        ]
+        )
     ):
         return (
             "🏆 Platinas são minha especialidade! "
-            "Só que no momento minha conexão com a IA "
-            "está instável. Me diz o nome do jogo e, "
-            "quando voltar ao normal, te dou um guia "
-            "completo de conquistas! 🎮"
+            "Minha conexão com a IA está instável agora, "
+            "mas posso continuar assim que ela voltar."
         )
 
     if any(
         palavra in msg
-        for palavra in [
+        for palavra in (
             "build",
             "arma",
             "equipamento",
             "skill"
-        ]
+        )
     ):
         return (
             "⚔️ Adoro falar de builds! "
-            "Estou com uma instabilidade momentânea, "
-            "mas me diz o jogo e o estilo de jogo que "
-            "você prefere — quando voltar monto uma "
-            "build para você! 💪"
+            "Estou com uma instabilidade momentânea "
+            "na IA, então não consegui montar a resposta "
+            "completa agora."
         )
 
     if any(
         palavra in msg
-        for palavra in [
+        for palavra in (
             "oi",
             "olá",
             "ola",
             "hey",
             "eae",
             "salve"
-        ]
+        )
     ):
         return (
             f"Oi, {nome_usuario}! 👾 "
@@ -686,79 +1030,80 @@ def resposta_criativa_sem_api():
     return (
         f"Ei, {nome_usuario}! 😊 "
         "Estou com uma instabilidade momentânea "
-        "de conexão, mas já volto ao normal. "
-        "Me repete a pergunta em instantes! 🔄"
+        "na minha conexão com a IA. "
+        "Tenta novamente em instantes. 🔄"
     )
 
 
-# ── PIPELINE PRINCIPAL ────────────────────────────────────────────
+# ================================================================
+# PIPELINE PRINCIPAL
+# ================================================================
 
 def run_pipeline():
     global contexto
     global bloco_contexto
     global instrucao_humor
 
-    # Inicializa banco e Gemini.
     inicializar_chromadb()
     inicializar_gemini()
 
-    # Consulta memória.
+    # ------------------------------------------------------------
+    # Memória semântica
+    # ------------------------------------------------------------
+
     contexto = consultar_memoria(
         msg_final,
         id_conversa
     )
 
-    # Monta bloco de contexto.
     bloco_contexto = ""
 
     if contexto:
-        bloco_contexto = f"""
-=== MEMÓRIA E CONHECIMENTO DA IANA ===
-
-Use TUDO abaixo para criar uma resposta rica,
-detalhada e útil.
-
-Não apenas repita — interprete, elabore,
-guie e seja criativa!
-
-{contexto}
-
-=== FIM DO CONHECIMENTO ===
-"""
-
-        sys.stderr.write(
-            f"[Contexto] ✅ "
-            f"{len(contexto)} chars encontrados\n"
+        bloco_contexto = (
+            "=== MEMÓRIA SEMÂNTICA DA IANA ===\n"
+            "Use essas informações como contexto útil. "
+            "Não trate memórias antigas como fatos absolutos "
+            "se a conversa atual contradizê-las.\n\n"
+            f"{contexto}\n\n"
+            "=== FIM DA MEMÓRIA SEMÂNTICA ==="
         )
 
+        sys.stderr.write(
+            f"[Contexto] {len(contexto)} chars\n"
+        )
     else:
         sys.stderr.write(
-            "[Contexto] ℹ️ Nenhum contexto específico "
-            "— usando conhecimento geral\n"
+            "[Contexto] nenhuma memória relevante\n"
         )
 
-    # Detecta humor.
+    # ------------------------------------------------------------
+    # Humor
+    # ------------------------------------------------------------
+
     instrucao_humor = obter_instrucao_humor(
         msg_final
     )
 
-    # Primeiro tenta usar memória como fallback.
-    resposta_local = resposta_do_contexto()
+    # ------------------------------------------------------------
+    # Gemini PRIMEIRO
+    # ------------------------------------------------------------
 
-    # Depois tenta Gemini.
-    resposta_final = None
+    resposta_final = chamar_gemini()
 
-    if not resposta_local:
-        resposta_final = chamar_gemini()
+    # ------------------------------------------------------------
+    # Fallback
+    # ------------------------------------------------------------
 
-    # Se Gemini falhar, usa fallback local.
     if not resposta_final:
-        resposta_final = (
-            resposta_local
-            or resposta_criativa_sem_api()
-        )
+        resposta_final = resposta_do_contexto()
 
-    # Salva na memória.
+    if not resposta_final:
+        resposta_final = resposta_criativa_sem_api()
+
+    # ------------------------------------------------------------
+    # Salva memória
+    # ------------------------------------------------------------
+
     salvar_na_memoria(
         msg_final,
         resposta_final,
@@ -768,13 +1113,16 @@ guie e seja criativa!
     return resposta_final
 
 
-# ── MAIN ──────────────────────────────────────────────────────────
+# ================================================================
+# ARGUMENTOS
+# ================================================================
 
-def main():
+def carregar_argumentos():
     global nome_usuario
     global id_conversa
     global msg_final
     global historico
+    global config_usuario
 
     nome_usuario = (
         sys.argv[1].strip()
@@ -788,63 +1136,96 @@ def main():
         else "chat_geral"
     )
 
-    # O server.js envia:
-    #
-    # argv[3] = mensagem
-    # argv[4] = histórico JSON
-    #
     msg_final = (
         sys.argv[3].strip()
         if len(sys.argv) > 3
         else ""
     )
 
+    # ------------------------------------------------------------
+    # Histórico
+    # ------------------------------------------------------------
+
     if len(sys.argv) > 4:
         historico_json = sys.argv[4].strip()
 
-        try:
-            import json
+        if historico_json:
+            try:
+                valor = json.loads(
+                    historico_json
+                )
 
-            historico = json.loads(
-                historico_json
-            )
+                if isinstance(valor, list):
+                    historico = valor
 
-        except Exception as e:
-            historico = []
+            except Exception as e:
+                historico = []
 
-            sys.stderr.write(
-                f"[Histórico] ⚠️ "
-                f"JSON inválido: {e}\n"
-            )
+                sys.stderr.write(
+                    f"[Histórico] JSON inválido: {e}\n"
+                )
+
+    # ------------------------------------------------------------
+    # Configuração do usuário
+    # ------------------------------------------------------------
+
+    if len(sys.argv) > 5:
+        config_json = sys.argv[5].strip()
+
+        if config_json:
+            try:
+                valor = json.loads(
+                    config_json
+                )
+
+                if isinstance(valor, dict):
+                    config_usuario = valor
+
+            except Exception as e:
+                config_usuario = {}
+
+                sys.stderr.write(
+                    f"[Config] JSON inválido: {e}\n"
+                )
+
+
+# ================================================================
+# MAIN
+# ================================================================
+
+def main():
+    carregar_argumentos()
 
     if not msg_final:
         print(
-            "Não recebi nenhuma mensagem."
+            "Não recebi nenhuma mensagem.",
+            flush=True
         )
-
-        sys.exit(0)
+        return
 
     try:
         resultado = run_pipeline()
 
-        if resultado:
-            print(
-                resultado,
-                flush=True
-            )
-        else:
-            print(
-                resposta_criativa_sem_api(),
-                flush=True
-            )
+        print(
+            resultado or resposta_criativa_sem_api(),
+            flush=True
+        )
+
+    except KeyboardInterrupt:
+        sys.stderr.write(
+            "[Iana] interrompida\n"
+        )
+
+        print(
+            "A resposta foi interrompida.",
+            flush=True
+        )
 
     except Exception as e:
         sys.stderr.write(
-            f"[Iana] ❌ Erro fatal: {e}\n"
+            f"[Iana] erro fatal: {e}\n"
         )
 
-        # Ainda devolve uma resposta válida para o server.js
-        # em vez de deixar stdout vazio.
         print(
             resposta_criativa_sem_api(),
             flush=True

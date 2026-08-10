@@ -1,26 +1,19 @@
 /* ================================================================
    IANA — chat.js
-   Versão corrigida
-   - Upload real de imagens
-   - Câmera envia imagem ao backend
-   - Imagem não usa innerHTML com data URL
-   - Correção do fluxo de anexos
-   - Correção do botão fechar chamada
-   - Melhor controle de reconhecimento de voz
-   - Melhor controle de streams
-   - Sanitização do histórico
-   - Configuração enviada ao backend
-   ================================================================ */
+   Versão completa
+   Frontend + Auth + Chat + Histórico + Upload + Voice Mode
+   ElevenLabs permanece exclusivamente no BACKEND/Render ENV
+================================================================ */
 
 'use strict';
 
-/* ────────────────────────────────────────────────────────────────
+/* ================================================================
    ESTADO GLOBAL
-   ──────────────────────────────────────────────────────────────── */
+================================================================ */
 
 let aguardandoResposta = false;
 let idConversaAtiva = null;
-let controller = new AbortController();
+let controller = null;
 
 let emailRecuperacao = '';
 let idConversaRenomear = null;
@@ -31,24 +24,52 @@ let ttsEnabled = true;
 let ttsNextResponse = false;
 let ttsVoice = null;
 
+/* ---------------- Socket de voz ---------------- */
+
+let vozSocket = null;
+let vozSocketConectando = false;
+
+let audioCtxEleven = null;
+let audioNextPlaybackTime = 0;
+let audioSourcesEleven = new Set();
+let audioPcmResto = new Uint8Array(0);
+
+/* ---------------- Voice Mode ---------------- */
+
+let vozProcessando = false;
+let vozFalando = false;
+let vozInicializando = false;
+
+let emChamadaVoz = false;
+
 let mediaRecorderAudio = null;
 let audioChunks = [];
 let gravandoAudio = false;
 
-let streamCamera = null;
-let streamVoz = null;
+/* ---------------- Câmera ---------------- */
 
-/* Visualização real do microfone */
-let emChamadaVoz = false;
+let streamCamera = null;
+
+/* ---------------- Visualização do microfone ---------------- */
+
 let audioCtxVoz = null;
 let analyserVoz = null;
 let streamAudioVozBars = null;
 let rafVozId = null;
 
+/* ---------------- Controle de inicialização ---------------- */
 
-/* ────────────────────────────────────────────────────────────────
-   TELAS
-   ──────────────────────────────────────────────────────────────── */
+let chatInicializado = false;
+let uploadInicializado = false;
+let menuUploadInicializado = false;
+let gravacaoInicializada = false;
+
+
+/* ================================================================
+   CONFIGURAÇÃO
+================================================================ */
+
+const CONFIG_KEY = 'iana_config';
 
 const TELAS = [
     'tela-login',
@@ -62,12 +83,19 @@ const TELAS = [
 ];
 
 
-/* ────────────────────────────────────────────────────────────────
+/* ================================================================
    UTILITÁRIOS
-   ──────────────────────────────────────────────────────────────── */
+================================================================ */
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+
+function escaparHTML(texto) {
+    const div = document.createElement('div');
+    div.textContent = String(texto ?? '');
+    return div.innerHTML;
 }
 
 
@@ -76,23 +104,18 @@ function sanitizarHTML(html) {
         return DOMPurify.sanitize(html);
     }
 
-    return String(html ?? '');
+    return escaparHTML(html);
 }
 
 
-/*
- * Escapa texto antes de colocá-lo dentro de innerHTML.
- */
-function escaparHTML(texto) {
-    const div = document.createElement('div');
-    div.textContent = String(texto ?? '');
-    return div.innerHTML;
+function possuiMediaDevices() {
+    return Boolean(
+        navigator.mediaDevices &&
+        typeof navigator.mediaDevices.getUserMedia === 'function'
+    );
 }
 
 
-/*
- * Converte File -> Data URL.
- */
 function arquivoParaDataURL(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -108,22 +131,36 @@ function arquivoParaDataURL(file) {
 }
 
 
-/*
- * Verifica se o navegador suporta getUserMedia.
- */
-function possuiMediaDevices() {
-    return Boolean(
-        navigator.mediaDevices &&
-        typeof navigator.mediaDevices.getUserMedia === 'function'
-    );
+function obterElemento(id) {
+    return document.getElementById(id);
 }
 
 
-/* ────────────────────────────────────────────────────────────────
-   CONFIGURAÇÕES
-   ──────────────────────────────────────────────────────────────── */
+function definirTexto(id, texto) {
+    const el = obterElemento(id);
 
-const CONFIG_KEY = 'iana_config';
+    if (el) {
+        el.textContent = String(texto ?? '');
+    }
+}
+
+
+function mostrarElemento(id, display = 'block') {
+    const el = obterElemento(id);
+
+    if (el) {
+        el.style.display = display;
+    }
+}
+
+
+function esconderElemento(id) {
+    const el = obterElemento(id);
+
+    if (el) {
+        el.style.display = 'none';
+    }
+}
 
 
 function obterConfigSalva() {
@@ -146,25 +183,25 @@ function montarConfigPrompt() {
 
     const linhas = [];
 
-    if (c.personalidade?.length) {
+    if (Array.isArray(c.personalidade) && c.personalidade.length) {
         linhas.push(
             `Estilo de personalidade: ${c.personalidade.join(', ')}.`
         );
     }
 
-    if (c.foco?.length) {
+    if (Array.isArray(c.foco) && c.foco.length) {
         linhas.push(
-            `Foco principal (priorize esses assuntos): ${c.foco.join(', ')}.`
+            `Foco principal: ${c.foco.join(', ')}.`
         );
     }
 
-    if (c.plataforma?.length) {
+    if (Array.isArray(c.plataforma) && c.plataforma.length) {
         linhas.push(
             `Plataforma do usuário: ${c.plataforma.join(', ')}.`
         );
     }
 
-    if (c.voz?.length) {
+    if (Array.isArray(c.voz) && c.voz.length) {
         linhas.push(
             `Estilo de escrita/voz: ${c.voz.join(', ')}.`
         );
@@ -204,19 +241,19 @@ function montarConfigPrompt() {
 
     if (c.humor === false) {
         comportamentos.push(
-            'NÃO precisa adaptar o tom ao humor do usuário.'
+            'NÃO adapte obrigatoriamente o tom ao humor do usuário.'
         );
     }
 
     if (c.criatividade === false) {
         comportamentos.push(
-            'NÃO invente/crie conteúdo quando não souber a resposta — diga que não sabe.'
+            'NÃO invente informações quando não souber a resposta.'
         );
     }
 
     if (c.contexto === false) {
         comportamentos.push(
-            'NÃO dependa do contexto de mensagens anteriores.'
+            'NÃO dependa de mensagens anteriores quando isso não for necessário.'
         );
     }
 
@@ -228,14 +265,16 @@ function montarConfigPrompt() {
 }
 
 
-/* ────────────────────────────────────────────────────────────────
-   TTS
-   ──────────────────────────────────────────────────────────────── */
+/* ================================================================
+   TTS DO NAVEGADOR
+================================================================ */
 
 function getVoicesTTS() {
-    return typeof speechSynthesis !== 'undefined'
-        ? speechSynthesis.getVoices()
-        : [];
+    if (typeof speechSynthesis === 'undefined') {
+        return [];
+    }
+
+    return speechSynthesis.getVoices();
 }
 
 
@@ -250,10 +289,9 @@ function escolherVozTTS() {
         return null;
     }
 
-    const preferida = voices.find(
-        voice =>
-            /pt-BR|pt/i.test(voice.lang) &&
-            /female|maria|luciana|fernanda/i.test(voice.name)
+    const preferida = voices.find(voice =>
+        /pt-BR|pt/i.test(voice.lang) &&
+        /female|maria|luciana|fernanda/i.test(voice.name)
     );
 
     ttsVoice =
@@ -266,83 +304,476 @@ function escolherVozTTS() {
 
 
 function falar(texto) {
-    try {
-        if (
-            !ttsEnabled ||
-            typeof speechSynthesis === 'undefined' ||
-            !texto
-        ) {
-            return;
-        }
-
-        const overlay = document.getElementById('overlay-voz');
-
-        const utterance = new SpeechSynthesisUtterance(
-            String(texto).replace(/\n/g, ' ')
-        );
-
-        utterance.lang = 'pt-BR';
-
-        const voz = escolherVozTTS();
-
-        if (voz) {
-            utterance.voice = voz;
-        }
-
-        utterance.rate = 1;
-        utterance.pitch = 1.05;
-
-        utterance.onstart = () => {
-            if (
-                overlay &&
-                overlay.style.display !== 'none'
-            ) {
-                atualizarEstadoVoz(
-                    'falando',
-                    'Iana está falando...'
-                );
-            }
-        };
-
-        utterance.onend = () => {
-            if (
-                overlay &&
-                overlay.style.display !== 'none'
-            ) {
-                atualizarEstadoVoz(
-                    'ouvindo',
-                    'Fale sua pergunta'
-                );
-            }
-        };
-
-        speechSynthesis.cancel();
-        speechSynthesis.speak(utterance);
-
-    } catch (e) {
-        console.warn('TTS falhou:', e);
+    if (emChamadaVoz) {
+        return Promise.resolve();
     }
+
+    return new Promise(resolve => {
+        try {
+            if (
+                !ttsEnabled ||
+                typeof speechSynthesis === 'undefined' ||
+                !texto
+            ) {
+                resolve();
+                return;
+            }
+
+            const utterance = new SpeechSynthesisUtterance(
+                String(texto).replace(/\n/g, ' ')
+            );
+
+            utterance.lang = 'pt-BR';
+
+            const voz = escolherVozTTS();
+
+            if (voz) {
+                utterance.voice = voz;
+            }
+
+            utterance.rate = 1;
+            utterance.pitch = 1.05;
+
+            utterance.onend = resolve;
+            utterance.onerror = resolve;
+
+            speechSynthesis.cancel();
+            speechSynthesis.speak(utterance);
+
+        } catch {
+            resolve();
+        }
+    });
 }
 
 
-/* ────────────────────────────────────────────────────────────────
-   AUTENTICAÇÃO
-   ──────────────────────────────────────────────────────────────── */
+/* ================================================================
+   ELEVENLABS / AUDIO RECEBIDO DO BACKEND
+================================================================ */
+
+/*
+   IMPORTANTE:
+
+   A API KEY do ElevenLabs NÃO fica neste arquivo.
+
+   O frontend recebe somente o áudio processado pelo backend.
+
+   O backend pode emitir:
+
+       socket.emit('voz:audio-resposta', {
+           audio: 'BASE64_PCM'
+       });
+
+   O áudio esperado nesta implementação é:
+
+       PCM
+       mono
+       signed Int16
+       24000 Hz
+*/
+
+function pararAudioEleven() {
+    for (const source of audioSourcesEleven) {
+        try {
+            source.stop();
+        } catch {}
+    }
+
+    audioSourcesEleven.clear();
+
+    audioPcmResto = new Uint8Array(0);
+    audioNextPlaybackTime = 0;
+    vozFalando = false;
+}
+
+
+function obterAudioContextEleven() {
+    const AudioContextClass =
+        window.AudioContext ||
+        window.webkitAudioContext;
+
+    if (!AudioContextClass) {
+        return null;
+    }
+
+    if (!audioCtxEleven) {
+        audioCtxEleven = new AudioContextClass({
+            sampleRate: 24000
+        });
+    }
+
+    return audioCtxEleven;
+}
+
+
+async function garantirAudioElevenAtivo() {
+    const ctx = obterAudioContextEleven();
+
+    if (!ctx) {
+        return null;
+    }
+
+    if (ctx.state === 'suspended') {
+        try {
+            await ctx.resume();
+        } catch {}
+    }
+
+    return ctx;
+}
+
+
+function tocarAudioEleven(base64) {
+    if (!emChamadaVoz || !base64) {
+        return;
+    }
+
+    const ctx = obterAudioContextEleven();
+
+    if (!ctx) {
+        return;
+    }
+
+    if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+    }
+
+    let binario;
+
+    try {
+        binario = atob(base64);
+    } catch {
+        console.warn('[IANA VOZ] Áudio Base64 inválido.');
+        return;
+    }
+
+    let bytes = new Uint8Array(binario.length);
+
+    for (let i = 0; i < binario.length; i++) {
+        bytes[i] = binario.charCodeAt(i);
+    }
+
+    /*
+       Se o chunk anterior terminou em byte ímpar,
+       junta com o próximo.
+    */
+
+    if (audioPcmResto.length) {
+        const combinado = new Uint8Array(
+            audioPcmResto.length + bytes.length
+        );
+
+        combinado.set(audioPcmResto, 0);
+        combinado.set(bytes, audioPcmResto.length);
+
+        bytes = combinado;
+
+        audioPcmResto = new Uint8Array(0);
+    }
+
+    if (bytes.length % 2 !== 0) {
+        audioPcmResto = bytes.slice(bytes.length - 1);
+        bytes = bytes.slice(0, -1);
+    }
+
+    if (!bytes.length) {
+        return;
+    }
+
+    /*
+       PCM Int16 little-endian.
+    */
+
+    const samples = new Int16Array(
+        bytes.buffer,
+        bytes.byteOffset,
+        bytes.byteLength / 2
+    );
+
+    const buffer = ctx.createBuffer(
+        1,
+        samples.length,
+        24000
+    );
+
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < samples.length; i++) {
+        data[i] = samples[i] / 32768;
+    }
+
+    const source = ctx.createBufferSource();
+
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+
+    const agora = ctx.currentTime;
+
+    const quando = Math.max(
+        agora + 0.02,
+        audioNextPlaybackTime
+    );
+
+    audioNextPlaybackTime =
+        quando + buffer.duration;
+
+    audioSourcesEleven.add(source);
+
+    source.onended = () => {
+        audioSourcesEleven.delete(source);
+    };
+
+    source.start(quando);
+
+    vozFalando = true;
+
+    atualizarEstadoVoz(
+        'falando',
+        'Iana está falando...'
+    );
+}
+
+
+/* ================================================================
+   SOCKET DE VOZ
+================================================================ */
+
+function garantirSocketVoz() {
+    if (vozSocket?.connected) {
+        return vozSocket;
+    }
+
+    if (typeof io !== 'function') {
+        atualizarEstadoVoz(
+            'processando',
+            'Socket de voz indisponível.'
+        );
+
+        return null;
+    }
+
+    if (vozSocketConectando) {
+        return vozSocket;
+    }
+
+    vozSocketConectando = true;
+
+    try {
+        vozSocket = io({
+            transports: ['websocket', 'polling'],
+            withCredentials: true
+        });
+    } catch (erro) {
+        vozSocketConectando = false;
+
+        console.error(
+            '[IANA VOZ] Socket:',
+            erro
+        );
+
+        return null;
+    }
+
+    vozSocket.on('connect', async () => {
+        vozSocketConectando = false;
+
+        console.log(
+            '[IANA VOZ] Socket conectado:',
+            vozSocket.id
+        );
+
+        await garantirAudioElevenAtivo();
+
+        try {
+            vozSocket.emit('voz:iniciar');
+        } catch (erro) {
+            console.error(
+                '[IANA VOZ] voz:iniciar:',
+                erro
+            );
+        }
+    });
+
+
+    vozSocket.on('voz:pronto', () => {
+        if (
+            emChamadaVoz &&
+            !vozFalando &&
+            !vozProcessando &&
+            !window._vozMutado
+        ) {
+            atualizarEstadoVoz(
+                'ouvindo',
+                'Fale com a Iana'
+            );
+
+            if (!window._recognitionVoz) {
+                iniciarReconhecimentoVoz();
+            }
+        }
+    });
+
+
+    vozSocket.on('voz:transcricao-iana', dados => {
+        const texto = dados?.texto;
+
+        if (typeof texto !== 'string') {
+            return;
+        }
+
+        const el = obterElemento('voz-transcript');
+
+        if (el) {
+            el.textContent = texto;
+        }
+    });
+
+
+    vozSocket.on('voz:audio-resposta', dados => {
+        tocarAudioEleven(dados?.audio);
+    });
+
+
+    vozSocket.on('voz:fala-finalizada', () => {
+        verificarFimAudioVoz();
+    });
+
+
+    vozSocket.on('voz:interrompido', () => {
+        pararAudioEleven();
+
+        vozFalando = false;
+        vozProcessando = false;
+
+        if (
+            emChamadaVoz &&
+            !window._vozMutado
+        ) {
+            atualizarEstadoVoz(
+                'ouvindo',
+                'Fale com a Iana'
+            );
+
+            iniciarReconhecimentoVoz();
+        }
+    });
+
+
+    vozSocket.on('voz:erro', dados => {
+        console.error(
+            '[IANA VOZ]',
+            dados?.mensagem || 'Erro desconhecido'
+        );
+
+        pararAudioEleven();
+
+        vozFalando = false;
+        vozProcessando = false;
+
+        if (emChamadaVoz) {
+            atualizarEstadoVoz(
+                'processando',
+                dados?.mensagem ||
+                'Erro no sistema de voz.'
+            );
+        }
+    });
+
+
+    vozSocket.on('disconnect', motivo => {
+        vozSocketConectando = false;
+
+        console.warn(
+            '[IANA VOZ] Socket desconectado:',
+            motivo
+        );
+
+        if (emChamadaVoz) {
+            pararReconhecimentoVoz();
+
+            atualizarEstadoVoz(
+                'processando',
+                'Reconectando a Iana...'
+            );
+        }
+    });
+
+
+    vozSocket.on('connect_error', erro => {
+        vozSocketConectando = false;
+
+        console.error(
+            '[IANA VOZ] Falha de conexão:',
+            erro?.message || erro
+        );
+
+        if (emChamadaVoz) {
+            atualizarEstadoVoz(
+                'processando',
+                'Não foi possível conectar à voz.'
+            );
+        }
+    });
+
+    return vozSocket;
+}
+
+
+function verificarFimAudioVoz() {
+    const verificar = () => {
+        if (!emChamadaVoz) {
+            return;
+        }
+
+        if (window._vozMutado) {
+            return;
+        }
+
+        if (audioSourcesEleven.size === 0) {
+            vozFalando = false;
+            vozProcessando = false;
+
+            atualizarEstadoVoz(
+                'ouvindo',
+                'Fale com a Iana'
+            );
+
+            if (!window._recognitionVoz) {
+                iniciarReconhecimentoVoz();
+            }
+
+            return;
+        }
+
+        setTimeout(verificar, 100);
+    };
+
+    setTimeout(verificar, 100);
+}
+
+
+/* ================================================================
+   TELAS / AUTENTICAÇÃO
+================================================================ */
 
 function mostrarTela(id) {
-    const overlay = document.getElementById('overlay-auth');
+    const overlay = obterElemento('overlay-auth');
 
     if (!overlay) {
         return;
     }
 
     TELAS.forEach(tela => {
-        const elemento = document.getElementById(tela);
+        const elemento = obterElemento(tela);
 
-        if (elemento) {
-            elemento.style.display =
-                tela === id ? 'block' : 'none';
+        if (!elemento) {
+            return;
         }
+
+        elemento.style.display =
+            tela === id
+                ? 'block'
+                : 'none';
     });
 
     overlay.style.display = 'flex';
@@ -350,7 +781,7 @@ function mostrarTela(id) {
 
 
 function fecharAuth() {
-    const overlay = document.getElementById('overlay-auth');
+    const overlay = obterElemento('overlay-auth');
 
     if (overlay) {
         overlay.style.display = 'none';
@@ -358,20 +789,22 @@ function fecharAuth() {
 }
 
 
-/* ────────────────────────────────────────────────────────────────
+/* ================================================================
    CÂMERA
-   ──────────────────────────────────────────────────────────────── */
+================================================================ */
 
 async function abrirCamera() {
-    const overlay = document.getElementById('overlay-camera');
-    const preview = document.getElementById('camera-preview');
+    const overlay = obterElemento('overlay-camera');
+    const preview = obterElemento('camera-preview');
 
     if (!overlay || !preview) {
         return;
     }
 
     if (!possuiMediaDevices()) {
-        alert('Seu navegador não suporta acesso à câmera.');
+        alert(
+            'Seu navegador não suporta acesso à câmera.'
+        );
         return;
     }
 
@@ -398,20 +831,23 @@ async function abrirCamera() {
 
         overlay.style.display = 'flex';
 
-    } catch (e) {
-        console.error('Câmera:', e);
+    } catch (erro) {
+        console.error(
+            '[IANA CÂMERA]',
+            erro
+        );
 
         alert(
             'Não foi possível acessar a câmera: ' +
-            (e.message || 'permissão negada.')
+            (erro.message || 'permissão negada.')
         );
     }
 }
 
 
 function fecharCamera() {
-    const overlay = document.getElementById('overlay-camera');
-    const preview = document.getElementById('camera-preview');
+    const overlay = obterElemento('overlay-camera');
+    const preview = obterElemento('camera-preview');
 
     if (streamCamera) {
         streamCamera
@@ -431,32 +867,33 @@ function fecharCamera() {
 }
 
 
-/*
- * Captura a câmera e envia a imagem REAL para /chat/stream.
- */
 async function capturarFoto() {
-    const preview = document.getElementById('camera-preview');
+    const preview = obterElemento('camera-preview');
 
     if (
         !preview ||
         !preview.videoWidth ||
         !preview.videoHeight
     ) {
-        alert('A câmera ainda não está pronta.');
+        alert(
+            'A câmera ainda não está pronta.'
+        );
         return;
     }
 
     try {
-        const canvas = document.createElement('canvas');
+        const canvas =
+            document.createElement('canvas');
 
         canvas.width = preview.videoWidth;
         canvas.height = preview.videoHeight;
 
-        const ctx = canvas.getContext('2d');
+        const ctx =
+            canvas.getContext('2d');
 
         if (!ctx) {
             throw new Error(
-                'Não foi possível criar o contexto da imagem.'
+                'Não foi possível criar a imagem.'
             );
         }
 
@@ -468,10 +905,11 @@ async function capturarFoto() {
             canvas.height
         );
 
-        const dataUrl = canvas.toDataURL(
-            'image/jpeg',
-            0.90
-        );
+        const dataUrl =
+            canvas.toDataURL(
+                'image/jpeg',
+                0.90
+            );
 
         adicionarImagemUsuario(
             dataUrl,
@@ -490,8 +928,11 @@ async function capturarFoto() {
             }
         );
 
-    } catch (e) {
-        console.error('Captura da câmera:', e);
+    } catch (erro) {
+        console.error(
+            '[IANA CÂMERA]',
+            erro
+        );
 
         alert(
             'Não foi possível capturar a foto.'
@@ -500,13 +941,13 @@ async function capturarFoto() {
 }
 
 
-/* ────────────────────────────────────────────────────────────────
-   CHAMADA DE VOZ
-   ──────────────────────────────────────────────────────────────── */
+/* ================================================================
+   VOICE MODE
+================================================================ */
 
 function atualizarEstadoVoz(estado, texto) {
-    const overlay = document.getElementById('overlay-voz');
-    const status = document.getElementById('voz-status');
+    const overlay = obterElemento('overlay-voz');
+    const status = obterElemento('voz-status');
 
     if (!overlay) {
         return;
@@ -519,25 +960,37 @@ function atualizarEstadoVoz(estado, texto) {
     );
 
     if (estado === 'ouvindo') {
-        overlay.classList.add('iana-voz-ouvindo');
+        overlay.classList.add(
+            'iana-voz-ouvindo'
+        );
     }
 
     if (estado === 'processando') {
-        overlay.classList.add('iana-voz-processando');
+        overlay.classList.add(
+            'iana-voz-processando'
+        );
     }
 
     if (estado === 'falando') {
-        overlay.classList.add('iana-voz-falando');
+        overlay.classList.add(
+            'iana-voz-falando'
+        );
     }
 
     if (status && texto) {
         status.textContent = texto;
     }
+
+    if (window.IanaHUD?.setEstado) {
+        try {
+            window.IanaHUD.setEstado(estado);
+        } catch {}
+    }
 }
 
 
-function abrirVoz() {
-    const overlay = document.getElementById('overlay-voz');
+async function abrirVoz() {
+    const overlay = obterElemento('overlay-voz');
 
     if (!overlay) {
         return;
@@ -546,19 +999,64 @@ function abrirVoz() {
     overlay.style.display = 'flex';
 
     emChamadaVoz = true;
+    vozProcessando = false;
+    vozFalando = false;
+    vozInicializando = false;
+
+    window._vozMutado = false;
+
+    limparFeedVoz();
+
+    definirTexto(
+        'voz-transcript',
+        ''
+    );
+
+    definirTexto(
+        'voz-interim',
+        ''
+    );
 
     atualizarEstadoVoz(
         'ouvindo',
-        'Fale sua pergunta'
+        'Fale com a Iana'
     );
 
+    try {
+        await garantirAudioElevenAtivo();
+    } catch {}
+
     iniciarVisualizacaoAudio();
-    iniciarReconhecimentoVoz();
+
+    const socket = garantirSocketVoz();
+
+    if (!socket) {
+        atualizarEstadoVoz(
+            'processando',
+            'Não foi possível iniciar a voz.'
+        );
+        return;
+    }
+
+    if (socket.connected) {
+        iniciarReconhecimentoVoz();
+    }
 }
 
 
 function fecharVoz() {
-    const overlay = document.getElementById('overlay-voz');
+    const overlay = obterElemento('overlay-voz');
+
+    emChamadaVoz = false;
+    vozProcessando = false;
+    vozFalando = false;
+    vozInicializando = false;
+
+    ttsNextResponse = false;
+
+    window._vozMutado = false;
+
+    pararReconhecimentoVoz();
 
     if (overlay) {
         overlay.style.display = 'none';
@@ -570,41 +1068,47 @@ function fecharVoz() {
         );
     }
 
-    if (window._recognitionVoz) {
+    if (typeof speechSynthesis !== 'undefined') {
+        speechSynthesis.cancel();
+    }
+
+    if (vozSocket) {
         try {
-            window._recognitionVoz.stop();
+            vozSocket.emit('voz:encerrar');
         } catch {}
 
-        window._recognitionVoz = null;
+        try {
+            vozSocket.disconnect();
+        } catch {}
+
+        vozSocket = null;
     }
 
-    if (streamVoz) {
-        streamVoz
-            .getTracks()
-            .forEach(track => track.stop());
+    vozSocketConectando = false;
 
-        streamVoz = null;
-    }
+    pararAudioEleven();
 
-    if (
-        typeof speechSynthesis !== 'undefined'
-    ) {
-        speechSynthesis.cancel();
+    if (audioCtxEleven) {
+        audioCtxEleven
+            .close()
+            .catch(() => {});
+
+        audioCtxEleven = null;
     }
 
     pararVisualizacaoAudio();
 
-    emChamadaVoz = false;
-
-    const transcript = document.getElementById(
-        'voz-transcript'
+    definirTexto(
+        'voz-transcript',
+        ''
     );
 
-    if (transcript) {
-        transcript.textContent = '';
-    }
+    definirTexto(
+        'voz-interim',
+        ''
+    );
 
-    const mute = document.getElementById(
+    const mute = obterElemento(
         'btn-voz-mute'
     );
 
@@ -613,13 +1117,17 @@ function fecharVoz() {
         mute.textContent = '🎙️';
     }
 
-    window.IanaHUD?.setEstado?.('ocioso');
+    if (window.IanaHUD?.setEstado) {
+        try {
+            window.IanaHUD.setEstado('ocioso');
+        } catch {}
+    }
 }
 
 
-/* ────────────────────────────────────────────────────────────────
+/* ================================================================
    VISUALIZAÇÃO DO MICROFONE
-   ──────────────────────────────────────────────────────────────── */
+================================================================ */
 
 async function iniciarVisualizacaoAudio() {
     if (!possuiMediaDevices()) {
@@ -642,7 +1150,8 @@ async function iniciarVisualizacaoAudio() {
             return;
         }
 
-        audioCtxVoz = new AudioContextClass();
+        audioCtxVoz =
+            new AudioContextClass();
 
         const source =
             audioCtxVoz.createMediaStreamSource(
@@ -656,18 +1165,16 @@ async function iniciarVisualizacaoAudio() {
 
         source.connect(analyserVoz);
 
-        if (
-            audioCtxVoz.state === 'suspended'
-        ) {
+        if (audioCtxVoz.state === 'suspended') {
             await audioCtxVoz.resume();
         }
 
         loopVisualizacaoAudio();
 
-    } catch (e) {
+    } catch (erro) {
         console.warn(
-            'Visualização do microfone indisponível:',
-            e.message
+            '[IANA MICROFONE]',
+            erro?.message || erro
         );
     }
 }
@@ -678,22 +1185,29 @@ function loopVisualizacaoAudio() {
         return;
     }
 
-    const dados = new Uint8Array(
-        analyserVoz.frequencyBinCount
-    );
+    const dados =
+        new Uint8Array(
+            analyserVoz.frequencyBinCount
+        );
 
-    analyserVoz.getByteFrequencyData(dados);
+    analyserVoz.getByteFrequencyData(
+        dados
+    );
 
     const media =
-        dados.reduce(
-            (total, valor) => total + valor,
-            0
-        ) / dados.length;
+        dados.length
+            ? dados.reduce(
+                (total, valor) =>
+                    total + valor,
+                0
+            ) / dados.length
+            : 0;
 
-    const nivel = Math.min(
-        1,
-        media / 90
-    );
+    const nivel =
+        Math.min(
+            1,
+            media / 90
+        );
 
     document
         .querySelectorAll('.jarvis-bars')
@@ -738,143 +1252,248 @@ function pararVisualizacaoAudio() {
 }
 
 
-/* ────────────────────────────────────────────────────────────────
+/* ================================================================
    SPEECH RECOGNITION
-   ──────────────────────────────────────────────────────────────── */
+================================================================ */
+
+function pararReconhecimentoVoz() {
+    const rec =
+        window._recognitionVoz;
+
+    window._recognitionVoz = null;
+
+    vozInicializando = false;
+
+    if (rec) {
+        try {
+            rec.onstart = null;
+            rec.onend = null;
+            rec.onerror = null;
+            rec.onresult = null;
+            rec.stop();
+        } catch {}
+    }
+}
+
 
 function iniciarReconhecimentoVoz() {
     const SpeechRecognition =
         window.SpeechRecognition ||
         window.webkitSpeechRecognition;
 
-    const statusEl =
-        document.getElementById('voz-status');
-
-    const transcriptEl =
-        document.getElementById('voz-transcript');
-
-    if (!SpeechRecognition) {
-        if (statusEl) {
-            statusEl.textContent =
-                'Reconhecimento de voz não suportado neste navegador.';
-        }
-
+    if (
+        !emChamadaVoz ||
+        window._vozMutado ||
+        vozFalando ||
+        vozProcessando
+    ) {
         return;
     }
 
-    if (window._recognitionVoz) {
-        try {
-            window._recognitionVoz.stop();
-        } catch {}
+    if (!SpeechRecognition) {
+        atualizarEstadoVoz(
+            'processando',
+            'Reconhecimento de voz não é suportado neste navegador.'
+        );
+        return;
     }
 
-    const rec = new SpeechRecognition();
+    if (
+        window._recognitionVoz ||
+        vozInicializando
+    ) {
+        return;
+    }
+
+    vozInicializando = true;
+
+    const transcriptEl =
+        obterElemento('voz-transcript');
+
+    const interimEl =
+        obterElemento('voz-interim');
+
+    const rec =
+        new SpeechRecognition();
 
     rec.lang = 'pt-BR';
     rec.continuous = true;
     rec.interimResults = true;
+    rec.maxAlternatives = 1;
 
     window._recognitionVoz = rec;
 
+
     rec.onstart = () => {
-        atualizarEstadoVoz(
-            'ouvindo',
-            'Fale sua pergunta'
-        );
+        vozInicializando = false;
+
+        if (
+            emChamadaVoz &&
+            !vozFalando &&
+            !vozProcessando
+        ) {
+            atualizarEstadoVoz(
+                'ouvindo',
+                'Fale sua pergunta'
+            );
+        }
     };
 
+
     rec.onresult = event => {
-        let texto = '';
+        let textoFinal = '';
+        let textoInterim = '';
 
         for (
             let i = event.resultIndex;
             i < event.results.length;
             i++
         ) {
-            texto +=
-                event.results[i][0].transcript;
+            const resultado =
+                event.results[i];
+
+            const texto =
+                resultado[0]?.transcript || '';
+
+            if (resultado.isFinal) {
+                textoFinal += texto;
+            } else {
+                textoInterim += texto;
+            }
         }
 
         if (transcriptEl) {
-            transcriptEl.textContent = texto;
+            transcriptEl.textContent =
+                textoInterim ||
+                textoFinal;
         }
 
-        const ultimoResultado =
-            event.results[
-                event.results.length - 1
-            ];
+        if (interimEl) {
+            interimEl.textContent =
+                textoInterim;
+        }
 
         if (
-            ultimoResultado?.isFinal &&
-            texto.trim()
+            !textoFinal.trim() ||
+            vozProcessando ||
+            vozFalando
         ) {
+            return;
+        }
+
+        const texto =
+            textoFinal.trim();
+
+        vozProcessando = true;
+
+        if (interimEl) {
+            interimEl.textContent = '';
+        }
+
+        atualizarEstadoVoz(
+            'processando',
+            'Iana está pensando...'
+        );
+
+        pararReconhecimentoVoz();
+
+        const socket =
+            garantirSocketVoz();
+
+        if (!socket) {
+            vozProcessando = false;
+
             atualizarEstadoVoz(
                 'processando',
-                'Processando...'
+                'Socket de voz indisponível.'
             );
 
-            ttsNextResponse = true;
+            return;
+        }
 
-            processarEnvioIA(
-                texto.trim()
-            ).then(() => {
-                if (!emChamadaVoz) {
-                    return;
-                }
-
-                atualizarEstadoVoz(
-                    'ouvindo',
-                    'Fale sua pergunta'
+        const enviar = () => {
+            if (
+                emChamadaVoz &&
+                !window._vozMutado &&
+                socket.connected
+            ) {
+                socket.emit(
+                    'voz:texto',
+                    texto
                 );
+            }
+        };
 
-                if (transcriptEl) {
-                    transcriptEl.textContent = '';
-                }
-            });
+        if (socket.connected) {
+            enviar();
+        } else {
+            socket.once(
+                'connect',
+                enviar
+            );
         }
     };
 
+
     rec.onerror = event => {
+        vozInicializando = false;
+
         console.warn(
-            'SpeechRecognition:',
-            event.error
+            '[IANA SPEECH]',
+            event?.error
         );
 
         if (!emChamadaVoz) {
             return;
         }
 
+        window._recognitionVoz = null;
+
         if (
             event.error === 'not-allowed' ||
             event.error === 'service-not-allowed'
         ) {
             atualizarEstadoVoz(
-                'ocioso',
+                'processando',
                 'Permissão de microfone negada.'
             );
-
             return;
         }
 
-        atualizarEstadoVoz(
-            'ouvindo',
-            'Erro ao ouvir. Tente novamente.'
-        );
+        if (
+            !vozProcessando &&
+            !vozFalando &&
+            !window._vozMutado
+        ) {
+            atualizarEstadoVoz(
+                'ouvindo',
+                'Reconectando ao microfone...'
+            );
+        }
     };
 
+
     rec.onend = () => {
-        /*
-         * O reconhecimento pode encerrar sozinho.
-         * Reiniciamos somente enquanto a chamada estiver aberta
-         * e o usuário não estiver mutado.
-         */
+        vozInicializando = false;
+
+        if (
+            window._recognitionVoz === rec
+        ) {
+            window._recognitionVoz = null;
+        }
+
         if (
             emChamadaVoz &&
-            !window._vozMutado
+            !window._vozMutado &&
+            !vozFalando &&
+            !vozProcessando
         ) {
             setTimeout(() => {
                 if (
                     emChamadaVoz &&
+                    !window._vozMutado &&
+                    !vozFalando &&
+                    !vozProcessando &&
                     !window._recognitionVoz
                 ) {
                     iniciarReconhecimentoVoz();
@@ -883,12 +1502,16 @@ function iniciarReconhecimentoVoz() {
         }
     };
 
+
     try {
         rec.start();
-    } catch (e) {
+    } catch (erro) {
+        vozInicializando = false;
+        window._recognitionVoz = null;
+
         console.warn(
-            'Não foi possível iniciar reconhecimento:',
-            e.message
+            '[IANA SPEECH]',
+            erro?.message || erro
         );
     }
 }
@@ -896,120 +1519,166 @@ function iniciarReconhecimentoVoz() {
 
 function toggleMuteVoz() {
     const btn =
-        document.getElementById(
-            'btn-voz-mute'
-        );
+        obterElemento('btn-voz-mute');
 
-    if (window._recognitionVoz) {
-        try {
-            window._recognitionVoz.stop();
-        } catch {}
+    const atualmenteMutado =
+        Boolean(window._vozMutado);
 
-        window._recognitionVoz = null;
+    if (!atualmenteMutado) {
+        pararReconhecimentoVoz();
+
         window._vozMutado = true;
+
+        btn?.classList.add('mutado');
 
         if (btn) {
             btn.textContent = '🔇';
-            btn.classList.add('mutado');
         }
 
         atualizarEstadoVoz(
-            'ocioso',
+            'processando',
             'Microfone desativado'
         );
 
-    } else {
-        window._vozMutado = false;
+        return;
+    }
+
+    window._vozMutado = false;
+
+    btn?.classList.remove('mutado');
+
+    if (btn) {
+        btn.textContent = '🎙️';
+    }
+
+    if (
+        emChamadaVoz &&
+        !vozFalando &&
+        !vozProcessando
+    ) {
+        atualizarEstadoVoz(
+            'ouvindo',
+            'Fale com a Iana'
+        );
 
         iniciarReconhecimentoVoz();
-
-        if (btn) {
-            btn.textContent = '🎙️';
-            btn.classList.remove('mutado');
-        }
     }
 }
 
 
-/* ────────────────────────────────────────────────────────────────
-   MENU DE UPLOAD
-   ──────────────────────────────────────────────────────────────── */
+/* ================================================================
+   FEED DO VOICE MODE
+================================================================ */
+
+function limparFeedVoz() {
+    const transcript =
+        obterElemento('voz-transcript');
+
+    const interim =
+        obterElemento('voz-interim');
+
+    if (transcript) {
+        transcript.textContent = '';
+    }
+
+    if (interim) {
+        interim.textContent = '';
+    }
+}
+
+
+/* ================================================================
+   UPLOAD
+================================================================ */
 
 function iniciarMenuUpload() {
+    if (menuUploadInicializado) {
+        return;
+    }
+
     const btnMais =
-        document.getElementById('btn-mais');
+        obterElemento('btn-mais');
 
     const menu =
-        document.getElementById('upload-menu');
+        obterElemento('upload-menu');
 
     const fileInput =
-        document.getElementById('file-input');
+        obterElemento('file-input');
 
     if (!btnMais || !menu) {
         return;
     }
 
-    btnMais.addEventListener('click', event => {
-        event.stopPropagation();
+    menuUploadInicializado = true;
 
-        const rect =
-            btnMais.getBoundingClientRect();
-
-        const aberto =
-            menu.style.display === 'flex';
-
-        if (!aberto) {
-            menu.style.display = 'flex';
-
-            /*
-             * Mede depois de exibir.
-             */
-            const altura =
-                menu.offsetHeight || 200;
-
-            let left = rect.left;
-            let top =
-                rect.top -
-                altura -
-                8;
-
-            if (
-                left + menu.offsetWidth >
-                window.innerWidth - 8
-            ) {
-                left =
-                    window.innerWidth -
-                    menu.offsetWidth -
-                    8;
-            }
-
-            if (top < 8) {
-                top = rect.bottom + 8;
-            }
-
-            menu.style.left =
-                `${Math.max(8, left)}px`;
-
-            menu.style.top =
-                `${Math.max(8, top)}px`;
-
-        } else {
-            menu.style.display = 'none';
-        }
-    });
-
-    document.addEventListener('click', () => {
-        menu.style.display = 'none';
-    });
-
-    menu.addEventListener(
+    btnMais.addEventListener(
         'click',
-        event => event.stopPropagation()
+        event => {
+            event.stopPropagation();
+
+            const rect =
+                btnMais.getBoundingClientRect();
+
+            const aberto =
+                menu.style.display === 'flex';
+
+            if (!aberto) {
+                menu.style.display = 'flex';
+
+                const altura =
+                    menu.offsetHeight || 200;
+
+                let left = rect.left;
+                let top =
+                    rect.top -
+                    altura -
+                    8;
+
+                if (
+                    left + menu.offsetWidth >
+                    window.innerWidth - 8
+                ) {
+                    left =
+                        window.innerWidth -
+                        menu.offsetWidth -
+                        8;
+                }
+
+                if (top < 8) {
+                    top =
+                        rect.bottom + 8;
+                }
+
+                menu.style.left =
+                    `${Math.max(8, left)}px`;
+
+                menu.style.top =
+                    `${Math.max(8, top)}px`;
+
+            } else {
+                menu.style.display = 'none';
+            }
+        }
     );
 
 
-    document
-        .getElementById('up-foto')
+    document.addEventListener(
+        'click',
+        () => {
+            menu.style.display = 'none';
+        }
+    );
+
+
+    menu.addEventListener(
+        'click',
+        event => {
+            event.stopPropagation();
+        }
+    );
+
+
+    obterElemento('up-foto')
         ?.addEventListener(
             'click',
             () => {
@@ -1019,8 +1688,7 @@ function iniciarMenuUpload() {
         );
 
 
-    document
-        .getElementById('up-imagem')
+    obterElemento('up-imagem')
         ?.addEventListener(
             'click',
             () => {
@@ -1036,8 +1704,7 @@ function iniciarMenuUpload() {
         );
 
 
-    document
-        .getElementById('up-arquivo')
+    obterElemento('up-arquivo')
         ?.addEventListener(
             'click',
             () => {
@@ -1053,8 +1720,7 @@ function iniciarMenuUpload() {
         );
 
 
-    document
-        .getElementById('up-audio')
+    obterElemento('up-audio')
         ?.addEventListener(
             'click',
             () => {
@@ -1070,29 +1736,31 @@ function iniciarMenuUpload() {
         );
 
 
-    document
-        .getElementById('up-tela')
+    obterElemento('up-tela')
         ?.addEventListener(
             'click',
             () => {
                 menu.style.display = 'none';
+
                 compartilharTela();
             }
         );
 }
 
 
-/* ────────────────────────────────────────────────────────────────
-   UPLOAD DE ARQUIVOS
-   ──────────────────────────────────────────────────────────────── */
-
 function iniciarUpload() {
+    if (uploadInicializado) {
+        return;
+    }
+
     const fileInput =
-        document.getElementById('file-input');
+        obterElemento('file-input');
 
     if (!fileInput) {
         return;
     }
+
+    uploadInicializado = true;
 
     fileInput.addEventListener(
         'change',
@@ -1105,11 +1773,10 @@ function iniciarUpload() {
             }
 
             try {
-                /*
-                 * IMAGEM
-                 */
                 if (
-                    file.type.startsWith('image/')
+                    file.type.startsWith(
+                        'image/'
+                    )
                 ) {
                     const dataUrl =
                         await arquivoParaDataURL(
@@ -1135,23 +1802,15 @@ function iniciarUpload() {
                 }
 
 
-                /*
-                 * ÁUDIO
-                 *
-                 * Ainda não é transcrito aqui.
-                 * O backend precisa de um endpoint de
-                 * transcrição para transformar o áudio
-                 * em texto.
-                 */
                 if (
-                    file.type.startsWith('audio/')
+                    file.type.startsWith(
+                        'audio/'
+                    )
                 ) {
-                    const dataUrl = await arquivoParaDataURL(file);
                     await processarEnvioIA(
                         `[Usuário enviou um áudio: ${file.name}]`,
                         {
                             tipo: 'audio',
-                            audio: dataUrl,
                             nome: file.name,
                             mimeType: file.type
                         }
@@ -1161,14 +1820,9 @@ function iniciarUpload() {
                 }
 
 
-                /*
-                 * TXT
-                 *
-                 * Para TXT conseguimos ler o conteúdo
-                 * diretamente no navegador.
-                 */
                 if (
-                    file.type === 'text/plain' ||
+                    file.type ===
+                    'text/plain' ||
                     file.name
                         .toLowerCase()
                         .endsWith('.txt')
@@ -1192,13 +1846,6 @@ function iniciarUpload() {
                 }
 
 
-                /*
-                 * PDF/DOC/DOCX
-                 *
-                 * Apenas informamos que o arquivo
-                 * foi selecionado. Para interpretação
-                 * real, o backend precisa fazer parsing.
-                 */
                 await processarEnvioIA(
                     `[Usuário enviou um arquivo: ${file.name}]`,
                     {
@@ -1208,10 +1855,10 @@ function iniciarUpload() {
                     }
                 );
 
-            } catch (e) {
+            } catch (erro) {
                 console.error(
-                    'Erro no upload:',
-                    e
+                    '[IANA UPLOAD]',
+                    erro
                 );
 
                 alert(
@@ -1226,20 +1873,18 @@ function iniciarUpload() {
 }
 
 
-/* ────────────────────────────────────────────────────────────────
+/* ================================================================
    COMPARTILHAMENTO DE TELA
-   ──────────────────────────────────────────────────────────────── */
+================================================================ */
 
 async function compartilharTela() {
     if (
         !navigator.mediaDevices ||
-        typeof navigator.mediaDevices.getDisplayMedia !==
-            'function'
+        typeof navigator.mediaDevices.getDisplayMedia !== 'function'
     ) {
         alert(
             'Seu navegador não suporta compartilhamento de tela.'
         );
-
         return;
     }
 
@@ -1255,41 +1900,41 @@ async function compartilharTela() {
         const track =
             stream.getVideoTracks()[0];
 
-        /*
-         * Quando o usuário clica em "Parar compartilhamento"
-         * no navegador.
-         */
-        track?.addEventListener(
-            'ended',
-            () => {
-                window._telaCompartilhada = false;
-            }
-        );
+        if (track) {
+            track.addEventListener(
+                'ended',
+                () => {
+                    window._telaCompartilhada = false;
+                }
+            );
+        }
 
         window._telaCompartilhada = true;
 
         /*
-         * Atualmente o navegador não envia automaticamente
-         * o frame da tela para o Gemini.
-         *
-         * Aqui apenas registramos que a tela foi compartilhada.
-         */
+           Atualmente enviamos somente a informação
+           de que a tela foi compartilhada.
+
+           Para enviar uma captura real ao backend,
+           seria necessário capturar um frame do stream.
+        */
+
         await processarEnvioIA(
             '[Usuário compartilhou a tela.]'
         );
 
-    } catch (e) {
+    } catch (erro) {
         if (
-            e.name !== 'NotAllowedError'
+            erro?.name !== 'NotAllowedError'
         ) {
             console.error(
-                'Compartilhamento de tela:',
-                e
+                '[IANA TELA]',
+                erro
             );
 
             alert(
                 'Erro ao compartilhar tela: ' +
-                e.message
+                (erro.message || '')
             );
         }
 
@@ -1305,22 +1950,27 @@ async function compartilharTela() {
 }
 
 
-/* ────────────────────────────────────────────────────────────────
+/* ================================================================
    GRAVAÇÃO DE ÁUDIO
-   ──────────────────────────────────────────────────────────────── */
+================================================================ */
 
 function iniciarGravacaoAudio() {
+    if (gravacaoInicializada) {
+        return;
+    }
+
     const btn =
-        document.getElementById('btn-mic');
+        obterElemento('btn-mic');
 
     if (!btn) {
         return;
     }
 
+    gravacaoInicializada = true;
+
     btn.addEventListener(
         'click',
         async () => {
-
             if (!gravandoAudio) {
                 try {
                     if (!possuiMediaDevices()) {
@@ -1330,10 +1980,9 @@ function iniciarGravacaoAudio() {
                     }
 
                     const stream =
-                        await navigator.mediaDevices
-                            .getUserMedia({
-                                audio: true
-                            });
+                        await navigator.mediaDevices.getUserMedia({
+                            audio: true
+                        });
 
                     const mimeType =
                         MediaRecorder.isTypeSupported(
@@ -1365,7 +2014,6 @@ function iniciarGravacaoAudio() {
 
                     mediaRecorderAudio.onstop =
                         async () => {
-
                             stream
                                 .getTracks()
                                 .forEach(
@@ -1381,18 +2029,19 @@ function iniciarGravacaoAudio() {
                                     }
                                 );
 
-                            console.log(
-                                'Áudio gravado:',
-                                blob
-                            );
+                            audioChunks = [];
+
+                            /*
+                               Cria DataURL para que o áudio
+                               possa ser enviado ao backend.
+                            */
 
                             try {
-                                const arquivo = new File(
-                                    [blob],
-                                    'gravacao.webm',
-                                    { type: mimeType }
-                                );
-                                const dataUrl = await arquivoParaDataURL(arquivo);
+                                const dataUrl =
+                                    await blobParaDataURL(
+                                        blob
+                                    );
+
                                 await processarEnvioIA(
                                     '[Usuário enviou um áudio gravado.]',
                                     {
@@ -1402,9 +2051,11 @@ function iniciarGravacaoAudio() {
                                         mimeType
                                     }
                                 );
-                            } catch (e) {
-                                console.error('Envio do áudio gravado:', e);
-                                alert('Não foi possível enviar o áudio.');
+                            } catch (erro) {
+                                console.error(
+                                    '[IANA ÁUDIO]',
+                                    erro
+                                );
                             }
                         };
 
@@ -1420,24 +2071,23 @@ function iniciarGravacaoAudio() {
                     btn.title =
                         'Parar gravação';
 
-                } catch (e) {
+                } catch (erro) {
                     console.error(
-                        'Microfone:',
-                        e
+                        '[IANA MICROFONE]',
+                        erro
                     );
 
                     alert(
                         'Não foi possível acessar o microfone: ' +
-                        e.message
+                        (erro.message || '')
                     );
                 }
 
             } else {
-
                 if (
                     mediaRecorderAudio &&
                     mediaRecorderAudio.state !==
-                        'inactive'
+                    'inactive'
                 ) {
                     mediaRecorderAudio.stop();
                 }
@@ -1456,9 +2106,29 @@ function iniciarGravacaoAudio() {
 }
 
 
-/* ────────────────────────────────────────────────────────────────
-   SESSÃO
-   ──────────────────────────────────────────────────────────────── */
+function blobParaDataURL(blob) {
+    return new Promise((resolve, reject) => {
+        const reader =
+            new FileReader();
+
+        reader.onload =
+            () => resolve(reader.result);
+
+        reader.onerror =
+            () => reject(
+                new Error(
+                    'Não foi possível ler o áudio.'
+                )
+            );
+
+        reader.readAsDataURL(blob);
+    });
+}
+
+
+/* ================================================================
+   AUTENTICAÇÃO
+================================================================ */
 
 async function verificarSessao() {
     try {
@@ -1469,6 +2139,11 @@ async function verificarSessao() {
                     credentials: 'include'
                 }
             );
+
+        if (!res.ok) {
+            atualizarUIVisitante();
+            return;
+        }
 
         const data =
             await res.json();
@@ -1499,37 +2174,28 @@ function atualizarUIVisitante() {
     );
 
     const authButtons =
-        document.getElementById(
-            'auth-buttons'
-        );
+        obterElemento('auth-buttons');
 
     const footer =
-        document.getElementById(
-            'sidebar-footer'
-        );
+        obterElemento('sidebar-footer');
 
     if (authButtons) {
-        authButtons.style.display = 'flex';
+        authButtons.style.display =
+            'flex';
     }
 
     if (footer) {
-        footer.style.display = 'none';
+        footer.style.display =
+            'none';
     }
 
-    const hint =
-        document.getElementById(
-            'historico-hint'
-        );
-
-    if (hint) {
-        hint.textContent =
-            'Faça login para salvar conversas.';
-    }
+    definirTexto(
+        'historico-hint',
+        'Faça login para salvar conversas.'
+    );
 
     const lista =
-        document.getElementById(
-            'historico-lista'
-        );
+        obterElemento('historico-lista');
 
     if (lista) {
         lista.innerHTML =
@@ -1550,41 +2216,34 @@ function atualizarUILogado(usuario) {
     );
 
     const authButtons =
-        document.getElementById(
-            'auth-buttons'
-        );
+        obterElemento('auth-buttons');
 
     const footer =
-        document.getElementById(
-            'sidebar-footer'
-        );
+        obterElemento('sidebar-footer');
 
     if (authButtons) {
-        authButtons.style.display = 'none';
+        authButtons.style.display =
+            'none';
     }
 
     if (footer) {
-        footer.style.display = 'block';
+        footer.style.display =
+            'block';
     }
 
-    const nomeEl =
-        document.getElementById(
-            'user-nome-sidebar'
-        );
-
-    if (nomeEl) {
-        nomeEl.textContent =
-            usuario.nome;
-    }
+    definirTexto(
+        'user-nome-sidebar',
+        usuario?.nome || 'Usuário'
+    );
 
     const topAvatar =
-        document.getElementById(
+        obterElemento(
             'topbar-profile-avatar'
         );
 
     if (
         topAvatar &&
-        usuario.avatar
+        usuario?.avatar
     ) {
         topAvatar.src =
             usuario.avatar;
@@ -1594,16 +2253,13 @@ function atualizarUILogado(usuario) {
 }
 
 
-/* ────────────────────────────────────────────────────────────────
-   AUTH
-   ──────────────────────────────────────────────────────────────── */
-
 function mensagemErroAuth(
     msg,
     fallback = 'Erro inesperado.'
 ) {
     const texto =
-        String(msg || '').toLowerCase();
+        String(msg || '')
+            .toLowerCase();
 
     if (
         texto.includes(
@@ -1616,6 +2272,9 @@ function mensagemErroAuth(
     if (
         texto.includes(
             'inválidas'
+        ) ||
+        texto.includes(
+            'invalid'
         )
     ) {
         return 'E-mail ou senha inválidos.';
@@ -1624,6 +2283,9 @@ function mensagemErroAuth(
     if (
         texto.includes(
             'mínima'
+        ) ||
+        texto.includes(
+            'minimo'
         )
     ) {
         return 'Senha muito curta (mínimo 8 caracteres).';
@@ -1635,41 +2297,39 @@ function mensagemErroAuth(
 
 function mostrarErroTela(id, msg) {
     const el =
-        document.getElementById(id);
+        obterElemento(id);
 
     if (el) {
-        el.textContent = msg;
+        el.textContent =
+            String(msg || '');
     }
 }
 
 
 async function realizarLogin() {
     const email =
-        document.getElementById(
-            'login-email'
-        )?.value.trim();
+        obterElemento('login-email')
+            ?.value
+            .trim();
 
     const senha =
-        document.getElementById(
-            'login-senha'
-        )?.value;
+        obterElemento('login-senha')
+            ?.value;
 
     if (!email || !senha) {
         mostrarErroTela(
             'login-erro',
             'Preencha e-mail e senha.'
         );
-
         return;
     }
 
     const btn =
-        document.getElementById(
-            'btn-login'
-        );
+        obterElemento('btn-login');
 
-    const orig =
-        btn?.textContent || 'Entrar';
+    const original =
+        btn?.textContent ||
+        'Entrar';
 
     if (btn) {
         btn.textContent =
@@ -1707,13 +2367,15 @@ async function realizarLogin() {
                     'Falha no login.'
                 )
             );
-        } else {
-            fecharAuth();
 
-            atualizarUILogado(
-                data.usuario
-            );
+            return;
         }
+
+        fecharAuth();
+
+        atualizarUILogado(
+            data.usuario
+        );
 
     } catch {
         mostrarErroTela(
@@ -1723,8 +2385,11 @@ async function realizarLogin() {
 
     } finally {
         if (btn) {
-            btn.textContent = orig;
-            btn.disabled = false;
+            btn.textContent =
+                original;
+
+            btn.disabled =
+                false;
         }
     }
 }
@@ -1732,35 +2397,31 @@ async function realizarLogin() {
 
 async function realizarCadastro() {
     const nome =
-        document.getElementById(
-            'cad-nome'
-        )?.value.trim();
+        obterElemento('cad-nome')
+            ?.value
+            .trim();
 
     const email =
-        document.getElementById(
-            'cad-email'
-        )?.value.trim();
+        obterElemento('cad-email')
+            ?.value
+            .trim();
 
     const senha =
-        document.getElementById(
-            'cad-senha'
-        )?.value;
+        obterElemento('cad-senha')
+            ?.value;
 
     if (!nome || !email || !senha) {
         mostrarErroTela(
             'cad-erro',
             'Preencha todos os campos.'
         );
-
         return;
     }
 
     const btn =
-        document.getElementById(
-            'btn-cadastrar'
-        );
+        obterElemento('btn-cadastrar');
 
-    const orig =
+    const original =
         btn?.textContent ||
         'Cadastrar';
 
@@ -1801,13 +2462,15 @@ async function realizarCadastro() {
                     'Falha no cadastro.'
                 )
             );
-        } else {
-            fecharAuth();
 
-            atualizarUILogado(
-                data.usuario
-            );
+            return;
         }
+
+        fecharAuth();
+
+        atualizarUILogado(
+            data.usuario
+        );
 
     } catch {
         mostrarErroTela(
@@ -1817,8 +2480,11 @@ async function realizarCadastro() {
 
     } finally {
         if (btn) {
-            btn.textContent = orig;
-            btn.disabled = false;
+            btn.textContent =
+                original;
+
+            btn.disabled =
+                false;
         }
     }
 }
@@ -1833,30 +2499,25 @@ async function realizarLogout() {
                 credentials: 'include'
             }
         );
-    } catch (e) {
-        console.warn(
-            'Logout falhou:',
-            e
-        );
-    }
+    } catch {}
 
     atualizarUIVisitante();
+
     resetarChat();
 }
 
 
 async function enviarCodigoRecuperacao() {
     const email =
-        document.getElementById(
-            'esq-email'
-        )?.value.trim();
+        obterElemento('esq-email')
+            ?.value
+            .trim();
 
     if (!email) {
         mostrarErroTela(
             'esq-erro',
             'Digite seu e-mail.'
         );
-
         return;
     }
 
@@ -1893,24 +2554,21 @@ async function enviarCodigoRecuperacao() {
                     'Não foi possível enviar o código.'
                 )
             );
-        } else {
-            emailRecuperacao =
-                email;
 
-            const label =
-                document.getElementById(
-                    'cod-label'
-                );
-
-            if (label) {
-                label.textContent =
-                    `Código enviado para ${email}`;
-            }
-
-            mostrarTela(
-                'tela-codigo'
-            );
+            return;
         }
+
+        emailRecuperacao =
+            email;
+
+        definirTexto(
+            'cod-label',
+            `Código enviado para ${email}`
+        );
+
+        mostrarTela(
+            'tela-codigo'
+        );
 
     } catch {
         mostrarErroTela(
@@ -1923,21 +2581,19 @@ async function enviarCodigoRecuperacao() {
 
 async function alterarSenha() {
     const codigo =
-        document.getElementById(
-            'cod-input'
-        )?.value.trim();
+        obterElemento('cod-input')
+            ?.value
+            .trim();
 
     const novaSenha =
-        document.getElementById(
-            'cod-nova-senha'
-        )?.value;
+        obterElemento('cod-nova-senha')
+            ?.value;
 
     if (!codigo || !novaSenha) {
         mostrarErroTela(
             'cod-erro',
             'Preencha o código e a nova senha.'
         );
-
         return;
     }
 
@@ -1973,15 +2629,17 @@ async function alterarSenha() {
                     'Código inválido.'
                 )
             );
-        } else {
-            alert(
-                '✅ Senha alterada! Faça login.'
-            );
 
-            mostrarTela(
-                'tela-login'
-            );
+            return;
         }
+
+        alert(
+            'Senha alterada! Faça login.'
+        );
+
+        mostrarTela(
+            'tela-login'
+        );
 
     } catch {
         mostrarErroTela(
@@ -1992,387 +2650,533 @@ async function alterarSenha() {
 }
 
 
-/* ────────────────────────────────────────────────────────────────
+/* ================================================================
    HISTÓRICO
-   ──────────────────────────────────────────────────────────────── */
+================================================================ */
 
 async function carregarHistorico() {
-    const container =
-        document.getElementById(
-            'historico-lista'
-        );
+    const lista =
+        obterElemento('historico-lista');
 
-    if (!container) {
+    if (!lista || !usuarioAtual) {
         return;
     }
+
+    lista.innerHTML =
+        '<p class="sidebar-hint">Carregando conversas...</p>';
 
     try {
         const res =
             await fetch(
-                '/chat/conversas',
+                '/conversas',
                 {
                     credentials: 'include'
                 }
             );
 
         if (!res.ok) {
-            container.innerHTML =
-                '<p class="sidebar-hint">Erro ao carregar o histórico.</p>';
-
-            return;
+            throw new Error(
+                'Falha ao carregar histórico.'
+            );
         }
 
-        const { conversas } =
+        const data =
             await res.json();
 
-        container.innerHTML = '';
-
-        if (!conversas?.length) {
-            container.innerHTML =
-                '<p class="sidebar-hint">Nenhum chat salvo ainda.</p>';
-
-            return;
-        }
-
-        conversas.forEach(c => {
-            const item =
-                document.createElement(
-                    'div'
+        const conversas =
+            Array.isArray(data)
+                ? data
+                : (
+                    data.conversas ||
+                    data.historico ||
+                    []
                 );
 
-            item.className =
-                `chat-item ${
-                    idConversaAtiva ===
-                    c.id_conversa
-                        ? 'active'
-                        : ''
-                } ${
-                    c.fixada
-                        ? 'fixada'
-                        : ''
-                }`;
+        renderizarHistorico(
+            conversas
+        );
 
-            const tituloOriginal =
-                c.titulo ||
-                'Conversa';
-
-            /*
-             * CORREÇÃO XSS:
-             * Não colocamos o título diretamente
-             * no innerHTML.
-             */
-            const titulo =
-                document.createElement(
-                    'span'
-                );
-
-            titulo.className =
-                'chat-titulo';
-
-            titulo.textContent =
-                tituloOriginal;
-
-            item.appendChild(
-                titulo
-            );
-
-
-            const wrapper =
-                document.createElement(
-                    'div'
-                );
-
-            wrapper.className =
-                'chat-options-wrapper';
-
-
-            const options =
-                document.createElement(
-                    'button'
-                );
-
-            options.type = 'button';
-            options.className =
-                'btn-chat-options';
-
-            options.textContent =
-                '⋮';
-
-
-            const menu =
-                document.createElement(
-                    'div'
-                );
-
-            menu.className =
-                'chat-options-menu';
-
-
-            const fixar =
-                document.createElement(
-                    'button'
-                );
-
-            fixar.type = 'button';
-            fixar.className =
-                'chat-option-btn';
-
-            fixar.dataset.acao =
-                'fixar';
-
-            fixar.textContent =
-                c.fixada
-                    ? 'Desafixar'
-                    : 'Fixar';
-
-
-            const renomear =
-                document.createElement(
-                    'button'
-                );
-
-            renomear.type = 'button';
-            renomear.className =
-                'chat-option-btn';
-
-            renomear.dataset.acao =
-                'renomear';
-
-            renomear.textContent =
-                'Renomear';
-
-
-            const excluir =
-                document.createElement(
-                    'button'
-                );
-
-            excluir.type = 'button';
-            excluir.className =
-                'chat-option-btn excluir';
-
-            excluir.dataset.acao =
-                'excluir';
-
-            excluir.textContent =
-                'Excluir';
-
-
-            menu.appendChild(fixar);
-            menu.appendChild(renomear);
-            menu.appendChild(excluir);
-
-            wrapper.appendChild(
-                options
-            );
-
-            wrapper.appendChild(
-                menu
-            );
-
-            item.appendChild(
-                wrapper
-            );
-
-
-            titulo.addEventListener(
-                'click',
-                () => {
-                    ativarConversa(
-                        c.id_conversa,
-                        tituloOriginal
-                    );
-                }
-            );
-
-
-            options.addEventListener(
-                'click',
-                event => {
-                    event.stopPropagation();
-
-                    fecharChatOptionsMenu();
-
-                    menu.classList.add(
-                        'ativo'
-                    );
-
-                    posicionarChatOptionsMenu(
-                        options,
-                        menu
-                    );
-                }
-            );
-
-
-            fixar.addEventListener(
-                'click',
-                event => {
-                    event.stopPropagation();
-
-                    acaoFixar(
-                        c.id_conversa,
-                        !c.fixada
-                    );
-                }
-            );
-
-
-            renomear.addEventListener(
-                'click',
-                event => {
-                    event.stopPropagation();
-
-                    acaoRenomear(
-                        c.id_conversa,
-                        tituloOriginal
-                    );
-                }
-            );
-
-
-            excluir.addEventListener(
-                'click',
-                event => {
-                    event.stopPropagation();
-
-                    acaoExcluir(
-                        c.id_conversa
-                    );
-                }
-            );
-
-
-            container.appendChild(
-                item
-            );
-        });
-
-    } catch (e) {
+    } catch (erro) {
         console.error(
-            'Histórico:',
-            e
+            '[IANA HISTÓRICO]',
+            erro
         );
+
+        lista.innerHTML =
+            '<p class="sidebar-hint">Não foi possível carregar as conversas.</p>';
     }
 }
 
 
-function fecharChatOptionsMenu() {
-    document
-        .querySelectorAll(
-            '.chat-options-menu'
-        )
-        .forEach(menu => {
-            menu.classList.remove(
-                'ativo'
-            );
-        });
-}
+function renderizarHistorico(conversas) {
+    const lista =
+        obterElemento('historico-lista');
 
-
-function posicionarChatOptionsMenu(
-    btn,
-    menu
-) {
-    const rect =
-        btn.getBoundingClientRect();
-
-    const largura =
-        menu.offsetWidth || 150;
-
-    const altura =
-        menu.offsetHeight || 120;
-
-    let left =
-        rect.right + 8;
-
-    if (
-        left + largura >
-        window.innerWidth - 8
-    ) {
-        left =
-            rect.left -
-            largura -
-            8;
+    if (!lista) {
+        return;
     }
 
-    let top =
-        rect.top +
-        rect.height / 2 -
-        altura / 2;
+    lista.innerHTML = '';
 
-    top =
-        Math.max(
-            8,
-            Math.min(
-                top,
-                window.innerHeight -
-                    altura -
-                    8
-            )
-        );
+    if (!conversas.length) {
+        lista.innerHTML =
+            '<p class="sidebar-hint">Nenhuma conversa ainda.</p>';
 
-    menu.style.position =
-        'fixed';
+        return;
+    }
 
-    menu.style.left =
-        `${left}px`;
+    const ordenadas =
+        [...conversas].sort(
+            (a, b) => {
+                const aFixada =
+                    Boolean(
+                        a.fixada ??
+                        a.fixa ??
+                        a.pinned
+                    );
 
-    menu.style.top =
-        `${top}px`;
-}
+                const bFixada =
+                    Boolean(
+                        b.fixada ??
+                        b.fixa ??
+                        b.pinned
+                    );
 
+                if (
+                    aFixada !==
+                    bFixada
+                ) {
+                    return bFixada - aFixada;
+                }
 
-async function acaoFixar(
-    id,
-    fixar
-) {
-    fecharChatOptionsMenu();
-
-    try {
-        await fetch(
-            `/chat/conversas/${encodeURIComponent(id)}/fixar`,
-            {
-                method: 'PATCH',
-                credentials: 'include',
-                headers: {
-                    'Content-Type':
-                        'application/json'
-                },
-                body: JSON.stringify({
-                    fixada: fixar
-                })
+                return (
+                    new Date(
+                        b.updatedAt ||
+                        b.updated_at ||
+                        b.data ||
+                        0
+                    ) -
+                    new Date(
+                        a.updatedAt ||
+                        a.updated_at ||
+                        a.data ||
+                        0
+                    )
+                );
             }
         );
 
-        await carregarHistorico();
+    ordenadas.forEach(conversa => {
+        const id =
+            conversa.id ??
+            conversa._id;
 
-    } catch (e) {
+        if (!id) {
+            return;
+        }
+
+        const titulo =
+            conversa.titulo ||
+            conversa.nome ||
+            conversa.title ||
+            'Nova conversa';
+
+        const fixada =
+            Boolean(
+                conversa.fixada ??
+                conversa.fixa ??
+                conversa.pinned
+            );
+
+        const item =
+            document.createElement('div');
+
+        item.className =
+            'historico-item';
+
+        item.dataset.id =
+            id;
+
+        if (
+            String(id) ===
+            String(idConversaAtiva)
+        ) {
+            item.classList.add(
+                'ativo'
+            );
+        }
+
+        item.innerHTML = `
+            <button
+                type="button"
+                class="historico-conversa"
+                data-id="${escaparHTML(id)}"
+            >
+                <span class="historico-titulo">
+                    ${escaparHTML(titulo)}
+                </span>
+            </button>
+
+            <button
+                type="button"
+                class="historico-menu-btn"
+                aria-label="Opções"
+                data-menu-id="${escaparHTML(id)}"
+            >
+                ⋮
+            </button>
+
+            <div
+                class="historico-acoes"
+                data-acoes-id="${escaparHTML(id)}"
+                style="display:none"
+            >
+                <button
+                    type="button"
+                    data-acao="fixar"
+                    data-id="${escaparHTML(id)}"
+                >
+                    ${fixada ? 'Desafixar' : 'Fixar'}
+                </button>
+
+                <button
+                    type="button"
+                    data-acao="renomear"
+                    data-id="${escaparHTML(id)}"
+                >
+                    Renomear
+                </button>
+
+                <button
+                    type="button"
+                    data-acao="excluir"
+                    data-id="${escaparHTML(id)}"
+                >
+                    Excluir
+                </button>
+            </div>
+        `;
+
+        lista.appendChild(item);
+    });
+
+
+    lista
+        .querySelectorAll(
+            '.historico-conversa'
+        )
+        .forEach(btn => {
+            btn.addEventListener(
+                'click',
+                () => {
+                    abrirConversa(
+                        btn.dataset.id
+                    );
+                }
+            );
+        });
+
+
+    lista
+        .querySelectorAll(
+            '.historico-menu-btn'
+        )
+        .forEach(btn => {
+            btn.addEventListener(
+                'click',
+                event => {
+                    event.stopPropagation();
+
+                    const id =
+                        btn.dataset.menuId;
+
+                    document
+                        .querySelectorAll(
+                            '.historico-acoes'
+                        )
+                        .forEach(menu => {
+                            if (
+                                menu.dataset.acoesId ===
+                                id
+                            ) {
+                                menu.style.display =
+                                    menu.style.display ===
+                                    'block'
+                                        ? 'none'
+                                        : 'block';
+                            } else {
+                                menu.style.display =
+                                    'none';
+                            }
+                        });
+                }
+            );
+        });
+
+
+    lista
+        .querySelectorAll(
+            '[data-acao]'
+        )
+        .forEach(btn => {
+            btn.addEventListener(
+                'click',
+                () => {
+                    const acao =
+                        btn.dataset.acao;
+
+                    const id =
+                        btn.dataset.id;
+
+                    if (acao === 'fixar') {
+                        acaoFixar(id);
+                    }
+
+                    if (acao === 'renomear') {
+                        abrirRenomear(id);
+                    }
+
+                    if (acao === 'excluir') {
+                        abrirConfirmarExcluir(id);
+                    }
+                }
+            );
+        });
+}
+
+
+async function abrirConversa(id) {
+    if (!id) {
+        return;
+    }
+
+    try {
+        const res =
+            await fetch(
+                `/conversas/${encodeURIComponent(id)}`,
+                {
+                    credentials: 'include'
+                }
+            );
+
+        if (!res.ok) {
+            throw new Error(
+                'Não foi possível abrir a conversa.'
+            );
+        }
+
+        const data =
+            await res.json();
+
+        idConversaAtiva =
+            data.id ??
+            data._id ??
+            id;
+
+        renderizarMensagens(
+            data.mensagens ||
+            data.messages ||
+            []
+        );
+
+        carregarHistorico();
+
+    } catch (erro) {
         console.error(
-            'Erro ao fixar:',
-            e
+            '[IANA CONVERSA]',
+            erro
+        );
+
+        alert(
+            'Não foi possível abrir a conversa.'
         );
     }
 }
 
 
-function acaoRenomear(
-    id,
-    tituloAtual
-) {
-    fecharChatOptionsMenu();
+function renderizarMensagens(mensagens) {
+    const container =
+        obterElemento('chat-messages') ||
+        obterElemento('mensagens');
 
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = '';
+
+    mensagens.forEach(mensagem => {
+        const papel =
+            mensagem.role ||
+            mensagem.tipo ||
+            mensagem.remetente;
+
+        const texto =
+            mensagem.content ??
+            mensagem.conteudo ??
+            mensagem.texto ??
+            '';
+
+        if (
+            papel === 'user' ||
+            papel === 'usuario'
+        ) {
+            adicionarMensagemDOM(
+                'usuario',
+                texto
+            );
+        } else {
+            adicionarMensagemDOM(
+                'ia',
+                texto
+            );
+        }
+    });
+
+    container.scrollTop =
+        container.scrollHeight;
+}
+
+
+function adicionarMensagemDOM(
+    tipo,
+    texto
+) {
+    const container =
+        obterElemento('chat-messages') ||
+        obterElemento('mensagens');
+
+    if (!container) {
+        return null;
+    }
+
+    const mensagem =
+        document.createElement('div');
+
+    mensagem.className =
+        tipo === 'usuario'
+            ? 'mensagem mensagem-usuario'
+            : 'mensagem mensagem-ia';
+
+    mensagem.dataset.role =
+        tipo;
+
+    const conteudo =
+        document.createElement('div');
+
+    conteudo.className =
+        'mensagem-conteudo';
+
+    conteudo.textContent =
+        String(texto ?? '');
+
+    mensagem.appendChild(
+        conteudo
+    );
+
+    container.appendChild(
+        mensagem
+    );
+
+    container.scrollTop =
+        container.scrollHeight;
+
+    return mensagem;
+}
+
+
+function adicionarImagemUsuario(
+    dataUrl,
+    nome
+) {
+    const container =
+        obterElemento('chat-messages') ||
+        obterElemento('mensagens');
+
+    if (!container) {
+        return;
+    }
+
+    const mensagem =
+        document.createElement('div');
+
+    mensagem.className =
+        'mensagem mensagem-usuario';
+
+    mensagem.innerHTML = `
+        <div class="mensagem-conteudo">
+            <img
+                src="${escaparHTML(dataUrl)}"
+                alt="${escaparHTML(nome || 'Imagem enviada')}"
+                style="max-width:320px;max-height:320px;border-radius:12px;object-fit:contain"
+            >
+        </div>
+    `;
+
+    container.appendChild(
+        mensagem
+    );
+
+    container.scrollTop =
+        container.scrollHeight;
+}
+
+
+/* ================================================================
+   FIXAR / RENOMEAR / EXCLUIR
+================================================================ */
+
+async function acaoFixar(id) {
+    if (!id) {
+        return;
+    }
+
+    try {
+        const res =
+            await fetch(
+                `/conversas/${encodeURIComponent(id)}/fixar`,
+                {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type':
+                            'application/json'
+                    }
+                }
+            );
+
+        if (!res.ok) {
+            throw new Error(
+                'Falha ao fixar conversa.'
+            );
+        }
+
+        await carregarHistorico();
+
+    } catch (erro) {
+        console.error(
+            '[IANA FIXAR]',
+            erro
+        );
+
+        alert(
+            'Não foi possível alterar a conversa.'
+        );
+    }
+}
+
+
+function abrirRenomear(id) {
     idConversaRenomear =
         id;
 
     const input =
-        document.getElementById(
-            'rename-input'
+        obterElemento(
+            'renomear-input'
         );
 
     if (input) {
-        input.value =
-            tituloAtual;
+        input.value = '';
     }
 
     mostrarTela(
@@ -2382,63 +3186,73 @@ function acaoRenomear(
 
 
 async function salvarRenomear() {
-    const novo =
-        document.getElementById(
-            'rename-input'
-        )?.value.trim();
+    if (!idConversaRenomear) {
+        return;
+    }
 
-    if (
-        !novo ||
-        !idConversaRenomear
-    ) {
-        fecharAuth();
+    const input =
+        obterElemento(
+            'renomear-input'
+        );
+
+    const titulo =
+        input?.value
+            ?.trim();
+
+    if (!titulo) {
+        mostrarErroTela(
+            'renomear-erro',
+            'Digite um nome.'
+        );
+
         return;
     }
 
     try {
         const res =
             await fetch(
-                `/chat/conversas/${encodeURIComponent(idConversaRenomear)}`,
+                `/conversas/${encodeURIComponent(idConversaRenomear)}`,
                 {
-                    method: 'PUT',
+                    method: 'PATCH',
                     credentials: 'include',
                     headers: {
                         'Content-Type':
                             'application/json'
                     },
                     body: JSON.stringify({
-                        novoTitulo:
-                            novo
+                        titulo
                     })
                 }
             );
 
         if (!res.ok) {
             throw new Error(
-                'Não foi possível renomear.'
+                'Falha ao renomear.'
             );
         }
+
+        idConversaRenomear =
+            null;
 
         fecharAuth();
 
         await carregarHistorico();
 
-    } catch (e) {
+    } catch (erro) {
         console.error(
-            'Renomear:',
-            e
+            '[IANA RENOMEAR]',
+            erro
         );
 
-        alert(
+        mostrarErroTela(
+            'renomear-erro',
             'Não foi possível renomear a conversa.'
         );
     }
 }
 
 
-function acaoExcluir(id) {
-    fecharChatOptionsMenu();
-
+function abrirConfirmarExcluir(id) {
     idConversaExcluir =
         id;
 
@@ -2450,14 +3264,13 @@ function acaoExcluir(id) {
 
 async function confirmarExcluir() {
     if (!idConversaExcluir) {
-        fecharAuth();
         return;
     }
 
     try {
         const res =
             await fetch(
-                `/chat/conversas/${encodeURIComponent(idConversaExcluir)}`,
+                `/conversas/${encodeURIComponent(idConversaExcluir)}`,
                 {
                     method: 'DELETE',
                     credentials: 'include'
@@ -2466,854 +3279,519 @@ async function confirmarExcluir() {
 
         if (!res.ok) {
             throw new Error(
-                'Erro ao excluir.'
+                'Falha ao excluir.'
             );
         }
 
-        fecharAuth();
-
         if (
-            idConversaAtiva ===
-            idConversaExcluir
+            String(idConversaAtiva) ===
+            String(idConversaExcluir)
         ) {
+            idConversaAtiva =
+                null;
+
             resetarChat();
-        } else {
-            await carregarHistorico();
         }
 
-    } catch (e) {
+        idConversaExcluir =
+            null;
+
+        fecharAuth();
+
+        await carregarHistorico();
+
+    } catch (erro) {
         console.error(
-            'Excluir:',
-            e
+            '[IANA EXCLUIR]',
+            erro
         );
 
         alert(
             'Não foi possível excluir a conversa.'
         );
-
-    } finally {
-        idConversaExcluir =
-            null;
     }
 }
 
 
-async function pesquisarConversas(
-    termo
-) {
-    const resultados =
-        document.getElementById(
-            'pesquisa-resultados'
+/* ================================================================
+   PESQUISA
+================================================================ */
+
+async function pesquisarConversas(termo) {
+    const lista =
+        obterElemento('historico-lista');
+
+    if (!lista) {
+        return;
+    }
+
+    const texto =
+        String(termo || '')
+            .trim()
+            .toLowerCase();
+
+    if (!texto) {
+        await carregarHistorico();
+        return;
+    }
+
+    const itens =
+        Array.from(
+            lista.querySelectorAll(
+                '.historico-item'
+            )
         );
 
-    if (!resultados) {
+    itens.forEach(item => {
+        const titulo =
+            item
+                .querySelector(
+                    '.historico-titulo'
+                )
+                ?.textContent
+                ?.toLowerCase() || '';
+
+        item.style.display =
+            titulo.includes(texto)
+                ? ''
+                : 'none';
+    });
+}
+
+
+/* ================================================================
+   CHAT
+================================================================ */
+
+function mostrarWelcome(
+    forcar = false
+) {
+    const container =
+        obterElemento('chat-messages') ||
+        obterElemento('mensagens');
+
+    if (!container) {
         return;
     }
 
-    resultados.innerHTML = '';
-
-    if (!termo.trim()) {
+    if (
+        !forcar &&
+        container.children.length
+    ) {
         return;
     }
+
+    container.innerHTML = `
+        <div class="iana-welcome">
+            <div class="iana-welcome-content">
+                <h1>Olá! Eu sou a Iana.</h1>
+                <p>Como posso ajudar você hoje?</p>
+            </div>
+        </div>
+    `;
+}
+
+
+function mostrarIndicadorDigitando() {
+    removerIndicadorDigitando();
+
+    const container =
+        obterElemento('chat-messages') ||
+        obterElemento('mensagens');
+
+    if (!container) {
+        return null;
+    }
+
+    const elemento =
+        document.createElement('div');
+
+    elemento.id =
+        'iana-digitando';
+
+    elemento.className =
+        'mensagem mensagem-ia mensagem-digitando';
+
+    elemento.innerHTML = `
+        <div class="mensagem-conteudo">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+        </div>
+    `;
+
+    container.appendChild(
+        elemento
+    );
+
+    container.scrollTop =
+        container.scrollHeight;
+
+    return elemento;
+}
+
+
+function removerIndicadorDigitando() {
+    obterElemento(
+        'iana-digitando'
+    )?.remove();
+}
+
+
+function atualizarMensagemIA(
+    elemento,
+    texto
+) {
+    if (!elemento) {
+        return;
+    }
+
+    const conteudo =
+        elemento.querySelector(
+            '.mensagem-conteudo'
+        );
+
+    if (conteudo) {
+        conteudo.textContent =
+            String(texto ?? '');
+    }
+}
+
+
+async function processarEnvioIA(
+    mensagem,
+    anexo = null
+) {
+    if (
+        aguardandoResposta &&
+        !emChamadaVoz
+    ) {
+        return;
+    }
+
+    const texto =
+        String(mensagem || '')
+            .trim();
+
+    if (!texto && !anexo) {
+        return;
+    }
+
+    if (!emChamadaVoz) {
+        aguardandoResposta =
+            true;
+
+        atualizarBotoesChat(
+            true
+        );
+
+        adicionarMensagemDOM(
+            'usuario',
+            texto
+        );
+
+        removerWelcome();
+
+        mostrarIndicadorDigitando();
+    }
+
+    controller =
+        new AbortController();
 
     try {
+        const configPrompt =
+            montarConfigPrompt();
+
+        const payload = {
+            mensagem: texto,
+            message: texto,
+            conversa_id:
+                idConversaAtiva,
+            id_conversa:
+                idConversaAtiva,
+            config:
+                configPrompt,
+            configuracao:
+                configPrompt
+        };
+
+        if (anexo) {
+            Object.assign(
+                payload,
+                anexo
+            );
+        }
+
         const res =
             await fetch(
-                '/chat/conversas',
+                '/chat',
                 {
-                    credentials:
-                        'include'
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type':
+                            'application/json'
+                    },
+                    body:
+                        JSON.stringify(
+                            payload
+                        ),
+                    signal:
+                        controller.signal
                 }
             );
 
-        const { conversas } =
-            await res.json();
+        if (!res.ok) {
+            let erro = null;
 
-        const busca =
-            termo
-                .toLowerCase()
-                .trim();
+            try {
+                erro =
+                    await res.json();
+            } catch {}
 
-        const encontrados =
-            (conversas || [])
-                .filter(
-                    c =>
-                        c.titulo
-                            ?.toLowerCase()
-                            .includes(
-                                busca
-                            )
+            throw new Error(
+                erro?.erro ||
+                erro?.error ||
+                `Erro HTTP ${res.status}`
+            );
+        }
+
+        /*
+           O backend pode retornar JSON.
+        */
+
+        const contentType =
+            res.headers.get(
+                'content-type'
+            ) || '';
+
+        if (
+            contentType.includes(
+                'application/json'
+            )
+        ) {
+            const data =
+                await res.json();
+
+            const resposta =
+                data.resposta ??
+                data.response ??
+                data.mensagem ??
+                data.content ??
+                '';
+
+            if (data.conversa_id) {
+                idConversaAtiva =
+                    data.conversa_id;
+            }
+
+            if (data.id_conversa) {
+                idConversaAtiva =
+                    data.id_conversa;
+            }
+
+            if (emChamadaVoz) {
+                finalizarRespostaVoz(
+                    resposta
                 );
 
-        if (!encontrados.length) {
-            resultados.innerHTML =
-                '<p class="sidebar-hint">Nenhuma conversa encontrada.</p>';
+                return;
+            }
+
+            removerIndicadorDigitando();
+
+            const mensagemIA =
+                adicionarMensagemDOM(
+                    'ia',
+                    resposta
+                );
+
+            if (
+                ttsNextResponse &&
+                resposta
+            ) {
+                ttsNextResponse =
+                    false;
+
+                await falar(
+                    resposta
+                );
+            }
+
+            if (data.conversa) {
+                idConversaAtiva =
+                    data.conversa.id ??
+                    data.conversa._id ??
+                    idConversaAtiva;
+            }
+
+            if (usuarioAtual) {
+                carregarHistorico();
+            }
 
             return;
         }
 
-        encontrados.forEach(
-            c => {
-                const item =
-                    document.createElement(
-                        'div'
-                    );
+        /*
+           Fallback para resposta em texto.
+        */
 
-                item.className =
-                    'chat-item';
+        const resposta =
+            await res.text();
 
-                item.textContent =
-                    c.titulo ||
-                    'Sem título';
-
-                item.addEventListener(
-                    'click',
-                    () => {
-                        ativarConversa(
-                            c.id_conversa,
-                            c.titulo
-                        );
-
-                        fecharAuth();
-                    }
-                );
-
-                resultados.appendChild(
-                    item
-                );
-            }
-        );
-
-    } catch (e) {
-        console.error(
-            'Pesquisa:',
-            e
-        );
-    }
-}
-
-
-/* ────────────────────────────────────────────────────────────────
-   MENSAGENS
-   ──────────────────────────────────────────────────────────────── */
-
-function mostrarWelcome(
-    mostrar
-) {
-    const welcome =
-        document.getElementById(
-            'welcome'
-        );
-
-    const chatbox =
-        document.getElementById(
-            'chatbox'
-        );
-
-    if (welcome) {
-        welcome.style.display =
-            mostrar
-                ? 'flex'
-                : 'none';
-    }
-
-    if (chatbox) {
-        chatbox.classList.toggle(
-            'has-messages',
-            !mostrar
-        );
-
-        chatbox.dataset.view =
-            mostrar
-                ? 'welcome'
-                : 'conversation';
-    }
-
-    atualizarTituloConversa(
-        mostrar
-            ? 'Novo chat'
-            : null
-    );
-}
-
-
-function atualizarTituloConversa(
-    titulo
-) {
-    const el =
-        document.getElementById(
-            'conversation-title'
-        );
-
-    if (el) {
-        el.textContent =
-            titulo ||
-            (
-                idConversaAtiva
-                    ? 'Conversa'
-                    : 'Novo chat'
-            );
-    }
-}
-
-
-function criarBotaoCopiar(
-    getTexto
-) {
-    const btn =
-        document.createElement(
-            'button'
-        );
-
-    btn.type = 'button';
-    btn.className =
-        'msg-action-btn';
-
-    btn.title =
-        'Copiar';
-
-    btn.textContent =
-        '📋';
-
-    btn.addEventListener(
-        'click',
-        async () => {
-            const texto =
-                getTexto();
-
-            try {
-                await navigator
-                    .clipboard
-                    ?.writeText(
-                        texto
-                    );
-
-                const original =
-                    btn.textContent;
-
-                btn.textContent =
-                    '✅';
-
-                setTimeout(
-                    () => {
-                        btn.textContent =
-                            original;
-                    },
-                    1200
-                );
-
-            } catch {}
-        }
-    );
-
-    return btn;
-}
-
-
-function criarBotaoEditar(
-    texto
-) {
-    const btn =
-        document.createElement(
-            'button'
-        );
-
-    btn.type = 'button';
-    btn.className =
-        'msg-action-btn';
-
-    btn.title =
-        'Editar mensagem';
-
-    btn.textContent =
-        '✏️';
-
-    btn.addEventListener(
-        'click',
-        () => {
-            const input =
-                document.getElementById(
-                    'chat-input'
-                );
-
-            if (!input) {
-                return;
-            }
-
-            input.value =
-                texto;
-
-            input.focus();
-
-            input.style.height =
-                'auto';
-
-            input.style.height =
-                input.scrollHeight +
-                'px';
-        }
-    );
-
-    return btn;
-}
-
-
-function configurarExpandir(
-    bubble,
-    linhaAcoes
-) {
-    if (!bubble) {
-        return;
-    }
-
-    requestAnimationFrame(
-        () => {
-            bubble.classList.add(
-                'msg-clamped'
+        if (emChamadaVoz) {
+            finalizarRespostaVoz(
+                resposta
             );
 
-            const ultrapassou =
-                bubble.scrollHeight >
-                bubble.clientHeight +
-                1;
+            return;
+        }
 
-            if (!ultrapassou) {
-                bubble.classList.remove(
-                    'msg-clamped'
-                );
+        removerIndicadorDigitando();
 
-                return;
-            }
+        adicionarMensagemDOM(
+            'ia',
+            resposta
+        );
 
-            const btn =
-                document.createElement(
-                    'button'
-                );
-
-            btn.type = 'button';
-            btn.className =
-                'msg-expand-btn';
-
-            btn.textContent =
-                '▼ Expandir';
-
-            let expandido =
+        if (
+            ttsNextResponse &&
+            resposta
+        ) {
+            ttsNextResponse =
                 false;
 
-            btn.addEventListener(
-                'click',
-                () => {
-                    expandido =
-                        !expandido;
-
-                    bubble.classList.toggle(
-                        'msg-clamped',
-                        !expandido
-                    );
-
-                    btn.textContent =
-                        expandido
-                            ? '▲ Recolher'
-                            : '▼ Expandir';
-                }
-            );
-
-            linhaAcoes.appendChild(
-                btn
+            await falar(
+                resposta
             );
         }
-    );
-}
 
+    } catch (erro) {
+        if (
+            erro?.name ===
+            'AbortError'
+        ) {
+            return;
+        }
 
-function adicionarBolhaUsuario(
-    texto
-) {
-    const msgs =
-        document.getElementById(
-            'msgs'
+        console.error(
+            '[IANA CHAT]',
+            erro
         );
 
-    if (!msgs) {
-        return;
-    }
+        removerIndicadorDigitando();
 
-    mostrarWelcome(false);
+        if (emChamadaVoz) {
+            finalizarRespostaVoz(
+                'Não consegui processar sua solicitação.'
+            );
+        } else {
+            adicionarMensagemDOM(
+                'ia',
+                'Não foi possível processar sua mensagem. Tente novamente.'
+            );
+        }
 
-    const wrap =
-        document.createElement(
-            'div'
-        );
+    } finally {
+        if (!emChamadaVoz) {
+            aguardandoResposta =
+                false;
 
-    wrap.className =
-        'user-msg-wrap nova-mensagem';
-
-
-    const bubble =
-        document.createElement(
-            'div'
-        );
-
-    bubble.className =
-        'user-msg-bubble';
-
-    bubble.textContent =
-        texto;
-
-    wrap.appendChild(
-        bubble
-    );
-
-
-    const acoes =
-        document.createElement(
-            'div'
-        );
-
-    acoes.className =
-        'msg-actions user-actions';
-
-    acoes.appendChild(
-        criarBotaoEditar(
-            texto
-        )
-    );
-
-    acoes.appendChild(
-        criarBotaoCopiar(
-            () => texto
-        )
-    );
-
-    wrap.appendChild(
-        acoes
-    );
-
-    msgs.appendChild(
-        wrap
-    );
-
-    configurarExpandir(
-        bubble,
-        acoes
-    );
-
-    scrollParaFim();
-
-    if (emChamadaVoz) {
-        adicionarNaFeedVoz(
-            'user',
-            texto
-        );
-    }
-}
-
-
-/*
- * CORREÇÃO:
- *
- * Não usamos:
- *
- * wrap.innerHTML = `<img src="${dataUrl}">`
- *
- * Criamos o elemento IMG diretamente.
- */
-function adicionarImagemUsuario(
-    dataUrl,
-    nomeArquivo = 'imagem'
-) {
-    const msgs =
-        document.getElementById(
-            'msgs'
-        );
-
-    if (
-        !msgs ||
-        typeof dataUrl !== 'string' ||
-        !dataUrl.startsWith(
-            'data:image/'
-        )
-    ) {
-        return;
-    }
-
-    mostrarWelcome(false);
-
-    const wrap =
-        document.createElement(
-            'div'
-        );
-
-    wrap.className =
-        'user-image-wrap nova-mensagem';
-
-
-    const img =
-        document.createElement(
-            'img'
-        );
-
-    img.className =
-        'user-image';
-
-    img.src =
-        dataUrl;
-
-    img.alt =
-        nomeArquivo;
-
-    img.loading =
-        'lazy';
-
-    img.decoding =
-        'async';
-
-
-    wrap.appendChild(
-        img
-    );
-
-    msgs.appendChild(
-        wrap
-    );
-
-    scrollParaFim();
-}
-
-
-function adicionarRespostaIA(
-    texto
-) {
-    const msgs =
-        document.getElementById(
-            'msgs'
-        );
-
-    if (!msgs) {
-        return;
-    }
-
-    const container =
-        document.createElement(
-            'div'
-        );
-
-    container.className =
-        'iana-response-container nova-mensagem';
-
-
-    const av =
-        document.createElement(
-            'img'
-        );
-
-    av.src =
-        '/img/iana-avatar.png';
-
-    av.className =
-        'iana-avatar-img';
-
-    av.alt =
-        'Iana';
-
-    container.appendChild(
-        av
-    );
-
-
-    const wrapConteudo =
-        document.createElement(
-            'div'
-        );
-
-    wrapConteudo.style.cssText =
-        'display:flex;flex-direction:column;flex:1;min-width:0;';
-
-
-    const bubble =
-        document.createElement(
-            'div'
-        );
-
-    bubble.className =
-        'iana-message-bubble';
-
-
-    const textoSeguro =
-        String(
-            texto ??
-            ''
-        );
-
-    const html =
-        typeof marked !== 'undefined'
-            ? marked.parse(
-                textoSeguro
-            )
-            : textoSeguro.replace(
-                /\n/g,
-                '<br>'
+            atualizarBotoesChat(
+                false
             );
 
-    bubble.innerHTML =
-        sanitizarHTML(
-            html
-        );
-
-    wrapConteudo.appendChild(
-        bubble
-    );
-
-
-    const acoes =
-        document.createElement(
-            'div'
-        );
-
-    acoes.className =
-        'msg-actions';
-
-    acoes.appendChild(
-        criarBotaoCopiar(
-            () =>
-                bubble.innerText ||
-                bubble.textContent ||
-                ''
-        )
-    );
-
-    wrapConteudo.appendChild(
-        acoes
-    );
-
-    container.appendChild(
-        wrapConteudo
-    );
-
-    msgs.appendChild(
-        container
-    );
-
-    configurarExpandir(
-        bubble,
-        acoes
-    );
-
-    scrollParaFim();
-
-
-    if (ttsNextResponse) {
-        falar(texto);
-
-        ttsNextResponse =
-            false;
-    }
-
-
-    if (emChamadaVoz) {
-        adicionarNaFeedVoz(
-            'iana',
-            texto
-        );
+            controller =
+                null;
+        }
     }
 }
 
 
-function scrollParaFim() {
-    const chatbox =
-        document.getElementById(
-            'chatbox'
-        );
-
-    if (chatbox) {
-        chatbox.scrollTop =
-            chatbox.scrollHeight;
-    }
-}
-
-
-/* ────────────────────────────────────────────────────────────────
-   FEED DA CHAMADA
-   ──────────────────────────────────────────────────────────────── */
-
-function limparFeedVoz() {
-    const feed =
-        document.getElementById(
-            'voz-feed'
-        );
-
-    if (feed) {
-        feed.innerHTML = '';
-    }
-
-    const interim =
-        document.getElementById(
-            'voz-interim'
-        );
-
-    if (interim) {
-        interim.textContent = '';
-    }
-}
-
-
-function adicionarNaFeedVoz(
-    tipo,
-    texto
+function finalizarRespostaVoz(
+    resposta
 ) {
-    const feed =
-        document.getElementById(
-            'voz-feed'
-        );
+    vozProcessando =
+        false;
 
     if (
-        !feed ||
-        !texto?.trim()
+        typeof resposta ===
+        'string' &&
+        resposta.trim()
     ) {
-        return;
+        definirTexto(
+            'voz-transcript',
+            resposta
+        );
     }
 
-    const bolha =
-        document.createElement(
-            'div'
-        );
-
-    bolha.className =
-        `voz-feed-msg ${
-            tipo === 'user'
-                ? 'voz-feed-user'
-                : 'voz-feed-iana'
-        }`;
-
-    bolha.textContent =
-        texto;
-
-    feed.appendChild(
-        bolha
+    atualizarEstadoVoz(
+        'falando',
+        'Iana está falando...'
     );
-
-    feed.scrollTop =
-        feed.scrollHeight;
 }
 
 
-function mostrarTypingIndicator() {
-    const msgs =
-        document.getElementById(
-            'msgs'
-        );
-
-    if (!msgs) {
-        return;
+function pararRespostaIA() {
+    if (controller) {
+        try {
+            controller.abort();
+        } catch {}
     }
 
-    esconderTypingIndicator();
+    controller =
+        null;
 
-    const typing =
-        document.createElement(
-            'div'
-        );
+    aguardandoResposta =
+        false;
 
-    typing.id =
-        'typing-indicator';
+    removerIndicadorDigitando();
 
-    typing.className =
-        'iana-response-container';
-
-
-    const avatar =
-        document.createElement(
-            'img'
-        );
-
-    avatar.src =
-        '/img/iana-avatar.png';
-
-    avatar.className =
-        'iana-avatar-img';
-
-    avatar.alt =
-        'Iana';
-
-
-    const bubble =
-        document.createElement(
-            'div'
-        );
-
-    bubble.className =
-        'thinking-bubble';
-
-
-    for (
-        let i = 0;
-        i < 3;
-        i++
-    ) {
-        const dot =
-            document.createElement(
-                'span'
-            );
-
-        dot.className =
-            'dot';
-
-        bubble.appendChild(
-            dot
-        );
-    }
-
-    typing.appendChild(
-        avatar
+    atualizarBotoesChat(
+        false
     );
-
-    typing.appendChild(
-        bubble
-    );
-
-    msgs.appendChild(
-        typing
-    );
-
-    scrollParaFim();
 }
 
 
-function esconderTypingIndicator() {
+function atualizarBotoesChat(
+    processando
+) {
+    const send =
+        obterElemento('btn-send');
+
+    const stop =
+        obterElemento('btn-stop');
+
+    if (send) {
+        send.style.display =
+            processando
+                ? 'none'
+                : '';
+    }
+
+    if (stop) {
+        stop.style.display =
+            processando
+                ? ''
+                : 'none';
+    }
+}
+
+
+function removerWelcome() {
     document
-        .getElementById(
-            'typing-indicator'
+        .querySelectorAll(
+            '.iana-welcome'
         )
-        ?.remove();
-}
-
-
-/* ────────────────────────────────────────────────────────────────
-   ENVIO
-   ──────────────────────────────────────────────────────────────── */
-
-function usarSugestao(
-    texto
-) {
-    const input =
-        document.getElementById(
-            'chat-input'
+        .forEach(el =>
+            el.remove()
         );
-
-    if (input) {
-        input.value =
-            texto;
-    }
-
-    enviarMensagem();
 }
 
 
 async function enviarMensagem() {
     const input =
-        document.getElementById(
-            'chat-input'
-        );
+        obterElemento('chat-input');
 
     if (
         !input ||
@@ -3330,6 +3808,7 @@ async function enviarMensagem() {
     }
 
     input.value = '';
+
     input.style.height =
         'auto';
 
@@ -3339,414 +3818,36 @@ async function enviarMensagem() {
 }
 
 
-/*
- * FUNÇÃO PRINCIPAL
- *
- * anexo pode ser:
- *
- * {
- *   tipo: 'imagem',
- *   imagem: 'data:image/jpeg;base64,...',
- *   nome: 'foto.jpg',
- *   mimeType: 'image/jpeg'
- * }
- */
-async function processarEnvioIA(
-    conteudo,
-    anexo = null
-) {
-    if (
-        typeof conteudo !== 'string' ||
-        !conteudo.trim()
-    ) {
-        return;
-    }
-
-    if (aguardandoResposta) {
-        return;
-    }
-
-    aguardandoResposta =
-        true;
-
-    adicionarBolhaUsuario(
-        conteudo
-    );
-
-    mostrarTypingIndicator();
-
-
-    const sendBtn =
-        document.getElementById(
-            'btn-send'
-        );
-
-    const stopBtn =
-        document.getElementById(
-            'btn-stop'
-        );
-
+function usarSugestao(texto) {
     const input =
-        document.getElementById(
-            'chat-input'
-        );
+        obterElemento('chat-input');
 
-
-    if (sendBtn) {
-        sendBtn.style.display =
-            'none';
-    }
-
-    if (stopBtn) {
-        stopBtn.style.display =
-            'flex';
-    }
-
-    if (input) {
-        input.disabled =
-            true;
-
-        input.placeholder =
-            'Iana está pensando...';
-    }
-
-
-    controller =
-        new AbortController();
-
-
-    try {
-        const payload = {
-            mensagem:
-                conteudo,
-
-            idConversa:
-                idConversaAtiva,
-
-            configPrompt:
-                montarConfigPrompt(),
-
-            estadoEmocional:
-                typeof detectarEstadoEmocional ===
-                'function'
-                    ? detectarEstadoEmocional(
-                        conteudo
-                    )
-                    : undefined
-        };
-
-
-        /*
-         * ANEXO DE IMAGEM
-         */
-        if (
-            anexo?.tipo ===
-            'imagem'
-        ) {
-            payload.imagem =
-                anexo.imagem;
-
-            payload.nomeArquivo =
-                anexo.nome ||
-                'imagem.jpg';
-
-            payload.mimeType =
-                anexo.mimeType ||
-                'image/jpeg';
-        }
-
-        if (
-            anexo?.tipo ===
-            'audio'
-        ) {
-            payload.audio =
-                anexo.audio;
-
-            payload.nomeArquivo =
-                anexo.nome ||
-                'audio.webm';
-
-            payload.mimeType =
-                anexo.mimeType ||
-                'audio/webm';
-        }
-
-
-        const res =
-            await fetch(
-                '/chat/stream',
-                {
-                    method: 'POST',
-
-                    credentials:
-                        'include',
-
-                    headers: {
-                        'Content-Type':
-                            'application/json'
-                    },
-
-                    body:
-                        JSON.stringify(
-                            payload
-                        ),
-
-                    signal:
-                        controller.signal
-                }
-            );
-
-
-        if (!res.ok) {
-            const erroData =
-                await res
-                    .json()
-                    .catch(
-                        () => ({})
-                    );
-
-            throw new Error(
-                erroData.erro ||
-                'Erro na comunicação com o servidor.'
-            );
-        }
-
-
-        const data =
-            await res.json();
-
-
-        if (
-            data.idConversa &&
-            !idConversaAtiva
-        ) {
-            idConversaAtiva =
-                data.idConversa;
-
-            atualizarTituloConversa(
-                conteudo.length >
-                    40
-                    ? conteudo.slice(
-                        0,
-                        40
-                    ) + '...'
-                    : conteudo
-            );
-        }
-
-
-        esconderTypingIndicator();
-
-
-        adicionarRespostaIA(
-            data.resposta ||
-            'Não consegui gerar uma resposta.'
-        );
-
-
-        if (usuarioAtual) {
-            carregarHistorico();
-        }
-
-
-    } catch (e) {
-
-        esconderTypingIndicator();
-
-        if (
-            e.name !==
-            'AbortError'
-        ) {
-            console.error(
-                'Erro no envio:',
-                e
-            );
-
-            adicionarRespostaIA(
-                'Desculpe, não consegui processar sua solicitação no momento.'
-            );
-        }
-
-    } finally {
-
-        aguardandoResposta =
-            false;
-
-        if (sendBtn) {
-            sendBtn.style.display =
-                'flex';
-        }
-
-        if (stopBtn) {
-            stopBtn.style.display =
-                'none';
-        }
-
-        if (input) {
-            input.disabled =
-                false;
-
-            input.placeholder =
-                'Peça à Iana...';
-
-            input.focus();
-        }
-    }
-}
-
-
-function pararRespostaIA() {
-    try {
-        controller.abort();
-    } catch {}
-
-    aguardandoResposta =
-        false;
-
-    esconderTypingIndicator();
-
-    const sendBtn =
-        document.getElementById(
-            'btn-send'
-        );
-
-    const stopBtn =
-        document.getElementById(
-            'btn-stop'
-        );
-
-    const input =
-        document.getElementById(
-            'chat-input'
-        );
-
-    if (sendBtn) {
-        sendBtn.style.display =
-            'flex';
-    }
-
-    if (stopBtn) {
-        stopBtn.style.display =
-            'none';
-    }
-
-    if (input) {
-        input.disabled =
-            false;
-
-        input.placeholder =
-            'Peça à Iana...';
-
-        input.focus();
-    }
-}
-
-
-/* ────────────────────────────────────────────────────────────────
-   CONVERSAS
-   ──────────────────────────────────────────────────────────────── */
-
-async function ativarConversa(
-    id,
-    titulo
-) {
-    idConversaAtiva =
-        id;
-
-    atualizarTituloConversa(
-        titulo ||
-        'Conversa'
-    );
-
-    await carregarHistorico();
-
-    const msgs =
-        document.getElementById(
-            'msgs'
-        );
-
-    if (!msgs) {
+    if (!input) {
         return;
     }
 
-    msgs.innerHTML =
-        '';
+    input.value =
+        texto;
 
-    mostrarWelcome(
-        false
-    );
-
-    try {
-        const res =
-            await fetch(
-                `/chat/historico/${encodeURIComponent(id)}`,
-                {
-                    credentials:
-                        'include'
-                }
-            );
-
-        if (!res.ok) {
-            msgs.innerHTML =
-                '<p class="sidebar-hint">Não consegui carregar esta conversa.</p>';
-
-            return;
-        }
-
-        const { mensagens } =
-            await res.json();
-
-
-        if (!mensagens?.length) {
-            msgs.innerHTML =
-                '<p class="sidebar-hint">Esta conversa ainda não tem mensagens.</p>';
-
-        } else {
-
-            mensagens.forEach(
-                mensagem => {
-                    if (
-                        mensagem.tipo_sender ===
-                        'usuario'
-                    ) {
-                        adicionarBolhaUsuario(
-                            mensagem.conteudo
-                        );
-                    } else {
-                        adicionarRespostaIA(
-                            mensagem.conteudo
-                        );
-                    }
-                }
-            );
-        }
-
-        scrollParaFim();
-
-    } catch (e) {
-        console.error(
-            'Erro ao carregar histórico:',
-            e
-        );
-    }
+    enviarMensagem();
 }
 
 
 function resetarChat() {
+    pararRespostaIA();
+
     idConversaAtiva =
         null;
 
-    atualizarTituloConversa(
-        'Novo chat'
-    );
+    ttsNextResponse =
+        false;
 
-    const msgs =
-        document.getElementById(
-            'msgs'
-        );
+    const container =
+        obterElemento('chat-messages') ||
+        obterElemento('mensagens');
 
-    if (msgs) {
-        msgs.innerHTML =
+    if (container) {
+        container.innerHTML =
             '';
     }
 
@@ -3754,82 +3855,38 @@ function resetarChat() {
         true
     );
 
-    esconderTypingIndicator();
-
-    if (
-        typeof window.IanaHUD !==
-        'undefined'
-    ) {
-        window.IanaHUD.setEstado?.(
-            'ocioso'
+    document
+        .querySelectorAll(
+            '.historico-item'
+        )
+        .forEach(item =>
+            item.classList.remove(
+                'ativo'
+            )
         );
-    }
-
-    if (usuarioAtual) {
-        carregarHistorico();
-    }
 }
 
 
-/* ────────────────────────────────────────────────────────────────
+/* ================================================================
    FEEDBACK
-   ──────────────────────────────────────────────────────────────── */
+================================================================ */
 
 async function enviarFeedback() {
-    const assunto =
-        document.getElementById(
-            'fb-assunto'
-        )?.value.trim();
+    const input =
+        obterElemento(
+            'feedback-input'
+        );
 
     const texto =
-        document.getElementById(
-            'fb-texto'
-        )?.value.trim();
-
-    const autoriza =
-        document.getElementById(
-            'fb-autoriza'
-        )?.checked;
-
-    const btn =
-        document.getElementById(
-            'btn-fb-enviar'
-        );
-
-    if (!assunto) {
-        alert(
-            'Preencha o assunto.'
-        );
-
-        return;
-    }
+        input?.value?.trim();
 
     if (!texto) {
-        alert(
-            'Descreva seu feedback.'
+        mostrarErroTela(
+            'feedback-erro',
+            'Digite seu feedback.'
         );
 
         return;
-    }
-
-    if (!autoriza) {
-        alert(
-            'Marque a autorização de uso.'
-        );
-
-        return;
-    }
-
-    const original =
-        btn?.textContent ||
-        'Enviar';
-
-    if (btn) {
-        btn.textContent =
-            'Enviando...';
-
-        btn.disabled =
-            true;
     }
 
     try {
@@ -3838,116 +3895,74 @@ async function enviarFeedback() {
                 '/feedback',
                 {
                     method: 'POST',
-
-                    credentials:
-                        'include',
-
+                    credentials: 'include',
                     headers: {
                         'Content-Type':
                             'application/json'
                     },
-
-                    body:
-                        JSON.stringify({
-                            assunto,
+                    body: JSON.stringify({
+                        feedback:
                             texto,
-                            autorizou:
-                                autoriza
-                        })
+                        conversa_id:
+                            idConversaAtiva
+                    })
                 }
             );
 
         if (!res.ok) {
             throw new Error(
-                'Erro ao enviar feedback.'
+                'Falha ao enviar feedback.'
             );
         }
 
-        alert(
-            '✅ Feedback enviado! Obrigado.'
-        );
+        if (input) {
+            input.value = '';
+        }
 
         fecharAuth();
 
-        document.getElementById(
-            'fb-assunto'
-        ).value = '';
-
-        document.getElementById(
-            'fb-texto'
-        ).value = '';
-
-        document.getElementById(
-            'fb-autoriza'
-        ).checked = false;
-
-    } catch (e) {
-        console.error(
-            'Feedback:',
-            e
-        );
-
         alert(
-            'Erro ao enviar feedback.'
+            'Feedback enviado. Obrigado!'
         );
 
-    } finally {
-        if (btn) {
-            btn.textContent =
-                original;
+    } catch (erro) {
+        console.error(
+            '[IANA FEEDBACK]',
+            erro
+        );
 
-            btn.disabled =
-                false;
-        }
+        mostrarErroTela(
+            'feedback-erro',
+            'Não foi possível enviar o feedback.'
+        );
     }
 }
 
 
-/* ────────────────────────────────────────────────────────────────
-   INICIALIZAÇÃO
-   ──────────────────────────────────────────────────────────────── */
+/* ================================================================
+   SIDEBAR
+================================================================ */
 
-document.addEventListener(
-    'DOMContentLoaded',
-    () => {
+function iniciarSidebar() {
+    const sidebar =
+        obterElemento('sidebar');
 
-        verificarSessao();
-
-        mostrarWelcome(
-            true
+    const topbarMenu =
+        obterElemento(
+            'topbar-menu-toggle'
         );
 
-        iniciarMenuUpload();
+    const sidebarToggle =
+        obterElemento(
+            'sidebar-toggle'
+        );
 
-        iniciarUpload();
+    if (!sidebar) {
+        return;
+    }
 
-        iniciarGravacaoAudio();
-
-
-        /*
-         * SIDEBAR
-         */
-        const sidebar =
-            document.getElementById(
-                'sidebar'
-            );
-
-        const topbarMenu =
-            document.getElementById(
-                'topbar-menu-toggle'
-            );
-
-        const sidebarToggle =
-            document.getElementById(
-                'sidebar-toggle'
-            );
-
-
-        function alternarSidebar() {
-            if (!sidebar) {
-                return;
-            }
-
+    const alternarSidebar =
+        () => {
             const fechado =
                 sidebar.classList.toggle(
                     'collapsed'
@@ -3966,515 +3981,157 @@ document.addEventListener(
                         : 'Fechar menu'
                 );
             }
+        };
+
+    sidebarToggle?.addEventListener(
+        'click',
+        alternarSidebar
+    );
+
+    topbarMenu?.addEventListener(
+        'click',
+        alternarSidebar
+    );
+}
+
+
+/* ================================================================
+   DROPDOWN DO USUÁRIO
+================================================================ */
+
+function iniciarDropdownUsuario() {
+    const btn =
+        obterElemento(
+            'btn-user-menu'
+        );
+
+    const dropdown =
+        obterElemento(
+            'user-dropdown'
+        );
+
+    if (!btn || !dropdown) {
+        return;
+    }
+
+    btn.addEventListener(
+        'click',
+        event => {
+            event.stopPropagation();
+
+            dropdown.style.display =
+                dropdown.style.display ===
+                'block'
+                    ? 'none'
+                    : 'block';
         }
+    );
+
+    document.addEventListener(
+        'click',
+        () => {
+            dropdown.style.display =
+                'none';
+        }
+    );
+}
 
 
-        sidebarToggle
-            ?.addEventListener(
-                'click',
-                alternarSidebar
-            );
+/* ================================================================
+   EVENTOS DE AUTH
+================================================================ */
 
-        topbarMenu
-            ?.addEventListener(
-                'click',
-                alternarSidebar
-            );
-
-
-        document
-            .getElementById(
-                'btn-novo-chat'
+function iniciarEventosAuth() {
+    obterElemento(
+        'btn-entrar'
+    )?.addEventListener(
+        'click',
+        () =>
+            mostrarTela(
+                'tela-login'
             )
-            ?.addEventListener(
-                'click',
-                resetarChat
-            );
+    );
 
-
-        document
-            .getElementById(
-                'btn-buscar'
+    obterElemento(
+        'btn-registrar'
+    )?.addEventListener(
+        'click',
+        () =>
+            mostrarTela(
+                'tela-cadastro'
             )
-            ?.addEventListener(
-                'click',
-                () =>
-                    mostrarTela(
-                        'tela-pesquisa'
-                    )
-            );
+    );
+
+    obterElemento(
+        'btn-login'
+    )?.addEventListener(
+        'click',
+        realizarLogin
+    );
+
+    obterElemento(
+        'btn-cadastrar'
+    )?.addEventListener(
+        'click',
+        realizarCadastro
+    );
+
+    obterElemento(
+        'btn-enviar-cod'
+    )?.addEventListener(
+        'click',
+        enviarCodigoRecuperacao
+    );
+
+    obterElemento(
+        'btn-mudar-senha'
+    )?.addEventListener(
+        'click',
+        alterarSenha
+    );
+
+    obterElemento(
+        'dd-logout'
+    )?.addEventListener(
+        'click',
+        realizarLogout
+    );
+}
 
 
-        /*
-         * MENU USUÁRIO
-         */
-        const btnMenu =
-            document.getElementById(
-                'btn-user-menu'
-            );
+/* ================================================================
+   EVENTOS DO CHAT
+================================================================ */
 
-        const dropdown =
-            document.getElementById(
-                'user-dropdown'
-            );
+function iniciarEventosChat() {
+    obterElemento(
+        'btn-novo-chat'
+    )?.addEventListener(
+        'click',
+        resetarChat
+    );
 
+    obterElemento(
+        'btn-send'
+    )?.addEventListener(
+        'click',
+        enviarMensagem
+    );
 
-        btnMenu?.addEventListener(
-            'click',
-            event => {
-                event.stopPropagation();
+    obterElemento(
+        'btn-stop'
+    )?.addEventListener(
+        'click',
+        pararRespostaIA
+    );
 
-                dropdown?.classList.toggle(
-                    'aberto'
-                );
-            }
+    const input =
+        obterElemento(
+            'chat-input'
         );
 
-
-        /*
-         * MENU PERFIL TOPO
-         */
-        const topProfileBtn =
-            document.getElementById(
-                'topbar-profile-btn'
-            );
-
-        const topProfileDropdown =
-            document.getElementById(
-                'topbar-profile-dropdown'
-            );
-
-
-        topProfileBtn
-            ?.addEventListener(
-                'click',
-                event => {
-                    event.stopPropagation();
-
-                    topProfileDropdown
-                        ?.classList.toggle(
-                            'aberto'
-                        );
-                }
-            );
-
-
-        document.addEventListener(
-            'click',
-            () => {
-                dropdown
-                    ?.classList.remove(
-                        'aberto'
-                    );
-
-                topProfileDropdown
-                    ?.classList.remove(
-                        'aberto'
-                    );
-
-                fecharChatOptionsMenu();
-            }
-        );
-
-
-        /*
-         * MENU DROPDOWN
-         */
-        document
-            .getElementById(
-                'dd-config'
-            )
-            ?.addEventListener(
-                'click',
-                () => {
-                    window.location.href =
-                        '/configuracoes';
-                }
-            );
-
-
-        document
-            .getElementById(
-                'dd-feedback'
-            )
-            ?.addEventListener(
-                'click',
-                () => {
-                    dropdown
-                        ?.classList.remove(
-                            'aberto'
-                        );
-
-                    mostrarTela(
-                        'tela-feedback'
-                    );
-                }
-            );
-
-
-        document
-            .getElementById(
-                'dd-logout'
-            )
-            ?.addEventListener(
-                'click',
-                realizarLogout
-            );
-
-
-        document
-            .getElementById(
-                'top-dd-config'
-            )
-            ?.addEventListener(
-                'click',
-                () => {
-                    topProfileDropdown
-                        ?.classList.remove(
-                            'aberto'
-                        );
-
-                    window.location.href =
-                        '/configuracoes';
-                }
-            );
-
-
-        document
-            .getElementById(
-                'top-dd-feedback'
-            )
-            ?.addEventListener(
-                'click',
-                () => {
-                    topProfileDropdown
-                        ?.classList.remove(
-                            'aberto'
-                        );
-
-                    mostrarTela(
-                        'tela-feedback'
-                    );
-                }
-            );
-
-
-        document
-            .getElementById(
-                'top-dd-logout'
-            )
-            ?.addEventListener(
-                'click',
-                () => {
-                    topProfileDropdown
-                        ?.classList.remove(
-                            'aberto'
-                        );
-
-                    realizarLogout();
-                }
-            );
-
-
-        document
-            .getElementById(
-                'top-dd-login'
-            )
-            ?.addEventListener(
-                'click',
-                () => {
-                    topProfileDropdown
-                        ?.classList.remove(
-                            'aberto'
-                        );
-
-                    mostrarTela(
-                        'tela-login'
-                    );
-                }
-            );
-
-
-        document
-            .getElementById(
-                'top-dd-register'
-            )
-            ?.addEventListener(
-                'click',
-                () => {
-                    topProfileDropdown
-                        ?.classList.remove(
-                            'aberto'
-                        );
-
-                    mostrarTela(
-                        'tela-cadastro'
-                    );
-                }
-            );
-
-
-        /*
-         * LOGIN / REGISTRO
-         */
-        document
-            .getElementById(
-                'btn-entrar'
-            )
-            ?.addEventListener(
-                'click',
-                () =>
-                    mostrarTela(
-                        'tela-login'
-                    )
-            );
-
-
-        document
-            .getElementById(
-                'btn-registrar'
-            )
-            ?.addEventListener(
-                'click',
-                () =>
-                    mostrarTela(
-                        'tela-cadastro'
-                    )
-            );
-
-
-        /*
-         * OVERLAY AUTH
-         */
-        document
-            .getElementById(
-                'overlay-auth'
-            )
-            ?.addEventListener(
-                'click',
-                event => {
-                    if (
-                        event.target.id ===
-                        'overlay-auth'
-                    ) {
-                        fecharAuth();
-                    }
-                }
-            );
-
-
-        /*
-         * BOTÕES AUTH
-         */
-        document
-            .getElementById(
-                'btn-login'
-            )
-            ?.addEventListener(
-                'click',
-                realizarLogin
-            );
-
-
-        document
-            .getElementById(
-                'btn-cadastrar'
-            )
-            ?.addEventListener(
-                'click',
-                realizarCadastro
-            );
-
-
-        document
-            .getElementById(
-                'btn-enviar-cod'
-            )
-            ?.addEventListener(
-                'click',
-                enviarCodigoRecuperacao
-            );
-
-
-        document
-            .getElementById(
-                'btn-mudar-senha'
-            )
-            ?.addEventListener(
-                'click',
-                alterarSenha
-            );
-
-
-        document
-            .getElementById(
-                'btn-salvar-rename'
-            )
-            ?.addEventListener(
-                'click',
-                salvarRenomear
-            );
-
-
-        document
-            .getElementById(
-                'btn-confirmar-excluir'
-            )
-            ?.addEventListener(
-                'click',
-                confirmarExcluir
-            );
-
-
-        document
-            .getElementById(
-                'btn-fb-enviar'
-            )
-            ?.addEventListener(
-                'click',
-                enviarFeedback
-            );
-
-
-        document
-            .getElementById(
-                'login-senha'
-            )
-            ?.addEventListener(
-                'keydown',
-                event => {
-                    if (
-                        event.key ===
-                        'Enter'
-                    ) {
-                        realizarLogin();
-                    }
-                }
-            );
-
-
-        document
-            .getElementById(
-                'cad-senha'
-            )
-            ?.addEventListener(
-                'keydown',
-                event => {
-                    if (
-                        event.key ===
-                        'Enter'
-                    ) {
-                        realizarCadastro();
-                    }
-                }
-            );
-
-
-        document
-            .getElementById(
-                'pesquisa-input'
-            )
-            ?.addEventListener(
-                'input',
-                event =>
-                    pesquisarConversas(
-                        event.target.value
-                    )
-            );
-
-
-        /*
-         * VOZ
-         */
-        document
-            .getElementById(
-                'btn-voz-call'
-            )
-            ?.addEventListener(
-                'click',
-                abrirVoz
-            );
-
-
-        /*
-         * Botão interno.
-         */
-        document
-            .getElementById(
-                'btn-voz-encerrar'
-            )
-            ?.addEventListener(
-                'click',
-                fecharVoz
-            );
-
-
-        /*
-         * Botão X do overlay.
-         */
-        document
-            .getElementById(
-                'btn-voz-fechar'
-            )
-            ?.addEventListener(
-                'click',
-                fecharVoz
-            );
-
-
-        document
-            .getElementById(
-                'btn-voz-mute'
-            )
-            ?.addEventListener(
-                'click',
-                toggleMuteVoz
-            );
-
-
-        /*
-         * CÂMERA
-         */
-        document
-            .getElementById(
-                'btn-capturar-foto'
-            )
-            ?.addEventListener(
-                'click',
-                capturarFoto
-            );
-
-
-        /*
-         * ENVIO
-         */
-        document
-            .getElementById(
-                'btn-send'
-            )
-            ?.addEventListener(
-                'click',
-                enviarMensagem
-            );
-
-
-        document
-            .getElementById(
-                'btn-stop'
-            )
-            ?.addEventListener(
-                'click',
-                pararRespostaIA
-            );
-
-
-        const textarea =
-            document.getElementById(
-                'chat-input'
-            );
-
-
-        textarea?.addEventListener(
+    if (input) {
+        input.addEventListener(
             'keydown',
             event => {
                 if (
@@ -4489,65 +4146,289 @@ document.addEventListener(
             }
         );
 
-
-        textarea?.addEventListener(
+        input.addEventListener(
             'input',
-            function () {
-                this.style.height =
+            () => {
+                input.style.height =
                     'auto';
 
-                this.style.height =
-                    this.scrollHeight +
-                    'px';
+                input.style.height =
+                    `${Math.min(
+                        input.scrollHeight,
+                        200
+                    )}px`;
             }
         );
+    }
+}
 
+
+/* ================================================================
+   EVENTOS DE VOZ
+================================================================ */
+
+function iniciarEventosVoz() {
+    obterElemento(
+        'btn-voz-call'
+    )?.addEventListener(
+        'click',
+        abrirVoz
+    );
+
+    obterElemento(
+        'btn-voz-encerrar'
+    )?.addEventListener(
+        'click',
+        fecharVoz
+    );
+
+    obterElemento(
+        'btn-voz-mute'
+    )?.addEventListener(
+        'click',
+        toggleMuteVoz
+    );
+}
+
+
+/* ================================================================
+   EVENTOS DE CÂMERA
+================================================================ */
+
+function iniciarEventosCamera() {
+    obterElemento(
+        'btn-camera-fechar'
+    )?.addEventListener(
+        'click',
+        fecharCamera
+    );
+
+    obterElemento(
+        'btn-camera-capturar'
+    )?.addEventListener(
+        'click',
+        capturarFoto
+    );
+}
+
+
+/* ================================================================
+   EVENTOS DE HISTÓRICO
+================================================================ */
+
+function iniciarEventosHistorico() {
+    obterElemento(
+        'btn-buscar'
+    )?.addEventListener(
+        'click',
+        () =>
+            mostrarTela(
+                'tela-pesquisa'
+            )
+    );
+
+    obterElemento(
+        'pesquisa-input'
+    )?.addEventListener(
+        'input',
+        event => {
+            pesquisarConversas(
+                event.target.value
+            );
+        }
+    );
+
+
+    obterElemento(
+        'btn-salvar-rename'
+    )?.addEventListener(
+        'click',
+        salvarRenomear
+    );
+
+
+    obterElemento(
+        'btn-confirmar-excluir'
+    )?.addEventListener(
+        'click',
+        confirmarExcluir
+    );
+
+
+    obterElemento(
+        'btn-fb-enviar'
+    )?.addEventListener(
+        'click',
+        enviarFeedback
+    );
+}
+
+
+/* ================================================================
+   TECLAS GLOBAIS
+================================================================ */
+
+function iniciarEventosGlobais() {
+    document.addEventListener(
+        'keydown',
+        event => {
+            if (
+                event.key ===
+                'Escape'
+            ) {
+                const auth =
+                    obterElemento(
+                        'overlay-auth'
+                    );
+
+                if (
+                    auth &&
+                    auth.style.display !==
+                        'none'
+                ) {
+                    fecharAuth();
+                }
+            }
+        }
+    );
+}
+
+
+/* ================================================================
+   INICIALIZAÇÃO
+================================================================ */
+
+document.addEventListener(
+    'DOMContentLoaded',
+    async () => {
+        if (chatInicializado) {
+            return;
+        }
+
+        chatInicializado =
+            true;
 
         /*
-         * MENU DE HISTÓRICO
-         */
-        document
-            .getElementById(
-                'historico-lista'
-            )
-            ?.addEventListener(
-                'scroll',
-                fecharChatOptionsMenu,
-                {
-                    passive: true
-                }
-            );
+           TTS do navegador pode carregar
+           as vozes de forma assíncrona.
+        */
 
+        if (
+            typeof speechSynthesis !==
+            'undefined'
+        ) {
+            speechSynthesis.onvoiceschanged =
+                () => {
+                    ttsVoice = null;
+                    escolherVozTTS();
+                };
+        }
 
-        window.addEventListener(
-            'resize',
-            fecharChatOptionsMenu
-        );
+        iniciarSidebar();
+        iniciarDropdownUsuario();
+
+        iniciarEventosAuth();
+        iniciarEventosChat();
+        iniciarEventosVoz();
+        iniciarEventosCamera();
+        iniciarEventosHistorico();
+        iniciarEventosGlobais();
+
+        iniciarMenuUpload();
+        iniciarUpload();
+        iniciarGravacaoAudio();
+
+        mostrarWelcome(true);
+
+        await verificarSessao();
     }
 );
 
 
-/* ────────────────────────────────────────────────────────────────
-   GLOBAIS PARA HTML INLINE
-   ──────────────────────────────────────────────────────────────── */
+/* ================================================================
+   LIMPEZA AO SAIR DA PÁGINA
+================================================================ */
 
-window.mostrarTela =
-    mostrarTela;
+window.addEventListener(
+    'beforeunload',
+    () => {
+        try {
+            pararReconhecimentoVoz();
+        } catch {}
 
-window.fecharAuth =
-    fecharAuth;
+        try {
+            pararVisualizacaoAudio();
+        } catch {}
 
-window.fecharCamera =
-    fecharCamera;
+        try {
+            pararAudioEleven();
+        } catch {}
 
-window.usarSugestao =
-    usarSugestao;
+        try {
+            if (streamCamera) {
+                streamCamera
+                    .getTracks()
+                    .forEach(
+                        track =>
+                            track.stop()
+                    );
+            }
+        } catch {}
 
-window.abrirVoz =
-    abrirVoz;
+        try {
+            if (typeof speechSynthesis !== 'undefined') {
+                speechSynthesis.cancel();
+            }
+        } catch {}
+    }
+);
 
-window.fecharVoz =
-    fecharVoz;
 
-window.capturarFoto =
-    capturarFoto;
+/* ================================================================
+   API GLOBAL
+   Permite que outros scripts/HTML chamem funções.
+================================================================ */
+
+window.IANA = {
+    enviarMensagem,
+    processarEnvioIA,
+    pararRespostaIA,
+
+    abrirVoz,
+    fecharVoz,
+    toggleMuteVoz,
+
+    abrirCamera,
+    fecharCamera,
+    capturarFoto,
+
+    resetarChat,
+
+    carregarHistorico,
+    abrirConversa,
+
+    acaoFixar,
+    abrirRenomear,
+    salvarRenomear,
+
+    abrirConfirmarExcluir,
+    confirmarExcluir,
+
+    enviarFeedback,
+
+    mostrarTela,
+    fecharAuth,
+
+    realizarLogin,
+    realizarCadastro,
+    realizarLogout,
+
+    pesquisarConversas,
+
+    usarSugestao
+};
+
+
+/* ================================================================
+   FIM — IANA chat.js
+================================================================ */

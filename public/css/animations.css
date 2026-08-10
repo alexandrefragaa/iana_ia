@@ -1,11 +1,10 @@
-/* ============================================================
+/* ==========================================================================
    IANA — ANIMAÇÕES DO CHAT
-============================================================ */
+   ========================================================================== */
 
-
-/* ============================================================
+/* ==========================================================================
    LABEL IANA
-============================================================ */
+   ========================================================================== */
 
 .iana-label-container {
     width: 100%;
@@ -19,26 +18,21 @@
         transform .4s ease;
 }
 
-
 .iana-label {
     font-size: .95rem;
     color: rgba(168, 85, 247, .6);
     font-weight: 600;
     letter-spacing: .5px;
     text-transform: uppercase;
-    background:
-        rgba(168, 85, 247, .1);
+    background: rgba(168, 85, 247, .1);
     padding: 8px 16px;
     border-radius: 20px;
-    border:
-        1px solid
-        rgba(168, 85, 247, .3);
+    border: 1px solid rgba(168, 85, 247, .3);
 }
 
-
-/* ============================================================
+/* ==========================================================================
    THINKING VIEW
-============================================================ */
+   ========================================================================== */
 
 .thinking-view {
     width: 100%;
@@ -46,31 +40,19 @@
     display: none;
     align-items: center;
     justify-content: flex-start;
-    padding:
-        12px
-        20px;
+    padding: 12px 20px;
     opacity: 0;
-    transform:
-        translateY(8px);
+    transform: translateY(8px);
     pointer-events: none;
     transition:
         opacity .25s ease,
         transform .25s ease;
 }
 
-
 .thinking-view.ativo {
-    /* FIX: faltava "display: flex" aqui. A regra base deixa o elemento
-       "display: none", e essa classe só mudava opacity/transform/
-       pointer-events — sem "display", o elemento nunca sai de "none"
-       e a transição de opacidade/translateY não tem efeito nenhum
-       (fica invisível mesmo com .ativo aplicada), a menos que algum
-       JS também mexa em style.display por fora do CSS. Adicionando
-       aqui deixa o componente funcional sozinho, sem depender disso. */
     display: flex;
     opacity: 1;
-    transform:
-        translateY(0);
+    transform: translateY(0);
     pointer-events: auto;
 }
 
@@ -80,10 +62,9 @@
     font-size: .92rem;
 }
 
-
-/* ============================================================
+/* ==========================================================================
    ÍCONE DE PENSAMENTO
-============================================================ */
+   ========================================================================== */
 
 .thinking-icon {
     position: relative;
@@ -91,205 +72,132 @@
     height: 22px;
     flex-shrink: 0;
     border-radius: 50%;
-    background:
-        radial-gradient(
-            circle at center,
-            #c084fc 0%,
-            #a855f7 35%,
-            rgba(168, 85, 247, .25) 70%,
-            transparent 100%
-        );
+    background: radial-gradient(
+        circle at center,
+        #c084fc 0%,
+        #a855f7 35%,
+        rgba(168, 85, 247, .25) 70%,
+        transparent 100%
+    );
     box-shadow:
-        0 0 10px
-        rgba(168, 85, 247, .5),
-
-        0 0 25px
-        rgba(168, 85, 247, .25);
-    animation:
-        ianaPensando
-        1.4s
-        ease-in-out
-        infinite;
+        0 0 10px rgba(168, 85, 247, .5),
+        0 0 25px rgba(168, 85, 247, .25);
+    animation: ianaPensando 1.4s ease-in-out infinite;
 }
-
-
-/* ============================================================
-   ANÉIS DO ÍCONE
-============================================================ */
 
 .thinking-icon::before {
     content: "";
     position: absolute;
     inset: -5px;
     border-radius: 50%;
-    border:
-        1px solid
-        rgba(168, 85, 247, .35);
-    animation:
-        ianaThinkingRing
-        1.8s
-        ease-out
-        infinite;
+    border: 1px solid rgba(168, 85, 247, .35);
+    animation: ianaThinkingRing 1.8s ease-out infinite;
 }
-
 
 .thinking-icon::after {
     content: "";
     position: absolute;
     inset: -9px;
     border-radius: 50%;
-    border:
-        1px solid
-        rgba(168, 85, 247, .15);
-    animation:
-        ianaThinkingRing
-        1.8s
-        ease-out
-        infinite
-        .45s;
+    border: 1px solid rgba(168, 85, 247, .15);
+    animation: ianaThinkingRing 1.8s ease-out infinite .45s;
 }
 
-
-/* ============================================================
+/* ==========================================================================
    PULSO
-============================================================ */
+   ========================================================================== */
 
 @keyframes ianaPensando {
     0% {
-        transform:
-            scale(.85);
+        transform: scale(.85);
         opacity: .55;
         box-shadow:
-            0 0 8px
-            rgba(168, 85, 247, .35),
-
-            0 0 15px
-            rgba(168, 85, 247, .15);
+            0 0 8px rgba(168, 85, 247, .35),
+            0 0 15px rgba(168, 85, 247, .15);
     }
-
 
     50% {
-        transform:
-            scale(1.12);
+        transform: scale(1.12);
         opacity: 1;
         box-shadow:
-            0 0 15px
-            rgba(168, 85, 247, .75),
-
-            0 0 35px
-            rgba(168, 85, 247, .35);
+            0 0 15px rgba(168, 85, 247, .75),
+            0 0 35px rgba(168, 85, 247, .35);
     }
-
 
     100% {
-        transform:
-            scale(.85);
+        transform: scale(.85);
         opacity: .55;
         box-shadow:
-            0 0 8px
-            rgba(168, 85, 247, .35),
-
-            0 0 15px
-            rgba(168, 85, 247, .15);
+            0 0 8px rgba(168, 85, 247, .35),
+            0 0 15px rgba(168, 85, 247, .15);
     }
-
 }
-
 
 @keyframes ianaThinkingRing {
     0% {
-        transform:
-            scale(.7);
+        transform: scale(.7);
         opacity: .7;
     }
 
-
     100% {
-        transform:
-            scale(1.5);
+        transform: scale(1.5);
         opacity: 0;
     }
-
 }
 
-
-/* ============================================================
+/* ==========================================================================
    WELCOME
-============================================================ */
+   ========================================================================== */
 
 .welcome-container.transitando,
 .welcome.transitando {
     animation:
         moverAcima
         .45s
-        cubic-bezier(
-            .34,
-            1.56,
-            .64,
-            1
-        )
+        cubic-bezier(.34, 1.56, .64, 1)
         forwards;
 }
 
-
 @keyframes moverAcima {
     0% {
-        transform:
-            translateY(0)
-            scale(1);
+        transform: translateY(0) scale(1);
         opacity: 1;
     }
 
-
     100% {
-        transform:
-            translateY(-45px)
-            scale(.96);
+        transform: translateY(-45px) scale(.96);
         opacity: 0;
     }
-
 }
 
-
-/* ============================================================
+/* ==========================================================================
    INPUT
-============================================================ */
+   ========================================================================== */
 
 .input-area-wrapper.transitando,
 .input-wrap.transitando {
     animation:
         subirInput
         .45s
-        cubic-bezier(
-            .34,
-            1.56,
-            .64,
-            1
-        )
+        cubic-bezier(.34, 1.56, .64, 1)
         forwards;
 }
 
-
 @keyframes subirInput {
     0% {
-        transform:
-            translateY(0);
+        transform: translateY(0);
         opacity: 1;
     }
 
-
     100% {
-        transform:
-            translateY(-20px);
+        transform: translateY(-20px);
         opacity: .95;
     }
-
 }
 
-
-/* ============================================================
+/* ==========================================================================
    VOLTAR
-============================================================ */
+   ========================================================================== */
 
 .welcome-container.voltando,
 .welcome.voltando {
@@ -300,25 +208,17 @@
         forwards;
 }
 
-
 @keyframes voltarAoNormal {
     0% {
-        transform:
-            translateY(-45px)
-            scale(.96);
+        transform: translateY(-45px) scale(.96);
         opacity: 0;
     }
 
-
     100% {
-        transform:
-            translateY(0)
-            scale(1);
+        transform: translateY(0) scale(1);
         opacity: 1;
     }
-
 }
-
 
 .input-area-wrapper.voltando,
 .input-wrap.voltando {
@@ -329,27 +229,21 @@
         forwards;
 }
 
-
 @keyframes descerInput {
     0% {
-        transform:
-            translateY(-20px);
+        transform: translateY(-20px);
         opacity: .95;
     }
 
-
     100% {
-        transform:
-            translateY(0);
+        transform: translateY(0);
         opacity: 1;
     }
-
 }
 
-
-/* ============================================================
+/* ==========================================================================
    LABEL
-============================================================ */
+   ========================================================================== */
 
 .iana-label-container.sumir {
     animation:
@@ -359,23 +253,17 @@
         forwards;
 }
 
-
 @keyframes desaparecerLabel {
     0% {
         opacity: 1;
-        transform:
-            scale(1);
+        transform: scale(1);
     }
-
 
     100% {
         opacity: 0;
-        transform:
-            scale(.8);
+        transform: scale(.8);
     }
-
 }
-
 
 .iana-label-container.reaparecer {
     animation:
@@ -385,27 +273,21 @@
         forwards;
 }
 
-
 @keyframes reaparecerLabel {
     0% {
         opacity: 0;
-        transform:
-            scale(.8);
+        transform: scale(.8);
     }
-
 
     100% {
         opacity: 1;
-        transform:
-            scale(1);
+        transform: scale(1);
     }
-
 }
 
-
-/* ============================================================
+/* ==========================================================================
    INPUT DESABILITADO
-============================================================ */
+   ========================================================================== */
 
 .search-pill.disabled,
 .input-pill.disabled {
@@ -413,22 +295,14 @@
     pointer-events: none;
 }
 
-
 .search-pill.disabled textarea,
 .input-pill.disabled textarea {
-    color:
-        rgba(
-            255,
-            255,
-            255,
-            .3
-        );
+    color: rgba(255, 255, 255, .3);
 }
 
-
-/* ============================================================
+/* ==========================================================================
    SIDEBAR
-============================================================ */
+   ========================================================================== */
 
 #sidebar-toggle {
     position: relative;
@@ -440,192 +314,140 @@
     overflow: hidden;
 }
 
-
 #sidebar-toggle img {
     opacity: .85;
-    transform:
-        scale(1)
-        rotate(0deg);
+    transform: scale(1) rotate(0deg);
     transition:
-        all .3s
-        cubic-bezier(
-            .4,
-            0,
-            .2,
-            1
-        );
+        all .3s cubic-bezier(.4, 0, .2, 1);
 }
 
-
-.sidebar:not(.collapsed)
-#sidebar-toggle:hover img {
+.sidebar:not(.collapsed) #sidebar-toggle:hover img {
     opacity: 1;
-    transform:
-        scale(1.05)
-        scaleX(-1);
+    transform: scale(1.05) scaleX(-1);
 }
 
-
-.sidebar.collapsed
-#sidebar-toggle:hover img {
+.sidebar.collapsed #sidebar-toggle:hover img {
     opacity: 1;
-    transform:
-        scale(1.05)
-        rotate(0deg);
+    transform: scale(1.05) rotate(0deg);
 }
 
-
-/* ============================================================
+/* ==========================================================================
    SIDEBAR FECHADA
-============================================================ */
+   ========================================================================== */
 
-/* FIX: removida a regra duplicada "width: 72px" que existia aqui.
-   styles.css já define ".sidebar.collapsed { width:68px; min-width:68px; }"
-   e o comentário lá afirma que essa duplicata (72px) tinha sido apagada
-   daqui — mas ela continuava presente neste arquivo. Como animations.css
-   é carregado DEPOIS de styles.css no <head>, essa regra vencia
-   silenciosamente e a sidebar colapsada ficava com width:72px e
-   min-width:68px descasados (o próprio bug que o comentário dizia ter
-   corrigido). Removida para que styles.css volte a ser a única fonte
-   da verdade para a largura da sidebar colapsada. */
-
-.sidebar.collapsed
-.brand-name,
-
-.sidebar.collapsed
-.sidebar-actions span,
-
-.sidebar.collapsed
-.sidebar-historico,
-
-.sidebar.collapsed
-.user-nome {
+.sidebar.collapsed .brand-name,
+.sidebar.collapsed .sidebar-actions span,
+.sidebar.collapsed .sidebar-historico,
+.sidebar.collapsed .user-nome {
     display: none;
 }
 
-
-.sidebar.collapsed
-.sidebar-top {
+.sidebar.collapsed .sidebar-top {
     justify-content: center;
 }
 
-
-.sidebar.collapsed
-.brand {
+.sidebar.collapsed .brand {
     justify-content: center;
 }
 
-
-.sidebar.collapsed
-.btn-novo-chat,
-
-.sidebar.collapsed
-.btn-buscar {
+.sidebar.collapsed .btn-novo-chat,
+.sidebar.collapsed .btn-buscar {
     justify-content: center;
-    padding:
-        10px;
+    padding: 10px;
 }
 
-
-.sidebar.collapsed
-.sidebar-footer {
-    padding:
-        10px;
+.sidebar.collapsed .sidebar-footer {
+    padding: 10px;
 }
 
-
-.sidebar.collapsed
-.user-row {
+.sidebar.collapsed .user-row {
     justify-content: center;
 }
 
-
-/* ============================================================
+/* ==========================================================================
    TOPBAR MENU
-============================================================ */
+   ========================================================================== */
 
+#topbar-menu-toggle {
+    display: none;
+    width: 38px;
+    height: 38px;
+    border: none;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .05);
+    color: #fff;
+    cursor: pointer;
+    font-size: 19px;
+    align-items: center;
+    justify-content: center;
+    transition: background .2s ease;
+}
+
+#topbar-menu-toggle:hover {
+    background: rgba(168, 85, 247, .15);
+}
+
+/* Compatibilidade caso o JS use a classe */
 .topbar-menu-btn {
     display: none;
     width: 38px;
     height: 38px;
     border: none;
     border-radius: 10px;
-    background:
-        rgba(
-            255,
-            255,
-            255,
-            .05
-        );
+    background: rgba(255, 255, 255, .05);
     color: #fff;
     cursor: pointer;
     font-size: 19px;
     align-items: center;
     justify-content: center;
-    transition:
-        background .2s ease;
+    transition: background .2s ease;
 }
-
 
 .topbar-menu-btn:hover {
-    background:
-        rgba(
-            168,
-            85,
-            247,
-            .15
-        );
+    background: rgba(168, 85, 247, .15);
 }
 
-
-/* ============================================================
+/* ==========================================================================
    DROPDOWN USUÁRIO
-============================================================ */
+   ========================================================================== */
 
 .user-dropdown,
 .topbar-user-dropdown {
     opacity: 0;
     visibility: hidden;
-    transform:
-        translateY(-5px);
+    transform: translateY(-5px);
     transition:
         opacity .2s ease,
         transform .2s ease,
         visibility .2s ease;
 }
 
-
 .user-dropdown.aberto,
 .topbar-user-dropdown.aberto {
     opacity: 1;
     visibility: visible;
-    transform:
-        translateY(0);
+    transform: translateY(0);
 }
 
-
-/* ============================================================
+/* ==========================================================================
    RESPONSIVO
-============================================================ */
+   ========================================================================== */
 
 @media (max-width: 768px) {
+
+    #topbar-menu-toggle,
     .topbar-menu-btn {
         display: flex;
     }
 
-
     .thinking-view {
-        padding:
-            10px
-            16px;
+        padding: 10px 16px;
     }
-
 
     .thinking-icon {
         width: 20px;
         height: 20px;
     }
-
 
     .sidebar {
         position: fixed;
@@ -633,16 +455,31 @@
         left: 0;
         top: 0;
         bottom: 0;
-        transform:
-            translateX(-100%);
-        transition:
-            transform .3s ease;
+        transform: translateX(-100%);
+        transition: transform .3s ease;
     }
-
 
     .sidebar.mobile-open {
-        transform:
-            translateX(0);
+        transform: translateX(0);
     }
+}
 
+/* ==========================================================================
+   ACESSIBILIDADE
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+
+    .thinking-icon,
+    .thinking-icon::before,
+    .thinking-icon::after,
+    .welcome.transitando,
+    .welcome.voltando,
+    .input-wrap.transitando,
+    .input-wrap.voltando,
+    .iana-label-container.sumir,
+    .iana-label-container.reaparecer {
+        animation: none !important;
+        transition: none !important;
+    }
 }

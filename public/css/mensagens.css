@@ -1,5 +1,9 @@
 /* ==========================================================================
-   1. LINHA DE MENSAGEM DA IANA (AVATAR E BOLHA)
+   IANA — MENSAGENS DO CHAT
+   ========================================================================== */
+
+/* ==========================================================================
+   1. LINHA DE MENSAGEM DA IANA
    ========================================================================== */
 
 .iana-response-container {
@@ -50,6 +54,7 @@
 }
 
 .iana-message-bubble p {
+    margin-top: 0;
     margin-bottom: 8px;
 }
 
@@ -64,25 +69,31 @@
     font-size: .9em;
     white-space: break-spaces;
     overflow-wrap: anywhere;
-    font-family: Consolas, monospace;
+    font-family: Consolas, "Courier New", monospace;
 }
 
 .iana-message-bubble pre {
     background: rgba(0, 0, 0, .45);
     padding: 14px;
     border-radius: 10px;
-    overflow: auto;
+    overflow-x: auto;
+    overflow-y: auto;
     margin: 10px 0;
     max-width: 100%;
 }
 
 .iana-message-bubble pre::-webkit-scrollbar {
+    width: 8px;
     height: 8px;
 }
 
 .iana-message-bubble pre::-webkit-scrollbar-thumb {
     background: #555;
     border-radius: 50px;
+}
+
+.iana-message-bubble pre::-webkit-scrollbar-track {
+    background: transparent;
 }
 
 .iana-message-bubble pre code {
@@ -94,7 +105,12 @@
 .iana-message-bubble ul,
 .iana-message-bubble ol {
     padding-left: 20px;
+    margin-top: 0;
     margin-bottom: 8px;
+}
+
+.iana-message-bubble li {
+    margin-bottom: 4px;
 }
 
 .iana-message-bubble a {
@@ -129,6 +145,7 @@
 .iana-message-bubble td {
     padding: 8px;
     border: 1px solid rgba(255, 255, 255, .12);
+    text-align: left;
 }
 
 .iana-message-bubble th {
@@ -136,11 +153,16 @@
     font-weight: 600;
 }
 
+.iana-message-bubble hr {
+    border: 0;
+    border-top: 1px solid rgba(255, 255, 255, .12);
+    margin: 16px 0;
+}
+
 /* ==========================================================================
    2. BOLHA DO USUÁRIO
    ========================================================================== */
 
-/* Wrapper que alinha a bolha do usuário + linha de ações à direita */
 .user-msg-wrap {
     display: flex;
     flex-direction: column;
@@ -167,11 +189,11 @@
 .user-msg-bubble::selection,
 .iana-message-bubble::selection {
     background: #22d3ee;
-    color: black;
+    color: #000;
 }
 
 /* ==========================================================================
-   3. BOLHA DE "PENSANDO"
+   3. BOLHA DE PENSANDO
    ========================================================================== */
 
 .thinking-bubble {
@@ -205,7 +227,7 @@
 }
 
 /* ==========================================================================
-   4. LINHA DE AÇÕES (EDITAR / COPIAR / EXPANDIR)
+   4. LINHA DE AÇÕES
    ========================================================================== */
 
 .msg-actions {
@@ -227,6 +249,11 @@
     font-size: .85rem;
     line-height: 1;
     padding: 2px;
+    color: inherit;
+    transition:
+        transform .2s,
+        opacity .2s,
+        color .2s;
 }
 
 .msg-action-btn:hover {
@@ -242,6 +269,10 @@
     font-size: .8rem;
     opacity: .85;
     padding: 0;
+    transition:
+        transform .2s,
+        opacity .2s,
+        color .2s;
 }
 
 .msg-expand-btn:hover {
@@ -250,14 +281,8 @@
     text-decoration: underline;
 }
 
-/* Transições unificadas para os botões de ação */
-.msg-action-btn,
-.msg-expand-btn {
-    transition: transform .2s, opacity .2s, color .2s;
-}
-
 /* ==========================================================================
-   5. CLAMP & ANIMAÇÕES DE ENTRADA
+   5. CLAMP
    ========================================================================== */
 
 .msg-clamped {
@@ -268,6 +293,10 @@
     overflow: hidden;
 }
 
+/* ==========================================================================
+   6. ANIMAÇÕES
+   ========================================================================== */
+
 @keyframes bounceThinking {
     0%,
     80%,
@@ -275,19 +304,19 @@
         transform: scale(.6);
         opacity: .4;
     }
+
     40% {
         transform: scale(1.1);
         opacity: 1;
     }
 }
 
-/* Cada mensagem nova "sobe" ao aparecer, empurrando visualmente as
-   anteriores pra fora da área visível conforme o scroll acompanha. */
 @keyframes mensagem-subir {
     from {
         opacity: 0;
         transform: translateY(24px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -296,14 +325,47 @@
 
 .user-msg-wrap.nova-mensagem,
 .iana-response-container.nova-mensagem {
-    animation: mensagem-subir .45s cubic-bezier(0.22, 1, 0.36, 1);
+    animation:
+        mensagem-subir
+        .45s
+        cubic-bezier(.22, 1, .36, 1);
 }
 
 /* ==========================================================================
-   6. MEDIA QUERIES (RESPONSIVIDADE E ACESSIBILIDADE)
+   7. LINKS / CONTEÚDO
+   ========================================================================== */
+
+.iana-message-bubble strong {
+    color: #fff;
+    font-weight: 700;
+}
+
+.iana-message-bubble em {
+    color: #d4d4d8;
+}
+
+.iana-message-bubble h1,
+.iana-message-bubble h2,
+.iana-message-bubble h3,
+.iana-message-bubble h4 {
+    color: #fff;
+    line-height: 1.3;
+    margin-top: 16px;
+    margin-bottom: 8px;
+}
+
+.iana-message-bubble h1:first-child,
+.iana-message-bubble h2:first-child,
+.iana-message-bubble h3:first-child {
+    margin-top: 0;
+}
+
+/* ==========================================================================
+   8. RESPONSIVIDADE
    ========================================================================== */
 
 @media (max-width: 768px) {
+
     .iana-response-container {
         gap: 8px;
     }
@@ -320,11 +382,26 @@
         padding: 12px 14px;
         font-size: .95rem;
     }
+
+    .iana-message-bubble pre {
+        padding: 10px;
+        border-radius: 8px;
+    }
+
+    .iana-message-bubble table {
+        font-size: .85rem;
+    }
 }
 
+/* ==========================================================================
+   9. ACESSIBILIDADE
+   ========================================================================== */
+
 @media (prefers-reduced-motion: reduce) {
+
     .user-msg-wrap.nova-mensagem,
-    .iana-response-container.nova-mensagem {
-        animation: none;
+    .iana-response-container.nova-mensagem,
+    .thinking-bubble .dot {
+        animation: none !important;
     }
 }

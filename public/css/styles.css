@@ -18,6 +18,7 @@ body {
     background-color: #05060a;
     color: #e3e3e3;
     height: 100vh;
+    height: 100dvh; /* FIX mobile: barra de endereço não infla mais a altura */
     overflow: hidden;
 }
 
@@ -27,6 +28,7 @@ body {
 
 .app {
     height: 100vh;
+    height: 100dvh; /* FIX mobile */
     width: 100%;
     display: flex;
     overflow: hidden;
@@ -38,6 +40,7 @@ main {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    height: 100dvh; /* FIX mobile */
     overflow: hidden;
     min-width: 0;
 }
@@ -315,7 +318,11 @@ main {
 
 .input-wrap {
     flex-shrink: 0;
-    padding: 20px;
+    /* FIX mobile: reserva o espaço "de dois dedos" acima da borda física
+       (gestos/home indicator do iPhone) usando safe-area-inset-bottom.
+       Em navegadores/dispositivos sem notch, env() resolve pra 0px e o
+       padding fica igual ao original. */
+    padding: 20px 20px calc(20px + env(safe-area-inset-bottom, 0px)) 20px;
 }
 
 .input-pill {
@@ -750,7 +757,8 @@ main {
     }
 
     .input-wrap {
-        padding: 14px;
+        /* FIX mobile: mantém a folga extra + safe-area no celular também */
+        padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0px)) 14px;
     }
 
     .modal-camera,
@@ -766,6 +774,7 @@ main {
 
 .config-wrapper {
     height: 100vh;
+    height: 100dvh; /* FIX mobile */
     width: 100%;
     display: flex;
     overflow: hidden;
@@ -1152,7 +1161,7 @@ main {
     bottom: 0;
     left: 260px;
     right: 0;
-    padding: 14px 30px;
+    padding: 14px 30px calc(14px + env(safe-area-inset-bottom, 0px)) 30px;
     background: rgba(5, 6, 10, .92);
     backdrop-filter: blur(10px);
     border-top: 1px solid rgba(255, 255, 255, .08);
@@ -1225,6 +1234,9 @@ main {
     display: flex;
     flex-direction: column;
     height: 100vh;
+    height: 100dvh; /* FIX mobile: barra de endereço não infla mais a altura,
+                       então o .input-wrap não fica mais empurrado pra baixo
+                       da área visível no navegador do celular */
     overflow: hidden;
     min-width: 0;
 }

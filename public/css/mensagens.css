@@ -1,19 +1,4 @@
-/* ================================================================
-   IANA — mensagens.css
-   Estilo completo das mensagens do chat: bolhas do usuário e da Iana,
-   avatar, bolha de "pensando", ícones de ação (editar/copiar) e
-   sistema de "Expandir/Recolher" pra mensagens com mais de 3 linhas.
 
-   FIX: o styles.css atual nunca teve essas classes — por isso as
-   mensagens apareciam sem nenhum estilo (sem balão, sem avatar
-   estilizado, sem ícones). Este arquivo cobre a parte que faltava.
-
-   Linke isso no <head> do index.html, depois do styles.css e do
-   animations.css:
-   <link rel="stylesheet" href="/css/styles.css">
-   <link rel="stylesheet" href="/css/animations.css">
-   <link rel="stylesheet" href="/css/mensagens.css">
-   ================================================================ */
 
 /* ── LINHA DE MENSAGEM DA IANA (avatar + bolha) ───────────────── */
 .iana-response-container {
@@ -389,5 +374,31 @@
         padding: 12px 14px;
 
         font-size: .95rem;
+    }
+}
+
+/* ── ANIMAÇÃO DE ENTRADA DAS MENSAGENS ────────────────────────── */
+/* Cada mensagem nova "sobe" ao aparecer, empurrando visualmente as
+   anteriores pra fora da área visível conforme o scroll acompanha. */
+@keyframes mensagem-subir {
+    from {
+        opacity: 0;
+        transform: translateY(24px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.user-msg-wrap.nova-mensagem,
+.iana-response-container.nova-mensagem {
+    animation: mensagem-subir .45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .user-msg-wrap.nova-mensagem,
+    .iana-response-container.nova-mensagem {
+        animation: none;
     }
 }

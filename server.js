@@ -120,35 +120,104 @@ io.use((socket, next) => {
     });
 });
 
+/* ── ELEVENLABS (voz exclusiva da Iana) ──────────────────────────
+   Substitui as vozes prontas do Gemini Live (Aoede/Puck/Charon/...)
+   por uma voz modelada especificamente pra Iana (ver
+   desenhar-voz-iana.js / salvar-voz-iana.js). O Gemini Live continua
+   fazendo o entendimento em tempo real (STT + geração da resposta),
+   só que agora devolve TEXTO em vez de ÁUDIO — e esse texto é
+   sintetizado aqui na voz da Iana, streamado de volta pro cliente
+   nos mesmos eventos de sempre (voz:audio-resposta), então o
+   front-end não precisa mudar nada. */
+const ELEVEN_API_KEY  = process.env.ELEVENLABS_API_KEY;
+const ELEVEN_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
+const elevenlabsPronto = !!(ELEVEN_API_KEY && ELEVEN_VOICE_ID);
+
+if (elevenlabsPronto) {
+    console.log('✅ ElevenLabs (voz da Iana) inicializado');
+} else {
+    console.warn('⚠️ ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID ausentes — chamada de voz sem áudio de saída');
+}
+
+/* Sintetiza um texto na voz da Iana e transmite os pedaços de áudio
+   (PCM 16-bit, 24kHz, mesmo formato que o Gemini Live usava antes —
+   assim o player de áudio do front continua funcionando sem alteração)
+   via callback onChunk, à medida que vão chegando da ElevenLabs.
+   Retorna um AbortController pra permitir cancelar no meio (barge-in). */
+function sintetizarVozIana(texto, onChunk, onDone, onError) {
+    const controller = new AbortController();
+
+    (async () => {
+        try {
+            const res = await fetch(
+                `https://api.elevenlabs.io/v1/text-to-speech/${ELEVEN_VOICE_ID}/stream?output_format=pcm_24000`,
+                {
+                    method: 'POST',
+                    signal: controller.signal,
+                    headers: {
+                        'xi-api-key': ELEVEN_API_KEY,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        text: texto,
+                        model_id: 'eleven_flash_v2_5', // baixa latência (~75ms), bom pra chamada ao vivo
+                        voice_settings: { stability: 0.5, similarity_boost: 0.8 }
+                    })
+                }
+            );
+
+            if (!res.ok || !res.body) {
+                throw new Error(`ElevenLabs respondeu ${res.status}: ${await res.text().catch(() => '')}`);
+            }
+
+            const reader = res.body.getReader();
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                onChunk(Buffer.from(value).toString('base64'));
+            }
+            onDone();
+        } catch (e) {
+            if (e.name !== 'AbortError') onError(e);
+        }
+    })();
+
+    return controller;
+}
+
 io.on('connection', (socket) => {
     const idUser = socket.request.user?.id;
     if (idUser) socket.join(`user_${idUser}`);
 
-    /* ── CHAMADA DE VOZ EM TEMPO REAL (Gemini Live) ──────────────
-       Streaming bidirecional de verdade: o áudio do microfone vai
-       sendo mandado em pedacinhos enquanto o usuário ainda está
-       falando, e a Iana já começa a responder em áudio antes da
-       "frase" acabar de ser processada — igual Gemini Live/voice
-       mode do ChatGPT. Nada disso passa pelo /chat/stream (que é
-       turno-a-turno); é uma sessão à parte, só pra essa chamada. */
+    // Buffer de texto acumulado da resposta atual (Gemini manda em
+    // pedacinhos incrementais) + controller da síntese em andamento,
+    // pra poder abortar se o usuário interromper (barge-in).
+    let textoAcumulado = '';
+    let sinteseEmAndamento = null;
+
+    /* ── CHAMADA DE VOZ EM TEMPO REAL (Gemini Live p/ entendimento
+       + ElevenLabs p/ voz própria da Iana) ──────────────────────── */
     socket.on('voz:iniciar', async () => {
         if (!liveAI) {
             socket.emit('voz:erro', { mensagem: 'Chamada de voz indisponível: GEMINI_API_KEY não configurada.' });
             return;
         }
-        if (sessoesVoz.has(socket.id)) return; // já tem sessão ativa pra esse socket
+        if (!elevenlabsPronto) {
+            socket.emit('voz:erro', { mensagem: 'Voz da Iana não configurada (ELEVENLABS_API_KEY/ELEVENLABS_VOICE_ID ausentes).' });
+            return;
+        }
+        if (sessoesVoz.has(socket.id)) return;
 
         try {
             const session = await liveAI.live.connect({
                 model: LIVE_MODEL,
                 config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: {
-                        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Aoede' } } // voz feminina
-                    },
+                    // TEXT em vez de AUDIO: o Gemini só entende e gera o
+                    // texto da resposta — quem vira isso em som é a
+                    // ElevenLabs, com a voz modelada da Iana.
+                    responseModalities: [Modality.TEXT],
                     systemInstruction: { parts: [{ text: SYSTEM_PROMPT_VOZ }] },
-                    inputAudioTranscription: {},   // transcrição do que o usuário fala
-                    outputAudioTranscription: {}   // transcrição do que a Iana fala
+                    inputAudioTranscription: {} // transcrição do que o usuário fala
                 },
                 callbacks: {
                     onopen: () => socket.emit('voz:pronto'),
@@ -159,23 +228,42 @@ io.on('connection', (socket) => {
                         if (sc.inputTranscription?.text) {
                             socket.emit('voz:transcricao-usuario', { texto: sc.inputTranscription.text, final: false });
                         }
-                        if (sc.outputTranscription?.text) {
-                            socket.emit('voz:transcricao-iana', { texto: sc.outputTranscription.text, final: false });
-                        }
 
                         const parts = sc.modelTurn?.parts || [];
                         for (const part of parts) {
-                            if (part.inlineData?.data) {
-                                socket.emit('voz:audio-resposta', { audio: part.inlineData.data });
+                            if (part.text) {
+                                textoAcumulado += part.text;
+                                socket.emit('voz:transcricao-iana', { texto: textoAcumulado, final: false });
                             }
                         }
 
                         // Barge-in: usuário interrompeu a Iana no meio da fala.
-                        if (sc.interrupted) socket.emit('voz:interrompido');
+                        // Cancela qualquer síntese de voz em andamento também.
+                        if (sc.interrupted) {
+                            sinteseEmAndamento?.abort();
+                            textoAcumulado = '';
+                            socket.emit('voz:interrompido');
+                        }
 
                         if (sc.turnComplete) {
                             socket.emit('voz:transcricao-usuario', { texto: '', final: true });
-                            socket.emit('voz:transcricao-iana', { texto: '', final: true });
+                            socket.emit('voz:transcricao-iana', { texto: textoAcumulado, final: true });
+
+                            const textoParaFalar = textoAcumulado.trim();
+                            textoAcumulado = '';
+
+                            if (textoParaFalar) {
+                                sinteseEmAndamento = sintetizarVozIana(
+                                    textoParaFalar,
+                                    (chunkBase64) => socket.emit('voz:audio-resposta', { audio: chunkBase64 }),
+                                    () => { sinteseEmAndamento = null; },
+                                    (e) => {
+                                        console.error('[VOZ] ElevenLabs falhou:', e.message);
+                                        sinteseEmAndamento = null;
+                                        socket.emit('voz:erro', { mensagem: 'Falha ao gerar a voz da resposta.' });
+                                    }
+                                );
+                            }
                         }
                     },
                     onerror: (e) => {
@@ -204,17 +292,19 @@ io.on('connection', (socket) => {
     });
 
     socket.on('voz:encerrar', () => {
+        sinteseEmAndamento?.abort();
         const session = sessoesVoz.get(socket.id);
         if (session) { try { session.close(); } catch (e) { } sessoesVoz.delete(socket.id); }
     });
 
     socket.on('disconnect', () => {
+        sinteseEmAndamento?.abort();
         const session = sessoesVoz.get(socket.id);
         if (session) { try { session.close(); } catch (e) { } sessoesVoz.delete(socket.id); }
     });
 });
 
-/* ── GEMINI LIVE (sessão da chamada de voz) ──────────────────────
+/* ── GEMINI LIVE (entendimento em tempo real da chamada de voz) ──
    Client separado do genAI de texto (SDK diferente: @google/genai,
    não o @google/generative-ai usado no /chat/stream). Mesma
    GEMINI_API_KEY, mas a Live API pode ter cota/disponibilidade
@@ -371,8 +461,6 @@ async function askPython(nome, conversa, mensagem, historico = []) {
     });
 }
 
-/* Gera a resposta da IA reaproveitando a cadeia Python → Gemini → fixo.
-   Usado tanto pelo /chat/stream quanto pelo /chat/visao. */
 async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config }) {
     let resposta = null, origem = null;
 
@@ -515,8 +603,6 @@ passport.deserializeUser(async (id, done) => {
 
 const auth = (req, res, next) => req.isAuthenticated() ? next() : res.status(401).json({ erro: 'Login necessário.' });
 
-/* Autenticação por token — usada pelo app local de visão (iana_visao.py),
-   que não tem cookie de navegador. */
 function gerarToken() { return crypto.randomBytes(32).toString('hex'); }
 function hashToken(token) { return crypto.createHash('sha256').update(token).digest('hex'); }
 
@@ -623,8 +709,6 @@ app.get('/auth/me', (req, res) => {
     res.json({ logado: true, usuario: { id: req.user.id, nome: req.user.nome, email: req.user.email } });
 });
 
-// Gera (ou renova) o token pro app local de visão. Chamar autenticado
-// no navegador; o token só é mostrado nessa resposta.
 app.post('/auth/gerar-token', auth, async (req, res) => {
     const token = gerarToken();
     try {
@@ -732,12 +816,6 @@ async function garantirConversa(idUsuario, idConversa, mensagem) {
     const id = idConversa || `conv_${idUsuario}_${Date.now()}`;
     const titulo = mensagem.replace(/\[.*?\]/g,'').trim().slice(0,40) || 'Nova Conversa';
     try {
-        // FIX (ordenação da sidebar): antes o ON DUPLICATE KEY UPDATE não
-        // tocava em nada (titulo=titulo), então uma conversa já existente
-        // nunca "subia" na lista ao receber mensagem nova — ficava presa
-        // na posição de quando foi criada. Agora toda vez que essa função
-        // roda (ou seja, toda vez que o usuário manda mensagem numa
-        // conversa, nova ou existente), atualizado_em é setado pra agora.
         await pool.query(
             'INSERT INTO conversas (id,usuario_id,titulo,atualizado_em) VALUES (?,?,?,NOW()) ON DUPLICATE KEY UPDATE atualizado_em=NOW()',
             [id, idUsuario, titulo + (titulo.length >= 40 ? '...' : '')]

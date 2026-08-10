@@ -59,10 +59,30 @@
 
     </aside>
 
+    <!-- FIX: elemento não existia no HTML, embora ".sidebar-overlay" já
+         estivesse totalmente estilizado em styles.css. É o fundo escuro
+         atrás da sidebar aberta no mobile — clicar nele fecha o menu. -->
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
     <!-- MAIN -->
     <main class="main" id="main">
 
         <header class="topbar">
+            <!-- FIX: ".topbar-left" (com o botão hambúrguer mobile e a marca)
+                 já existia inteiramente estilizado em styles.css, mas nunca
+                 tinha markup correspondente aqui — resultado: no mobile não
+                 havia NENHUM jeito de reabrir a sidebar depois de fechada
+                 (o próprio botão de toggle mora dentro da sidebar, que fica
+                 fora da tela). Adicionado abaixo e ligado no chat.js. -->
+            <div class="topbar-left">
+                <button class="btn-menu-mobile" id="btn-menu-mobile" title="Abrir menu" aria-label="Abrir menu">
+                    <img src="/img/menu.png" style="width:22px;filter:invert(1);">
+                </button>
+                <div class="topbar-brand">
+                    <img src="/img/iana-avatar.png" alt="Iana">
+                    <span>Iana</span>
+                </div>
+            </div>
             <div class="topbar-right" id="auth-buttons">
                 <button class="btn-entrar" id="btn-entrar">Entrar</button>
                 <button class="btn-registrar" id="btn-registrar">Registrar</button>
@@ -85,6 +105,12 @@
                     <button class="sugestao-chip" onclick="usarSugestao('Como evoluir rápido no GTA RP?')">🚗 GTA RP Dicas</button>
                 </div>
             </div>
+
+            <div class="thinking-view" id="thinking-view">
+                <span class="thinking-icon"></span>
+                <p id="thinking-view-texto">Iana está pensando...</p>
+            </div>
+
             <div class="msgs" id="msgs"></div>
         </div>
 
@@ -142,7 +168,15 @@
 
         <!-- Orbe grande, centralizado no meio da tela -->
         <div class="jarvis-call-centro">
-            <div class="jarvis-hud jarvis-hud--lg" id="voz-hud-grande"></div>
+            <div class="jarvis-hud jarvis-hud--lg" id="voz-hud-grande" data-estado="ocioso">
+                <div class="jarvis-ring jarvis-ring-outer"></div>
+                <div class="jarvis-ring jarvis-ring-mid"></div>
+                <div class="jarvis-ring jarvis-ring-inner"></div>
+                <div class="jarvis-core"></div>
+                <div class="jarvis-bars">
+                    <span></span><span></span><span></span><span></span><span></span>
+                </div>
+            </div>
             <p class="voz-status" id="voz-status">Fale com a Iana</p>
         </div>
 

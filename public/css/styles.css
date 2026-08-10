@@ -99,6 +99,21 @@ main {
     -webkit-text-fill-color: transparent;
 }
 
+/* FIX: .topbar usa "justify-content: space-between", o que só funciona
+   como esperado (brand à esquerda, ações à direita) se houver DOIS
+   filhos flex dentro de .topbar. No HTML atual só existe
+   ".topbar-right" (o .topbar-left/.topbar-brand não está no markup),
+   então com um único item "space-between" o alinha no INÍCIO do
+   container — ou seja, os botões Entrar/Registrar apareceriam à
+   ESQUERDA, não à direita. "margin-left: auto" resolve isso sozinho,
+   funcionando tanto se .topbar-left existir quanto se não existir. */
+.topbar-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
 .sidebar-overlay {
     position: fixed;
     inset: 0;
@@ -130,6 +145,10 @@ main {
     transition: width .3s ease, min-width .3s ease, padding .3s ease;
 }
 
+/* Única definição de largura do sidebar colapsado. A duplicata que
+   existia em animations.css (width:72px, sem min-width) foi removida
+   de lá — ver comentário nesse arquivo. Esta aqui é a fonte única
+   da verdade. */
 .sidebar.collapsed {
     width: 68px;
     min-width: 68px;
@@ -527,7 +546,6 @@ main {
 }
 
 .modal-camera,
-.modal-voz,
 .modal-auth {
     position: relative;
     width: 100%;
@@ -544,12 +562,6 @@ main {
 
 .modal-camera h3 {
     font-size: 1.2rem;
-}
-
-.modal-voz {
-    max-width: 380px;
-    align-items: center;
-    text-align: center;
 }
 
 @keyframes fadeModal {
@@ -676,152 +688,11 @@ main {
     color: #fff;
 }
 
-/* ── Chamada de voz ─────────────────────────────────────────── */
-.voz-avatar-wrap {
-    position: relative;
-    width: 110px;
-    height: 110px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.voz-avatar {
-    width: 90px;
-    height: 90px;
-    border-radius: 50%;
-    object-fit: cover;
-    border: 2px solid #22d3ee;
-    box-shadow: 0 0 20px rgba(34, 211, 238, .5);
-    z-index: 2;
-}
-
-.voz-ondas {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    z-index: 1;
-}
-
-.voz-ondas span {
-    width: 4px;
-    height: 16px;
-    background: rgba(168, 85, 247, .6);
-    border-radius: 4px;
-    animation: vozOnda 1s ease-in-out infinite;
-}
-
-.voz-ondas span:nth-child(2) { animation-delay: .1s; }
-.voz-ondas span:nth-child(3) { animation-delay: .2s; }
-.voz-ondas span:nth-child(4) { animation-delay: .3s; }
-.voz-ondas span:nth-child(5) { animation-delay: .4s; }
-
-@keyframes vozOnda {
-    0%, 100% { transform: scaleY(.4); }
-    50% { transform: scaleY(1.4); }
-}
-
-.voz-titulo {
-    font-size: 1.3rem;
-    font-weight: 700;
-}
-
-.voz-status {
-    color: #a1a1aa;
-    font-size: .9rem;
-}
-
-.voz-feed {
-    width: 100%;
-    max-height: 230px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 4px 2px;
-    text-align: left;
-    scrollbar-width: thin;
-}
-
-.voz-feed-msg {
-    width: fit-content;
-    max-width: 88%;
-    padding: 9px 12px;
-    border-radius: 14px;
-    font-size: .9rem;
-    line-height: 1.35;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-.voz-feed-user {
-    align-self: flex-end;
-    background: rgba(168, 85, 247, .18);
-    border: 1px solid rgba(168, 85, 247, .28);
-    color: #f1e7ff;
-}
-
-.voz-feed-iana {
-    align-self: flex-start;
-    background: rgba(255, 255, 255, .06);
-    border: 1px solid rgba(255, 255, 255, .09);
-    color: #e8e8e8;
-}
-
-.voz-interim {
-    width: 100%;
-    min-height: 20px;
-    margin: 0;
-    color: #a855f7;
-    font-size: .9rem;
-    text-align: center;
-    font-style: italic;
-}
-
-.voz-transcript {
-    display: none;
-}
-
-.voz-acoes {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    margin-top: 8px;
-}
-
-.btn-voz-mute {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    border: none;
-    background: rgba(255, 255, 255, .08);
-    color: #fff;
-    font-size: 1.1rem;
-    cursor: pointer;
-    transition: .2s;
-}
-
-.btn-voz-mute:hover {
-    background: rgba(255, 255, 255, .15);
-}
-
-.btn-voz-encerrar {
-    padding: 12px 22px;
-    border: none;
-    border-radius: 30px;
-    background: #ef4444;
-    color: #fff;
-    font-weight: 600;
-    cursor: pointer;
-    transition: .2s;
-}
-
-.btn-voz-encerrar:hover {
-    filter: brightness(1.1);
-}
+/* Bloco antigo "Chamada de voz" (.voz-avatar-wrap, .voz-avatar, .voz-ondas,
+   .modal-voz, .voz-titulo, .voz-transcript, e as versões duplicadas de
+   .voz-status/.voz-feed/.voz-feed-msg/.voz-interim/.btn-voz-mute/
+   .btn-voz-encerrar) foi removido daqui — confirmado: não há resíduos.
+   Toda a UI de chamada de voz agora mora só em jarvis.css. */
 
 /* ==========================================================================
    7. PÁGINA DE CONFIGURAÇÕES
@@ -1269,7 +1140,6 @@ main {
 
     /* ── Modais ── */
     .modal-camera,
-    .modal-voz,
     .modal-auth {
         max-width: 100%;
     }

@@ -24,22 +24,6 @@ let gravandoAudio = false;
 let streamCamera = null;
 let streamVoz = null;
 
-// Chamada de voz em tempo real (Gemini Live via socket.io — ver
-// abrirVoz/fecharVoz). Nada de SpeechRecognition nem TTS do navegador
-// aqui: o áudio do microfone é streamado cru pro servidor, e o áudio
-// de resposta chega já pronto e é tocado direto.
-let emChamadaVoz = false;
-let socketVoz = null;
-let mutadoVoz = false;
-let micStreamVoz = null;
-let audioCtxCapturaVoz = null;
-let processorVozCaptura = null;
-let audioCtxReproducaoVoz = null;
-let proximoInicioReproducao = 0;
-let fontesAgendadasVoz = [];
-let bufferTranscricaoUsuario = '';
-let bufferTranscricaoIana = '';
-
 const TELAS = [
     'tela-login', 'tela-cadastro', 'tela-esqueci', 'tela-codigo',
     'tela-pesquisa', 'tela-feedback', 'tela-renomear', 'tela-confirmar'
@@ -102,9 +86,7 @@ function montarConfigPrompt() {
     return linhas.join('\n');
 }
 
-/* ── TTS (TEXT-TO-SPEECH) — só usado no CHAT DE TEXTO. Na chamada de
-   voz (Gemini Live) o áudio já vem pronto do servidor, não passa por
-   aqui. ────────────────────────────────────────────────────────── */
+/* ── TTS (TEXT-TO-SPEECH) ─────────────────────────────────────── */
 function getVoicesTTS() {
     return typeof speechSynthesis !== 'undefined' ? speechSynthesis.getVoices() : [];
 }
@@ -118,6 +100,12 @@ function escolherVozTTS() {
     return ttsVoice;
 }
 
+// INTEGRAÇÃO HUD: dispara 'falando' quando o áudio realmente começa e
+// volta pro estado certo (ouvindo, se estiver em chamada de voz; ocioso,
+// caso contrário) quando o áudio termina. Usar os eventos onstart/onend
+// da utterance é mais preciso que setar o estado na hora de chamar
+// falar(), porque sincroniza com o áudio de verdade, não com o texto
+// chegando.
 function falar(texto) {
     try {
         if (!ttsEnabled || typeof speechSynthesis === 'undefined' || !texto) return;
@@ -127,8 +115,15 @@ function falar(texto) {
         if (voz) ut.voice = voz;
         ut.rate = 1;
         ut.pitch = 1.05;
-        ut.onstart = () => { window.IanaHUD?.setEstado('falando'); };
-        ut.onend = () => { window.IanaHUD?.setEstado('ocioso'); };
+
+        ut.onstart = () => {
+            setEstadoVoz('falando');
+        };
+        ut.onend = () => {
+            const emChamada = document.getElementById('overlay-voz')?.style.display === 'flex';
+            setEstadoVoz(emChamada ? 'ouvindo' : 'ocioso');
+        };
+
         speechSynthesis.cancel();
         speechSynthesis.speak(ut);
     } catch (e) {
@@ -189,280 +184,160 @@ async function capturarFoto() {
     await processarEnvioIA('[Usuário enviou uma foto capturada pela câmera.]');
 }
 
-/* ── CHAMADA DE VOZ EM TEMPO REAL (Gemini Live) ──────────────────
-   Fluxo: microfone -> PCM 16kHz -> socket.io -> servidor (sessão Live)
-   -> Gemini já responde em áudio conforme processa, sem esperar você
-   terminar de falar pra só então "processar tudo". O áudio de volta
-   (PCM 24kHz) chega em pedaços e é tocado assim que chega. ────────── */
+/* ── HUD / ORBE JARVIS (chamada de voz) ───────────────────────── */
+// FIX: jarvis.css estiliza tudo via atributo [data-estado] no elemento
+// #voz-hud-grande, e reage a --nivel (volume do mic) nas .jarvis-bars —
+// mas nada no projeto define window.IanaHUD, e o próprio #voz-hud-grande
+// era um <div> vazio no HTML (sem os anéis/núcleo/barras que o CSS
+// estiliza). Sem isso, o orbe nunca aparece nem reage a nada. Esta
+// função substitui as chamadas antigas a window.IanaHUD?.setEstado(...)
+// (que sempre foram no-op, já que esse módulo nunca existiu em lugar
+// nenhum) por uma manipulação direta e simples do atributo no elemento
+// real. Mantém a chamada a window.IanaHUD também, só por segurança/
+// compatibilidade, caso um módulo desses seja adicionado no futuro.
+function setEstadoVoz(estado) {
+    document.getElementById('voz-hud-grande')?.setAttribute('data-estado', estado);
+    window.IanaHUD?.setEstado?.(estado);
+}
 
+let _audioCtxVoz = null;
+let _analyserVoz = null;
+let _rafVoz = null;
+
+// FIX: streamVoz era declarada e "limpa" em fecharVoz(), mas nunca
+// preenchida em lugar nenhum — ou seja, esse código de limpeza nunca
+// rodava de verdade. Aqui a stream é criada de verdade, só pra
+// alimentar a visualização de volume das .jarvis-bars (via Web Audio
+// API), sem depender de nenhum backend/streaming em tempo real.
+async function iniciarVisualizacaoVolume() {
+    try {
+        streamVoz = await navigator.mediaDevices.getUserMedia({ audio: true });
+        _audioCtxVoz = new (window.AudioContext || window.webkitAudioContext)();
+        const source = _audioCtxVoz.createMediaStreamSource(streamVoz);
+        _analyserVoz = _audioCtxVoz.createAnalyser();
+        _analyserVoz.fftSize = 256;
+        source.connect(_analyserVoz);
+
+        const dados = new Uint8Array(_analyserVoz.frequencyBinCount);
+        const hud = document.getElementById('voz-hud-grande');
+
+        const loop = () => {
+            _analyserVoz.getByteFrequencyData(dados);
+            const media = dados.reduce((a, b) => a + b, 0) / dados.length;
+            const nivel = Math.min(1, media / 90); // normaliza pra 0–1
+            if (hud) hud.style.setProperty('--nivel', nivel.toFixed(2));
+            _rafVoz = requestAnimationFrame(loop);
+        };
+        loop();
+    } catch (e) {
+        console.warn('Visualização de volume indisponível:', e.message);
+    }
+}
+
+function pararVisualizacaoVolume() {
+    if (_rafVoz) cancelAnimationFrame(_rafVoz);
+    _rafVoz = null;
+    if (streamVoz) {
+        streamVoz.getTracks().forEach(t => t.stop());
+        streamVoz = null;
+    }
+    if (_audioCtxVoz) {
+        _audioCtxVoz.close().catch(() => {});
+        _audioCtxVoz = null;
+    }
+    _analyserVoz = null;
+    document.getElementById('voz-hud-grande')?.style.setProperty('--nivel', 0);
+}
+
+// FIX: adiciona a bolha no feed visual da chamada (#voz-feed), que
+// substituiu o antigo #voz-transcript estático. Sem isso, nada aparecia
+// mais na tela de chamada além do status.
+function adicionarAoVozFeed(texto, tipo) {
+    const feed = document.getElementById('voz-feed');
+    if (!feed || !texto) return;
+    const bubble = document.createElement('div');
+    bubble.className = `voz-feed-msg voz-feed-${tipo}`; // 'user' ou 'iana'
+    bubble.textContent = texto;
+    feed.appendChild(bubble);
+    feed.scrollTop = feed.scrollHeight;
+}
+
+/* ── MODAL CHAMADA DE VOZ ─────────────────────────────────────── */
 function abrirVoz() {
     const overlay = document.getElementById('overlay-voz');
     if (overlay) overlay.style.display = 'flex';
-
-    emChamadaVoz = true;
-    mutadoVoz = false;
-    bufferTranscricaoUsuario = '';
-    bufferTranscricaoIana = '';
-    window.IanaHUD?.iniciar('voz-hud-grande', 'lg');
-    window.IanaHUD?.setEstado('ouvindo');
-    limparFeedVoz();
-
-    const statusEl = document.getElementById('voz-status');
-    if (statusEl) statusEl.textContent = 'Conectando...';
-
-    iniciarSocketVoz();
+    const feed = document.getElementById('voz-feed');
+    if (feed) feed.innerHTML = '';
+    iniciarReconhecimentoVoz();
+    iniciarVisualizacaoVolume();
 }
 
 function fecharVoz() {
     const overlay = document.getElementById('overlay-voz');
     if (overlay) overlay.style.display = 'none';
-
-    if (socketVoz) {
-        try { socketVoz.emit('voz:encerrar'); } catch (e) { }
-        socketVoz.disconnect();
-        socketVoz = null;
+    if (window._recognitionVoz) {
+        try { window._recognitionVoz.stop(); } catch (e) { }
     }
-
-    pararCapturaMicrofone();
-    pararReproducaoVoz();
-    if (audioCtxReproducaoVoz) {
-        audioCtxReproducaoVoz.close().catch(() => { });
-        audioCtxReproducaoVoz = null;
-    }
-
-    emChamadaVoz = false;
-    mutadoVoz = false;
-    bufferTranscricaoUsuario = '';
-    bufferTranscricaoIana = '';
-
-    const interim = document.getElementById('voz-interim');
-    if (interim) interim.textContent = '';
-
-    const btnMute = document.getElementById('btn-voz-mute');
-    if (btnMute) { btnMute.classList.remove('mutado'); btnMute.textContent = '🎙️'; }
-
-    // INTEGRAÇÃO HUD: saiu da chamada, volta ao repouso.
-    window.IanaHUD?.setEstado('ocioso');
+    pararVisualizacaoVolume();
+    setEstadoVoz('ocioso');
 }
 
-/* Conecta o socket.io (exige login — mesma auth do resto do app) e
-   registra os eventos da sessão de voz. */
-function iniciarSocketVoz() {
+function iniciarReconhecimentoVoz() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const statusEl = document.getElementById('voz-status');
+    // FIX: #voz-transcript não existe mais no HTML (a tela de chamada foi
+    // redesenhada pro estilo Jarvis). O elemento que mostra a legenda ao
+    // vivo agora é #voz-interim.
+    const interimEl = document.getElementById('voz-interim');
 
-    if (typeof io === 'undefined') {
-        if (statusEl) statusEl.textContent = 'Chamada de voz indisponível (socket.io não carregado).';
+    if (!SpeechRecognition) {
+        if (statusEl) statusEl.textContent = 'Reconhecimento de voz não suportado neste navegador.';
         return;
     }
 
-    socketVoz = io({ withCredentials: true });
+    const rec = new SpeechRecognition();
+    rec.lang = 'pt-BR';
+    rec.continuous = true;
+    rec.interimResults = true;
+    window._recognitionVoz = rec;
 
-    socketVoz.on('connect', () => socketVoz.emit('voz:iniciar'));
-
-    socketVoz.on('connect_error', () => {
-        if (statusEl) statusEl.textContent = 'Faça login pra usar a chamada de voz.';
-    });
-
-    socketVoz.on('voz:pronto', async () => {
-        if (statusEl) statusEl.textContent = 'Fale com a Iana';
-        try {
-            iniciarReproducaoVoz();
-            await iniciarCapturaMicrofone();
-        } catch (e) {
-            if (statusEl) statusEl.textContent = 'Não consegui acessar o microfone: ' + e.message;
+    rec.onresult = (e) => {
+        let texto = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+            texto += e.results[i][0].transcript;
         }
-    });
+        if (interimEl) interimEl.textContent = texto;
 
-    socketVoz.on('voz:transcricao-usuario', ({ texto, final }) => {
-        const interim = document.getElementById('voz-interim');
-        if (final) {
-            if (bufferTranscricaoUsuario.trim()) adicionarNaFeedVoz('user', bufferTranscricaoUsuario.trim());
-            bufferTranscricaoUsuario = '';
-            if (interim) interim.textContent = '';
-        } else {
-            bufferTranscricaoUsuario += texto;
-            if (interim) interim.textContent = bufferTranscricaoUsuario;
+        if (e.results[e.results.length - 1].isFinal && texto.trim()) {
+            if (statusEl) statusEl.textContent = 'Processando...';
+            if (interimEl) interimEl.textContent = '';
+            adicionarAoVozFeed(texto.trim(), 'user');
+            setEstadoVoz('pensando');
+            ttsNextResponse = true;
+            processarEnvioIA(texto.trim(), { origemVoz: true }).then(() => {
+                if (statusEl) statusEl.textContent = 'Fale com a Iana';
+            });
         }
-    });
-
-    socketVoz.on('voz:transcricao-iana', ({ texto, final }) => {
-        if (final) {
-            if (bufferTranscricaoIana.trim()) adicionarNaFeedVoz('iana', bufferTranscricaoIana.trim());
-            bufferTranscricaoIana = '';
-        } else {
-            bufferTranscricaoIana += texto;
-        }
-    });
-
-    // Áudio de resposta chegando em tempo real — toca assim que chega,
-    // sem esperar a frase inteira (é isso que dá a sensação "ao vivo").
-    socketVoz.on('voz:audio-resposta', ({ audio }) => tocarChunkAudio(audio));
-
-    // Barge-in: você começou a falar por cima dela — para o que estava tocando.
-    socketVoz.on('voz:interrompido', () => pararReproducaoVoz());
-
-    socketVoz.on('voz:erro', ({ mensagem }) => {
-        if (statusEl) statusEl.textContent = mensagem || 'Erro na chamada.';
-    });
-
-    socketVoz.on('disconnect', () => {
-        window.IanaHUD?.setEstado('ocioso');
-    });
-}
-
-/* ── CAPTURA DO MICROFONE (mic -> PCM 16kHz -> base64 -> socket) ── */
-async function iniciarCapturaMicrofone() {
-    micStreamVoz = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-    });
-    audioCtxCapturaVoz = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioCtxCapturaVoz.createMediaStreamSource(micStreamVoz);
-
-    // ScriptProcessorNode é o jeito mais simples e compatível de pegar
-    // os samples crus sem precisar carregar um AudioWorklet à parte;
-    // é deprecated mas ainda funciona em todo navegador relevante.
-    processorVozCaptura = audioCtxCapturaVoz.createScriptProcessor(4096, 1, 1);
-
-    // Precisa estar conectado até .destination pra o onaudioprocess
-    // disparar de forma confiável — mas com gain 0 pra não tocar o
-    // seu próprio microfone de volta (eco).
-    const silencioso = audioCtxCapturaVoz.createGain();
-    silencioso.gain.value = 0;
-
-    processorVozCaptura.onaudioprocess = (e) => {
-        if (mutadoVoz || !socketVoz?.connected) return;
-        const entrada = e.inputBuffer.getChannelData(0);
-
-        // Nível real pro visualizador do orbe (mesma captura — sem 2º
-        // getUserMedia separado só pra isso, como era antes).
-        let soma = 0;
-        for (let i = 0; i < entrada.length; i++) soma += entrada[i] * entrada[i];
-        const nivel = Math.min(1, Math.sqrt(soma / entrada.length) * 6);
-        document.querySelectorAll('.jarvis-bars').forEach(b => b.style.setProperty('--nivel', nivel.toFixed(2)));
-
-        const reamostrado = reamostrarPara16kHz(entrada, audioCtxCapturaVoz.sampleRate);
-        const pcm16 = float32ParaPCM16(reamostrado);
-        socketVoz.emit('voz:audio', arrayBufferParaBase64(pcm16.buffer));
     };
 
-    source.connect(processorVozCaptura);
-    processorVozCaptura.connect(silencioso);
-    silencioso.connect(audioCtxCapturaVoz.destination);
-}
-
-function pararCapturaMicrofone() {
-    if (processorVozCaptura) { processorVozCaptura.disconnect(); processorVozCaptura = null; }
-    if (micStreamVoz) { micStreamVoz.getTracks().forEach(t => t.stop()); micStreamVoz = null; }
-    if (audioCtxCapturaVoz) { audioCtxCapturaVoz.close().catch(() => { }); audioCtxCapturaVoz = null; }
-    document.querySelectorAll('.jarvis-bars').forEach(b => b.style.setProperty('--nivel', 0));
-}
-
-// A Live API espera PCM a 16kHz, mas o microfone roda na taxa nativa
-// do aparelho (normalmente 44.1/48kHz) — reamostragem simples por
-// decimação (suficiente pra voz; não é qualidade de estúdio, mas é
-// leve o bastante pra rodar em tempo real sem travar).
-function reamostrarPara16kHz(float32, taxaOriginal) {
-    if (taxaOriginal === 16000) return float32;
-    const razao = taxaOriginal / 16000;
-    const novoTamanho = Math.floor(float32.length / razao);
-    const resultado = new Float32Array(novoTamanho);
-    for (let i = 0; i < novoTamanho; i++) resultado[i] = float32[Math.floor(i * razao)];
-    return resultado;
-}
-
-function float32ParaPCM16(float32Array) {
-    const pcm16 = new Int16Array(float32Array.length);
-    for (let i = 0; i < float32Array.length; i++) {
-        const s = Math.max(-1, Math.min(1, float32Array[i]));
-        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-    }
-    return pcm16;
-}
-
-function arrayBufferParaBase64(buffer) {
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-    return btoa(binary);
-}
-
-function base64ParaArrayBuffer(base64) {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return bytes.buffer;
-}
-
-/* ── REPRODUÇÃO DO ÁUDIO DE RESPOSTA (PCM 24kHz, chega em pedaços) ──
-   Agenda cada pedaço pra tocar logo depois do anterior (fila por
-   currentTime), então mesmo chegando em chunks separados soa como
-   uma fala contínua, sem cortes nem sobreposição. */
-function iniciarReproducaoVoz() {
-    audioCtxReproducaoVoz = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
-    proximoInicioReproducao = 0;
-}
-
-function tocarChunkAudio(base64PCM) {
-    if (!audioCtxReproducaoVoz) return;
-
-    const pcm16 = new Int16Array(base64ParaArrayBuffer(base64PCM));
-    const float32 = new Float32Array(pcm16.length);
-    for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768;
-
-    const audioBuffer = audioCtxReproducaoVoz.createBuffer(1, float32.length, 24000);
-    audioBuffer.copyToChannel(float32, 0);
-
-    const source = audioCtxReproducaoVoz.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioCtxReproducaoVoz.destination);
-
-    const agora = audioCtxReproducaoVoz.currentTime;
-    const inicio = Math.max(agora, proximoInicioReproducao);
-    source.start(inicio);
-    proximoInicioReproducao = inicio + audioBuffer.duration;
-    fontesAgendadasVoz.push(source);
-
-    // INTEGRAÇÃO HUD: enquanto tem áudio agendado tocando, orbe "fala".
-    window.IanaHUD?.setEstado('falando');
-    source.onended = () => {
-        fontesAgendadasVoz = fontesAgendadasVoz.filter(s => s !== source);
-        if (!fontesAgendadasVoz.length) window.IanaHUD?.setEstado('ouvindo');
+    rec.onerror = () => {
+        if (statusEl) statusEl.textContent = 'Erro ao ouvir. Tente novamente.';
     };
-}
 
-function pararReproducaoVoz() {
-    fontesAgendadasVoz.forEach(s => { try { s.stop(); } catch (e) { } });
-    fontesAgendadasVoz = [];
-    proximoInicioReproducao = 0;
-}
-
-/* ── FEED AO VIVO DA CHAMADA ──────────────────────────────────── */
-function limparFeedVoz() {
-    const feed = document.getElementById('voz-feed');
-    if (feed) feed.innerHTML = '';
-    const interim = document.getElementById('voz-interim');
-    if (interim) interim.textContent = '';
-}
-
-function adicionarNaFeedVoz(tipo, texto) {
-    const feed = document.getElementById('voz-feed');
-    if (!feed || !texto?.trim()) return;
-    const bolha = document.createElement('div');
-    bolha.className = `voz-feed-msg ${tipo === 'user' ? 'voz-feed-user' : 'voz-feed-iana'}`;
-    bolha.textContent = texto;
-    feed.appendChild(bolha);
-    feed.scrollTop = feed.scrollHeight;
+    rec.start();
+    setEstadoVoz('ouvindo');
 }
 
 function toggleMuteVoz() {
-    mutadoVoz = !mutadoVoz;
     const btn = document.getElementById('btn-voz-mute');
-    if (btn) {
-        btn.textContent = mutadoVoz ? '🔇' : '🎙️';
-        btn.classList.toggle('mutado', mutadoVoz);
-    }
-    if (mutadoVoz) {
-        document.querySelectorAll('.jarvis-bars').forEach(b => b.style.setProperty('--nivel', 0));
+    if (window._recognitionVoz) {
+        try { window._recognitionVoz.stop(); } catch (e) { }
+        window._recognitionVoz = null;
+        if (btn) { btn.textContent = '🔇'; btn.classList.add('mutado'); }
+        setEstadoVoz('ocioso');
+    } else {
+        iniciarReconhecimentoVoz();
+        if (btn) { btn.textContent = '🎙️'; btn.classList.remove('mutado'); }
     }
 }
 
@@ -826,13 +701,9 @@ async function carregarHistorico() {
                 const menu = item.querySelector('.chat-options-menu');
                 const isOpen = menu.classList.contains('ativo');
 
-                // Fecha todos os outros menus abertos no histórico
                 fecharChatOptionsMenu();
 
                 if (!isOpen) {
-                    // FIX: como o menu agora é position:fixed, a posição
-                    // precisa ser calculada em relação à janela (viewport),
-                    // não mais herdada do CSS relativo ao item.
                     posicionarChatOptionsMenu(btn, menu);
                     menu.classList.add('ativo');
                 }
@@ -845,7 +716,7 @@ async function carregarHistorico() {
 
             item.querySelector('[data-acao="renomear"]').addEventListener('click', (e) => {
                 e.stopPropagation();
-                acaoRenomear(c.id_conversa, tituloOriginal); // Passando a string diretamente sem escapes prejudiciais
+                acaoRenomear(c.id_conversa, tituloOriginal);
             });
 
             item.querySelector('[data-acao="excluir"]').addEventListener('click', (e) => {
@@ -864,9 +735,6 @@ function fecharChatOptionsMenu() {
     document.querySelectorAll('.chat-options-menu').forEach(m => m.classList.remove('ativo'));
 }
 
-// FIX: menu agora é position:fixed (ver styles.css), então precisa da
-// posição calculada em px reais a partir do botão ⋮. Se não couber à
-// direita (sidebar perto da borda da tela), cai pra esquerda do botão.
 function posicionarChatOptionsMenu(btn, menu) {
     const rectBtn = btn.getBoundingClientRect();
     const larguraMenu = menu.offsetWidth || 140;
@@ -884,8 +752,6 @@ function posicionarChatOptionsMenu(btn, menu) {
     menu.style.top = `${top}px`;
 }
 
-// Fecha o menu se a lista rolar ou a janela for redimensionada, pra
-// não deixar um menu "flutuando" desalinhado do botão que o abriu.
 document.getElementById('historico-lista')?.addEventListener('scroll', fecharChatOptionsMenu, { passive: true });
 window.addEventListener('resize', fecharChatOptionsMenu);
 
@@ -988,8 +854,6 @@ function criarBotaoCopiar(getTexto) {
     btn.type = 'button';
     btn.className = 'msg-action-btn';
     btn.title = 'Copiar';
-
-    // Atualizado para o nome exato da imagem: copia.png
     btn.innerHTML = '<img src="/img/copia.png" style="width:16px; filter:invert(.7);" alt="Copiar">';
 
     btn.addEventListener('click', () => {
@@ -1008,8 +872,6 @@ function criarBotaoEditar(texto) {
     btn.type = 'button';
     btn.className = 'msg-action-btn';
     btn.title = 'Editar mensagem';
-
-    // Atualizado para usar lapis.png
     btn.innerHTML = '<img src="/img/lapis.png" style="width:16px; filter:invert(.7);" alt="Editar">';
 
     btn.addEventListener('click', () => {
@@ -1026,7 +888,6 @@ function criarBotaoEditar(texto) {
 function configurarExpandir(bubble, linhaAcoes) {
     bubble.classList.add('msg-clamped');
 
-    // Pequeno timeout para garantir que o DOM processou a altura corretamente
     setTimeout(() => {
         const ultrapassou = bubble.scrollHeight > bubble.clientHeight + 1;
         if (!ultrapassou) {
@@ -1073,8 +934,10 @@ function adicionarBolhaUsuario(texto) {
     configurarExpandir(bubble, acoes);
     scrollParaFim();
 
-    // Em chamada de voz, a mesma fala também aparece no feed ao vivo.
-    if (emChamadaVoz) adicionarNaFeedVoz('user', texto);
+    // Se a chamada de voz estiver aberta, espelha a mensagem no feed dela também
+    if (document.getElementById('overlay-voz')?.style.display === 'flex') {
+        adicionarAoVozFeed(texto, 'user');
+    }
 }
 
 function adicionarImagemUsuario(dataUrl) {
@@ -1120,13 +983,15 @@ function adicionarRespostaIA(texto) {
     configurarExpandir(bubble, acoes);
     scrollParaFim();
 
-    if (ttsNextResponse) {
-        falar(texto); // dispara IanaHUD 'falando' via onstart, ver falar()
-        ttsNextResponse = false;
+    // Espelha no feed da chamada de voz, se estiver aberta
+    if (document.getElementById('overlay-voz')?.style.display === 'flex') {
+        adicionarAoVozFeed(texto, 'iana');
     }
 
-    // Em chamada de voz, a resposta dela também aparece no feed ao vivo.
-    if (emChamadaVoz) adicionarNaFeedVoz('iana', texto);
+    if (ttsNextResponse) {
+        falar(texto);
+        ttsNextResponse = false;
+    }
 }
 
 function scrollParaFim() {
@@ -1175,19 +1040,13 @@ async function processarEnvioIA(conteudo) {
     if (typeof conteudo !== 'string' || !conteudo.trim()) return;
     aguardandoResposta = true;
 
-    // INTEGRAÇÃO HUD: entrando em processamento. Na 1ª mensagem, o
-    // AnimacaoChat.iniciarPensamento() (chamado abaixo) já seta
-    // 'pensando' sozinho — mas setar aqui também não faz mal e cobre
-    // o caso de mensagens seguintes, que não passam por lá.
-    window.IanaHUD?.setEstado('pensando');
+    window.IanaHUD?.setEstado?.('pensando');
 
     // FIX (integração real do animation-controller.js): a transição
-    // "cheia" (welcome sai de cena, status Pensando/Analisando/
-    // Respondendo aparece) só roda na 1ª mensagem da sessão/conversa,
-    // enquanto a tela de welcome ainda está visível. Nas mensagens
-    // seguintes, usamos o indicador de digitação simples de sempre —
-    // repetir a transição cheia a cada mensagem esconderia o histórico
-    // do chat toda vez, o que seria ruim.
+    // "cheia" (welcome sai de cena, thinking-view aparece) só roda na
+    // 1ª mensagem da sessão/conversa, enquanto a tela de welcome ainda
+    // está visível. Nas mensagens seguintes, usamos o indicador de
+    // digitação simples de sempre.
     const welcomeEl = document.getElementById('welcome');
     const primeiraMensagem = typeof animacaoChat !== 'undefined'
         && welcomeEl && welcomeEl.style.display !== 'none'
@@ -1213,9 +1072,6 @@ async function processarEnvioIA(conteudo) {
 
     controller = new AbortController();
 
-    // Esconde o indicador certo (transição cheia OU digitando simples) e,
-    // se foi a 1ª mensagem, só agora insere a bolha do usuário — welcome
-    // já sumiu suavemente pela animação nesse ponto.
     async function esconderIndicador() {
         if (primeiraMensagem) {
             await animacaoChat.finalizarPensamento();
@@ -1248,21 +1104,14 @@ async function processarEnvioIA(conteudo) {
 
         if (data.idConversa && !idConversaAtiva) {
             idConversaAtiva = data.idConversa;
+            if (usuarioAtual) carregarHistorico();
         }
-
-        // Reordena a sidebar: a conversa que acabou de receber mensagem
-        // sobe pro topo (fixadas continuam por cima; as outras descem).
-        if (usuarioAtual) carregarHistorico();
 
         await esconderIndicador();
         adicionarRespostaIA(data.resposta);
 
-        // INTEGRAÇÃO HUD: se não vai tocar TTS (ex: chat de texto puro),
-        // volta pro repouso agora. Se vai tocar TTS, quem assume o
-        // estado 'falando'/'ouvindo' são os eventos onstart/onend dentro
-        // de falar() — não sobrescreve aqui pra não brigar com eles.
         if (!ttsNextResponse) {
-            window.IanaHUD?.setEstado('ocioso');
+            window.IanaHUD?.setEstado?.('ocioso');
         }
 
     } catch (e) {
@@ -1271,7 +1120,7 @@ async function processarEnvioIA(conteudo) {
             adicionarRespostaIA('Desculpe, não consegui processar sua solicitação no momento.');
             console.error('Erro no envio:', e);
         }
-        window.IanaHUD?.setEstado('ocioso');
+        window.IanaHUD?.setEstado?.('ocioso');
     } finally {
         aguardandoResposta = false;
         if (sendBtn) sendBtn.style.display = 'flex';
@@ -1288,7 +1137,7 @@ function pararRespostaIA() {
     try { controller.abort(); } catch (e) { }
     aguardandoResposta = false;
     esconderTypingIndicator();
-    window.IanaHUD?.setEstado('ocioso');
+    window.IanaHUD?.setEstado?.('ocioso');
 
     const sendBtn = document.getElementById('btn-send');
     const stopBtn = document.getElementById('btn-stop');
@@ -1339,10 +1188,8 @@ function resetarChat() {
     const msgs = document.getElementById('msgs');
     if (msgs) msgs.innerHTML = '';
     mostrarWelcome(true);
-    // Novo chat = welcome volta a aparecer; permite a transição
-    // welcome->pensando tocar de novo na próxima mensagem.
     if (typeof animacaoChat !== 'undefined') animacaoChat.primeiraMensagemFeita = false;
-    window.IanaHUD?.setEstado('ocioso');
+    window.IanaHUD?.setEstado?.('ocioso');
     if (usuarioAtual) carregarHistorico();
 }
 
@@ -1362,10 +1209,6 @@ async function enviarFeedback() {
     btn.disabled = true;
 
     try {
-        // FIX: antes ia direto pro formsubmit.co com um e-mail placeholder
-        // nunca preenchido (SEU_EMAIL_AQUI) — nenhum feedback era enviado.
-        // Agora passa pelo backend (/feedback), que usa o SendGrid já
-        // configurado no server.js.
         const res = await fetch('/feedback', {
             method: 'POST',
             credentials: 'include',
@@ -1397,17 +1240,14 @@ document.addEventListener('DOMContentLoaded', () => {
     iniciarUpload();
     iniciarGravacaoAudio();
 
-    // O orbe estilo Jarvis agora só existe na tela de chamada de voz
-    // (ver abrirVoz() em vez daqui) — fica separado do chat de texto.
+    window.IanaHUD?.iniciar?.('iana-hud');
 
-    // Sidebar
     document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
         document.getElementById('sidebar')?.classList.toggle('collapsed');
     });
     document.getElementById('btn-novo-chat')?.addEventListener('click', resetarChat);
     document.getElementById('btn-buscar')?.addEventListener('click', () => mostrarTela('tela-pesquisa'));
 
-    // Menu do usuário (footer da sidebar)
     const btnMenu = document.getElementById('btn-user-menu');
     const dropdown = document.getElementById('user-dropdown');
 
@@ -1425,16 +1265,13 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('dd-feedback')?.addEventListener('click', () => { dropdown?.classList.remove('aberto'); mostrarTela('tela-feedback'); });
     document.getElementById('dd-logout')?.addEventListener('click', realizarLogout);
 
-    // Botões de entrar/registrar (topbar)
     document.getElementById('btn-entrar')?.addEventListener('click', () => mostrarTela('tela-login'));
     document.getElementById('btn-registrar')?.addEventListener('click', () => mostrarTela('tela-cadastro'));
 
-    // Overlay de auth: clicar fora fecha
     document.getElementById('overlay-auth')?.addEventListener('click', (e) => {
         if (e.target.id === 'overlay-auth') fecharAuth();
     });
 
-    // Formulários de auth
     document.getElementById('btn-login')?.addEventListener('click', realizarLogin);
     document.getElementById('btn-cadastrar')?.addEventListener('click', realizarCadastro);
     document.getElementById('btn-enviar-cod')?.addEventListener('click', enviarCodigoRecuperacao);
@@ -1447,13 +1284,11 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('cad-senha')?.addEventListener('keydown', e => { if (e.key === 'Enter') realizarCadastro(); });
     document.getElementById('pesquisa-input')?.addEventListener('input', e => pesquisarConversas(e.target.value));
 
-    // Chamada de voz e câmera
     document.getElementById('btn-voz-call')?.addEventListener('click', abrirVoz);
     document.getElementById('btn-voz-encerrar')?.addEventListener('click', fecharVoz);
     document.getElementById('btn-voz-mute')?.addEventListener('click', toggleMuteVoz);
     document.getElementById('btn-capturar-foto')?.addEventListener('click', capturarFoto);
 
-    // Envio de mensagem
     document.getElementById('btn-send')?.addEventListener('click', enviarMensagem);
     document.getElementById('btn-stop')?.addEventListener('click', pararRespostaIA);
 

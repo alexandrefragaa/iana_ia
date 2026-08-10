@@ -11,8 +11,8 @@ function detectarEstadoEmocional(texto) {
     const caps    = (texto.match(/[A-Z]/g) || []).length;
     const pctCaps = letras > 0 ? (caps / letras) * 100 : 0;
     if (pctCaps > 70 || /\*{4,}/.test(texto)) return 'raiva';
+    if (/[!?][!?]/.test(texto) && !/!{2,}/.test(texto) && !/\?{2,}/.test(texto)) return 'frustrado';
     if (/!{2,}/.test(texto) || /\?{2,}/.test(texto)) return 'estressado';
-    if (/[!?]{2,}/.test(texto)) return 'frustrado';
     return 'normal';
 }
 

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   STYLES — reescrito para bater com as classes do index.html atual
+   1. RESET & ESTILOS GERAIS
    ========================================================================== */
 
 * {
@@ -18,17 +18,17 @@ body {
     background-color: #05060a;
     color: #e3e3e3;
     height: 100vh;
-    height: 100dvh; /* FIX mobile: barra de endereço não infla mais a altura */
+    height: 100dvh;
     overflow: hidden;
 }
 
 /* ==========================================================================
-   APP / LAYOUT GERAL
+   2. APP / LAYOUT PRINCIPAL
    ========================================================================== */
 
 .app {
     height: 100vh;
-    height: 100dvh; /* FIX mobile */
+    height: 100dvh;
     width: 100%;
     display: flex;
     overflow: hidden;
@@ -40,23 +40,86 @@ main {
     display: flex;
     flex-direction: column;
     height: 100vh;
-    height: 100dvh; /* FIX mobile */
+    height: 100dvh;
     overflow: hidden;
     min-width: 0;
 }
 
 /* ==========================================================================
-   SIDEBAR
+   3. TOPBAR (Barra Superior)
+   ========================================================================== */
+
+.topbar {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: rgba(5, 6, 10, 0.8);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(34, 211, 238, 0.1);
+    flex-shrink: 0;
+    z-index: 100;
+}
+
+.topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.btn-menu-mobile {
+    display: none;
+    background: transparent;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    padding: 5px;
+}
+
+.topbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.topbar-brand img {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid rgba(34, 211, 238, 0.5);
+}
+
+.topbar-brand span {
+    font-size: 1.1rem;
+    font-weight: 700;
+    background: linear-gradient(90deg, #22d3ee, #a855f7);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 9998;
+    display: none;
+}
+
+.sidebar-overlay.ativo {
+    display: block;
+}
+
+/* ==========================================================================
+   4. SIDEBAR (Barra Lateral)
    ========================================================================== */
 
 .sidebar {
     width: 260px;
     min-width: 260px;
-    background:
-        linear-gradient(180deg,
-            #160424 0%,
-            #3b0764 50%,
-            #4c1d95 100%);
+    background: linear-gradient(180deg, #160424 0%, #3b0764 50%, #4c1d95 100%);
     border-right: 1px solid rgba(168, 85, 247, .3);
     padding: 15px;
     display: flex;
@@ -132,8 +195,7 @@ main {
     display: none;
 }
 
-/* ── AÇÕES (Novo Chat / Buscar) ────────────────────────────── */
-
+/* ── Ações (Novo Chat / Buscar) ────────────────────────────── */
 .sidebar-actions {
     width: 100%;
     display: flex;
@@ -190,8 +252,7 @@ main {
     margin: 0 auto;
 }
 
-/* ── HISTÓRICO ──────────────────────────────────────────────── */
-
+/* ── Histórico ──────────────────────────────────────────────── */
 .sidebar-historico {
     flex: 1;
     overflow-y: auto;
@@ -221,8 +282,7 @@ main {
     display: none;
 }
 
-/* ── FOOTER / USUÁRIO ───────────────────────────────────────── */
-
+/* ── Rodapé / Perfil do Usuário ─────────────────────────────── */
 .sidebar-footer {
     padding-top: 16px;
     border-top: 1px solid rgba(168, 85, 247, .3);
@@ -313,15 +373,11 @@ main {
 }
 
 /* ==========================================================================
-   ÁREA DE INPUT (barra de digitação inferior)
+   5. ÁREA DE DIGITAÇÃO (INPUT)
    ========================================================================== */
 
 .input-wrap {
     flex-shrink: 0;
-    /* FIX mobile: reserva o espaço "de dois dedos" acima da borda física
-       (gestos/home indicator do iPhone) usando safe-area-inset-bottom.
-       Em navegadores/dispositivos sem notch, env() resolve pra 0px e o
-       padding fica igual ao original. */
     padding: 20px 20px calc(20px + env(safe-area-inset-bottom, 0px)) 20px;
 }
 
@@ -423,7 +479,7 @@ main {
 }
 
 /* ==========================================================================
-   MENU DE UPLOAD
+   6. MENUS E MODAIS
    ========================================================================== */
 
 .upload-menu {
@@ -458,16 +514,12 @@ main {
     background: rgba(255, 255, 255, .06);
 }
 
-/* ==========================================================================
-   OVERLAYS / MODAIS (câmera, voz, auth)
-   ========================================================================== */
-
 .overlay {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, .7);
     backdrop-filter: blur(6px);
-    z-index: 9999;
+    z-index: 10000; /* Sempre acima de tudo */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -490,6 +542,10 @@ main {
     animation: fadeModal .25s ease;
 }
 
+.modal-camera h3 {
+    font-size: 1.2rem;
+}
+
 .modal-voz {
     max-width: 380px;
     align-items: center;
@@ -497,14 +553,8 @@ main {
 }
 
 @keyframes fadeModal {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .modal-close {
@@ -601,13 +651,8 @@ main {
     transition: .2s;
 }
 
-.btn-modal-acao:hover {
-    filter: brightness(1.1);
-}
-
-.btn-modal-acao:active {
-    transform: scale(.98);
-}
+.btn-modal-acao:hover { filter: brightness(1.1); }
+.btn-modal-acao:active { transform: scale(.98); }
 
 .btn-modal-sec {
     flex: 1;
@@ -631,14 +676,7 @@ main {
     color: #fff;
 }
 
-/* ── Câmera ─────────────────────────────────────────────────── */
-
-.modal-camera h3 {
-    font-size: 1.2rem;
-}
-
 /* ── Chamada de voz ─────────────────────────────────────────── */
-
 .voz-avatar-wrap {
     position: relative;
     width: 110px;
@@ -741,48 +779,16 @@ main {
 }
 
 /* ==========================================================================
-   RESPONSIVO
-   ========================================================================== */
-
-@media (max-width: 768px) {
-    .sidebar {
-        position: absolute;
-        left: 0;
-        top: 0;
-        bottom: 0;
-    }
-
-    .sidebar.collapsed {
-        transform: translateX(-100%);
-    }
-
-    .input-wrap {
-        /* FIX mobile: mantém a folga extra + safe-area no celular também */
-        padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0px)) 14px;
-    }
-
-    .modal-camera,
-    .modal-voz,
-    .modal-auth {
-        max-width: 100%;
-    }
-}
-
-/* ==========================================================================
-   CONFIG.CSS — página /configuracoes
+   7. PÁGINA DE CONFIGURAÇÕES
    ========================================================================== */
 
 .config-wrapper {
     height: 100vh;
-    height: 100dvh; /* FIX mobile */
+    height: 100dvh;
     width: 100%;
     display: flex;
     overflow: hidden;
 }
-
-/* ==========================================================================
-   SIDEBAR DE NAVEGAÇÃO
-   ========================================================================== */
 
 .config-sidebar {
     width: 260px;
@@ -875,10 +881,6 @@ main {
     box-shadow: inset 2px 0 0 #22d3ee;
 }
 
-/* ==========================================================================
-   MAIN
-   ========================================================================== */
-
 .config-main {
     flex: 1;
     display: flex;
@@ -904,6 +906,7 @@ main {
     flex: 1;
     overflow-y: auto;
     padding: 30px;
+    padding-bottom: 90px;
     display: flex;
     flex-direction: column;
     gap: 18px;
@@ -918,7 +921,6 @@ main {
     border-radius: 10px;
 }
 
-/* Só mostra a seção ativa — o JS troca essa classe entre as .config-secao */
 .config-secao {
     display: none;
     flex-direction: column;
@@ -928,10 +930,6 @@ main {
 .config-secao.ativa {
     display: flex;
 }
-
-/* ==========================================================================
-   CARDS
-   ========================================================================== */
 
 .config-card {
     background: rgba(17, 18, 20, .8);
@@ -955,8 +953,6 @@ main {
     line-height: 1.4;
     margin-top: -4px;
 }
-
-/* ── Avatar preview (topo da seção Personalidade) ────────────── */
 
 .avatar-preview {
     display: flex;
@@ -982,10 +978,6 @@ main {
     font-size: .85rem;
     color: #a1a1aa;
 }
-
-/* ==========================================================================
-   CHIPS (seleção múltipla tipo tag)
-   ========================================================================== */
 
 .config-chips {
     display: flex;
@@ -1017,10 +1009,6 @@ main {
     font-weight: 600;
 }
 
-/* ==========================================================================
-   SELECT
-   ========================================================================== */
-
 .config-select {
     background: #1b1c1f;
     border: 1px solid #2e3135;
@@ -1037,10 +1025,6 @@ main {
 .config-select:focus {
     border-color: #a855f7;
 }
-
-/* ==========================================================================
-   TEXTAREA
-   ========================================================================== */
 
 .config-textarea {
     width: 100%;
@@ -1068,10 +1052,6 @@ main {
     align-self: flex-end;
     margin-top: -4px;
 }
-
-/* ==========================================================================
-   TOGGLE (switch)
-   ========================================================================== */
 
 .config-toggle-row {
     display: flex;
@@ -1152,10 +1132,6 @@ main {
     box-shadow: 0 0 0 3px rgba(34, 211, 238, .4);
 }
 
-/* ==========================================================================
-   BARRA SALVAR (fixa embaixo)
-   ========================================================================== */
-
 .config-salvar-bar {
     position: fixed;
     bottom: 0;
@@ -1191,16 +1167,69 @@ main {
     transform: translateY(0) scale(.98);
 }
 
-/* Compensa a barra fixa pra não cobrir o último card */
-.config-scroll {
-    padding-bottom: 90px;
-}
-
 /* ==========================================================================
-   RESPONSIVO
+   8. MEDIA QUERIES (Mobile unificado)
    ========================================================================== */
 
 @media (max-width: 768px) {
+    /* ── Topbar / Barra Superior ── */
+    .btn-menu-mobile {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .topbar {
+        padding: 10px 14px;
+    }
+
+    /* ── Sidebar (Menu Principal) ── */
+    .sidebar {
+        position: fixed !important;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 280px !important;
+        min-width: 280px !important;
+        z-index: 9999 !important;
+        transform: translateX(0);
+        transition: transform 0.3s ease;
+        box-shadow: 10px 0 30px rgba(0, 0, 0, 0.8);
+    }
+    
+    .sidebar.collapsed {
+        transform: translateX(-100%) !important;
+    }
+
+    .sidebar .brand-name,
+    .sidebar .user-nome,
+    .sidebar .btn-novo-chat span,
+    .sidebar .btn-buscar span,
+    .sidebar-historico {
+        display: block !important;
+    }
+
+    .sidebar .btn-novo-chat,
+    .sidebar .btn-buscar {
+        width: 100% !important;
+        height: auto !important;
+        border-radius: 10px !important;
+        justify-content: flex-start !important;
+    }
+
+    /* ── Input Wrap ── */
+    .input-wrap {
+        padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0px)) 14px;
+    }
+
+    /* ── Modais ── */
+    .modal-camera,
+    .modal-voz,
+    .modal-auth {
+        max-width: 100%;
+    }
+
+    /* ── Tela de Configurações ── */
     .config-sidebar {
         position: absolute;
         left: 0;
@@ -1223,342 +1252,4 @@ main {
     .config-card {
         max-width: 100%;
     }
-}
-
-/* ==========================================================================
-   MAIN / TOPBAR / CHATBOX — área principal do chat (index.html)
-   ========================================================================== */
-
-.main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    height: 100dvh; /* FIX mobile: barra de endereço não infla mais a altura,
-                       então o .input-wrap não fica mais empurrado pra baixo
-                       da área visível no navegador do celular */
-    overflow: hidden;
-    min-width: 0;
-}
-
-.topbar {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    padding: 12px 20px;
-    background: rgba(5, 6, 10, .8);
-    backdrop-filter: blur(10px);
-    border-bottom: 1px solid rgba(34, 211, 238, .1);
-    flex-shrink: 0;
-}
-
-.topbar-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.btn-entrar,
-.btn-registrar {
-    padding: 9px 18px;
-    border-radius: 999px;
-    font-size: .88rem;
-    font-weight: 600;
-    cursor: pointer;
-    border: 1px solid rgba(255, 255, 255, .15);
-    background: transparent;
-    color: #e3e3e3;
-    transition: .2s;
-}
-
-.btn-entrar:hover,
-.btn-registrar:hover {
-    border-color: rgba(34, 211, 238, .5);
-    background: rgba(255, 255, 255, .04);
-}
-
-.btn-registrar {
-    background: linear-gradient(135deg, #22d3ee, #a855f7);
-    border: none;
-    color: #fff;
-}
-
-.btn-registrar:hover {
-    filter: brightness(1.1);
-}
-
-.chatbox {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-}
-
-/* FIX: justify-content:center num container com overflow-y:auto
-   "centraliza" o conteúdo que ultrapassa a altura visível — inclusive
-   pro lado de cima, que fica fora do alcance do scroll (o navegador
-   não deixa rolar até esse trecho "negativo"). Resultado: mensagens
-   antigas somem e não tem como rolar até o início da conversa.
-   O chat.js já alternava essa classe (chatbox.classList.toggle
-   ('has-messages', ...)) esperando por esta regra, que faltava:
-   assim que existem mensagens, alinha ao topo em vez de centralizar,
-   e o scroll volta a funcionar normalmente do início ao fim. */
-.chatbox.has-messages {
-    justify-content: flex-start;
-}
-
-.chatbox::-webkit-scrollbar {
-    width: 8px;
-}
-
-.chatbox::-webkit-scrollbar-thumb {
-    background: rgba(34, 211, 238, .3);
-    border-radius: 10px;
-}
-
-/* ── WELCOME (tela inicial antes da primeira mensagem) ───────── */
-
-.welcome {
-    width: 100%;
-    max-width: 700px;
-    min-height: 48vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding-top: 6vh;
-    margin: 0 auto;
-}
-
-.welcome-avatar-wrap {
-    margin-bottom: 16px;
-}
-
-.welcome-avatar {
-    width: 100px;
-    height: 100px;
-    border-radius: 50%;
-    object-fit: contain;
-    box-shadow:
-        0 0 30px rgba(168, 85, 247, .3),
-        0 0 10px rgba(34, 211, 238, .3);
-}
-
-.welcome-titulo {
-    font-size: 2rem;
-    font-weight: 800;
-    margin-bottom: 8px;
-}
-
-.g-text {
-    background: linear-gradient(90deg, #22d3ee, #8b5cf6, #3b82f6);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-size: 200% 200%;
-    animation: gradientMove 5s ease infinite;
-}
-
-.welcome-sub {
-    font-size: 1.05rem;
-    color: #a1a1aa;
-    margin-bottom: 24px;
-}
-
-.sugestoes {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 10px;
-    max-width: 600px;
-}
-
-.sugestao-chip {
-    background: rgba(255, 255, 255, .05);
-    border: 1px solid rgba(255, 255, 255, .12);
-    color: #e3e3e3;
-    padding: 10px 16px;
-    border-radius: 999px;
-    font-size: .85rem;
-    cursor: pointer;
-    transition: .2s;
-}
-
-.sugestao-chip:hover {
-    border-color: rgba(34, 211, 238, .4);
-    background: rgba(255, 255, 255, .08);
-    transform: translateY(-1px);
-}
-
-/* ── MENSAGENS ────────────────────────────────────────────────── */
-
-.msgs {
-    width: 100%;
-    max-width: 900px;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-@media (max-width: 768px) {
-    .welcome-titulo {
-        font-size: 1.6rem;
-    }
-
-    .topbar {
-        padding: 10px 14px;
-    }
-}
-
-/* =========================================
-   SIDEBAR E MENU FLUTUANTE EXTERNO
-   ========================================= */
-
-.sidebar {
-    overflow: visible !important; /* Libera para o menu sair da barra lateral */
-}
-
-.sidebar-historico {
-    overflow-y: auto;
-    overflow-x: visible !important;
-}
-
-.chat-item {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    padding: 8px 12px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background 0.2s ease;
-}
-
-.chat-item:hover {
-    background: rgba(168, 85, 247, 0.08);
-}
-
-.chat-titulo {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.9rem;
-    color: #e3e3e3;
-}
-
-/* Wrapper que segura o botão de três pontos */
-.chat-options-wrapper {
-    position: relative; /* Base de posicionamento para o menu absoluto */
-    display: flex;
-    align-items: center;
-}
-
-/* O botão de três pontos (⋮) */
-.btn-chat-options {
-    background: transparent;
-    border: none;
-    color: rgba(168, 85, 247, 0.7);
-    font-size: 1.1rem;
-    cursor: pointer;
-    padding: 2px 6px;
-    border-radius: 6px;
-    transition: all 0.2s ease;
-}
-
-.btn-chat-options:hover {
-    color: #fff;
-    background: rgba(168, 85, 247, 0.2);
-}
-
-/* A "Box" do menu flutuante posicionado PARA FORA (à direita do botão) */
-/* FIX: antes era position:absolute dentro de um container com
-   overflow-y:auto (.sidebar-historico). O CSS tem uma regra pouco
-   conhecida: se overflow-y não é 'visible' mas overflow-x é, o
-   navegador FORÇA overflow-x pra 'auto' também — então o
-   "overflow-x: visible !important" mais abaixo nunca tinha efeito de
-   verdade, e o menu continuava sendo cortado/escondido pela barra
-   lateral. Agora o menu usa position:fixed (calculado via JS a partir
-   da posição real do botão ⋮), então ele não fica mais contido/cortado
-   por nenhum ancestral com scroll. */
-.chat-options-menu {
-    position: fixed;
-    background: #141418;
-    border: 1px solid rgba(168, 85, 247, 0.25);
-    border-radius: 12px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
-    display: none;
-    flex-direction: column;
-    padding: 6px;
-    z-index: 999999;
-    min-width: 140px;
-    opacity: 0;
-    transform: scale(0.95);
-    transform-origin: top left;
-    transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-/* Classe ativada via JS para exibir o menu com transição suave */
-.chat-options-menu.ativo {
-    display: flex;
-    opacity: 1;
-    transform: scale(1);
-}
-
-/* Botões internos do menu (Fixar, Renomear, Excluir) */
-.chat-option-btn {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    background: transparent;
-    border: none;
-    color: #d1d5db;
-    font-size: 0.85rem;
-    padding: 8px 10px;
-    border-radius: 8px;
-    cursor: pointer;
-    width: 100%;
-    text-align: left;
-    transition: all 0.2s ease;
-}
-
-/* Ícones padronizados com o tom da IA */
-.chat-option-btn .menu-icon {
-    width: 16px;
-    height: 16px;
-    filter: invert(80%) sepia(20%) saturate(400%) hue-rotate(220deg);
-    opacity: 0.85;
-    transition: opacity 0.2s;
-}
-
-/* Efeito ao passar o mouse nas opções normais */
-.chat-option-btn:hover {
-    background: rgba(168, 85, 247, 0.15);
-    color: #fff;
-}
-
-.chat-option-btn:hover .menu-icon {
-    opacity: 1;
-}
-
-/* Estilo dedicado para a opção de Excluir */
-.chat-option-btn.excluir {
-    color: #f87171;
-}
-
-.chat-option-btn.excluir .menu-icon {
-    filter: invert(55%) sepia(85%) saturate(500%) hue-rotate(320deg);
-}
-
-.chat-option-btn.excluir:hover {
-    background: rgba(239, 68, 68, 0.15);
-    color: #fca5a5;
 }

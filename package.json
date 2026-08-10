@@ -8,6 +8,7 @@
     "scrape-learning": "python core/scrape_learning.py"
   },
   "dependencies": {
+    "@google/genai": "^2.16.0",
     "@google/generative-ai": "^0.21.0",
     "@sendgrid/mail": "^8.1.6",
     "axios": "^1.18.1",

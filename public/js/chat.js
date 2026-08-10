@@ -38,13 +38,6 @@ function sanitizarHTML(html) {
     return typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(html) : html;
 }
 
-// FIX (XSS): títulos de conversa vêm do usuário (mensagem original ou
-// renomeação via /chat/conversas/:id) e o server não sanitiza. Antes,
-// carregarHistorico() jogava o título direto num innerHTML sem escapar,
-// permitindo injetar HTML/JS armazenado (ex: renomear pra
-// "<img src=x onerror=alert(1)>"), que rodava pra qualquer um que
-// abrisse a sidebar depois. Esta função escapa entidades HTML antes de
-// qualquer título entrar em innerHTML.
 function escaparHTML(texto) {
     const div = document.createElement('div');
     div.textContent = String(texto ?? '');
@@ -100,12 +93,6 @@ function escolherVozTTS() {
     return ttsVoice;
 }
 
-// INTEGRAÇÃO HUD: dispara 'falando' quando o áudio realmente começa e
-// volta pro estado certo (ouvindo, se estiver em chamada de voz; ocioso,
-// caso contrário) quando o áudio termina. Usar os eventos onstart/onend
-// da utterance é mais preciso que setar o estado na hora de chamar
-// falar(), porque sincroniza com o áudio de verdade, não com o texto
-// chegando.
 function falar(texto) {
     try {
         if (!ttsEnabled || typeof speechSynthesis === 'undefined' || !texto) return;
@@ -185,16 +172,6 @@ async function capturarFoto() {
 }
 
 /* ── HUD / ORBE JARVIS (chamada de voz) ───────────────────────── */
-// FIX: jarvis.css estiliza tudo via atributo [data-estado] no elemento
-// #voz-hud-grande, e reage a --nivel (volume do mic) nas .jarvis-bars —
-// mas nada no projeto define window.IanaHUD, e o próprio #voz-hud-grande
-// era um <div> vazio no HTML (sem os anéis/núcleo/barras que o CSS
-// estiliza). Sem isso, o orbe nunca aparece nem reage a nada. Esta
-// função substitui as chamadas antigas a window.IanaHUD?.setEstado(...)
-// (que sempre foram no-op, já que esse módulo nunca existiu em lugar
-// nenhum) por uma manipulação direta e simples do atributo no elemento
-// real. Mantém a chamada a window.IanaHUD também, só por segurança/
-// compatibilidade, caso um módulo desses seja adicionado no futuro.
 function setEstadoVoz(estado) {
     document.getElementById('voz-hud-grande')?.setAttribute('data-estado', estado);
     window.IanaHUD?.setEstado?.(estado);
@@ -204,11 +181,6 @@ let _audioCtxVoz = null;
 let _analyserVoz = null;
 let _rafVoz = null;
 
-// FIX: streamVoz era declarada e "limpa" em fecharVoz(), mas nunca
-// preenchida em lugar nenhum — ou seja, esse código de limpeza nunca
-// rodava de verdade. Aqui a stream é criada de verdade, só pra
-// alimentar a visualização de volume das .jarvis-bars (via Web Audio
-// API), sem depender de nenhum backend/streaming em tempo real.
 async function iniciarVisualizacaoVolume() {
     try {
         streamVoz = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -224,7 +196,7 @@ async function iniciarVisualizacaoVolume() {
         const loop = () => {
             _analyserVoz.getByteFrequencyData(dados);
             const media = dados.reduce((a, b) => a + b, 0) / dados.length;
-            const nivel = Math.min(1, media / 90); // normaliza pra 0–1
+            const nivel = Math.min(1, media / 90);
             if (hud) hud.style.setProperty('--nivel', nivel.toFixed(2));
             _rafVoz = requestAnimationFrame(loop);
         };
@@ -249,14 +221,11 @@ function pararVisualizacaoVolume() {
     document.getElementById('voz-hud-grande')?.style.setProperty('--nivel', 0);
 }
 
-// FIX: adiciona a bolha no feed visual da chamada (#voz-feed), que
-// substituiu o antigo #voz-transcript estático. Sem isso, nada aparecia
-// mais na tela de chamada além do status.
 function adicionarAoVozFeed(texto, tipo) {
     const feed = document.getElementById('voz-feed');
     if (!feed || !texto) return;
     const bubble = document.createElement('div');
-    bubble.className = `voz-feed-msg voz-feed-${tipo}`; // 'user' ou 'iana'
+    bubble.className = `voz-feed-msg voz-feed-${tipo}`;
     bubble.textContent = texto;
     feed.appendChild(bubble);
     feed.scrollTop = feed.scrollHeight;
@@ -285,9 +254,6 @@ function fecharVoz() {
 function iniciarReconhecimentoVoz() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const statusEl = document.getElementById('voz-status');
-    // FIX: #voz-transcript não existe mais no HTML (a tela de chamada foi
-    // redesenhada pro estilo Jarvis). O elemento que mostra a legenda ao
-    // vivo agora é #voz-interim.
     const interimEl = document.getElementById('voz-interim');
 
     if (!SpeechRecognition) {
@@ -439,7 +405,6 @@ function iniciarGravacaoAudio() {
                     stream.getTracks().forEach(t => t.stop());
                     const blob = new Blob(audioChunks, { type: 'audio/webm' });
                     console.log('Áudio gravado:', blob);
-                    // O envio de áudio para transcrição no backend deve ser implementado aqui
                 };
                 mediaRecorderAudio.start();
                 gravandoAudio = true;
@@ -934,7 +899,6 @@ function adicionarBolhaUsuario(texto) {
     configurarExpandir(bubble, acoes);
     scrollParaFim();
 
-    // Se a chamada de voz estiver aberta, espelha a mensagem no feed dela também
     if (document.getElementById('overlay-voz')?.style.display === 'flex') {
         adicionarAoVozFeed(texto, 'user');
     }
@@ -983,7 +947,6 @@ function adicionarRespostaIA(texto) {
     configurarExpandir(bubble, acoes);
     scrollParaFim();
 
-    // Espelha no feed da chamada de voz, se estiver aberta
     if (document.getElementById('overlay-voz')?.style.display === 'flex') {
         adicionarAoVozFeed(texto, 'iana');
     }
@@ -1042,11 +1005,6 @@ async function processarEnvioIA(conteudo) {
 
     window.IanaHUD?.setEstado?.('pensando');
 
-    // FIX (integração real do animation-controller.js): a transição
-    // "cheia" (welcome sai de cena, thinking-view aparece) só roda na
-    // 1ª mensagem da sessão/conversa, enquanto a tela de welcome ainda
-    // está visível. Nas mensagens seguintes, usamos o indicador de
-    // digitação simples de sempre.
     const welcomeEl = document.getElementById('welcome');
     const primeiraMensagem = typeof animacaoChat !== 'undefined'
         && welcomeEl && welcomeEl.style.display !== 'none'
@@ -1244,7 +1202,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
         document.getElementById('sidebar')?.classList.toggle('collapsed');
+        document.getElementById('sidebar-overlay')?.classList.remove('ativo');
     });
+
+    // FIX: #btn-menu-mobile (hambúrguer da topbar) e #sidebar-overlay (fundo
+    // escuro atrás da sidebar aberta) existiam no HTML/CSS mas nunca tinham
+    // um handler de clique — no mobile não havia NENHUM jeito de reabrir a
+    // sidebar depois de fechada (o botão de toggle mora dentro da própria
+    // sidebar, que fica fora da tela), nem de fechá-la clicando fora dela.
+    document.getElementById('btn-menu-mobile')?.addEventListener('click', () => {
+        document.getElementById('sidebar')?.classList.remove('collapsed');
+        document.getElementById('sidebar-overlay')?.classList.add('ativo');
+    });
+    document.getElementById('sidebar-overlay')?.addEventListener('click', () => {
+        document.getElementById('sidebar')?.classList.add('collapsed');
+        document.getElementById('sidebar-overlay')?.classList.remove('ativo');
+    });
+
     document.getElementById('btn-novo-chat')?.addEventListener('click', resetarChat);
     document.getElementById('btn-buscar')?.addEventListener('click', () => mostrarTela('tela-pesquisa'));
 

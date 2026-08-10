@@ -301,6 +301,114 @@ main {
     display: none;
 }
 
+/* ── Itens do histórico (gerados pelo chat.js) ─────────────────
+   FIX: chat.js cria .chat-item/.chat-titulo/.chat-options-* dinamicamente
+   pra cada conversa da sidebar, mas nenhuma dessas classes tinha CSS —
+   a lista de conversas renderizava sem estilo nenhum. */
+.chat-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: .2s;
+}
+
+.chat-item:hover {
+    background: rgba(255, 255, 255, .06);
+}
+
+.chat-item.active {
+    background: rgba(34, 211, 238, .15);
+}
+
+.chat-titulo {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: .88rem;
+}
+
+.chat-options-wrapper {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.btn-chat-options {
+    background: none;
+    border: none;
+    color: #a1a1aa;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 6px;
+    opacity: 0;
+    transition: .2s;
+}
+
+.chat-item:hover .btn-chat-options {
+    opacity: 1;
+}
+
+.btn-chat-options:hover {
+    background: rgba(255, 255, 255, .08);
+    color: #fff;
+}
+
+.chat-options-menu {
+    position: fixed;
+    background: #1a0a2e;
+    border: 1px solid rgba(34, 211, 238, .3);
+    border-radius: 10px;
+    overflow: hidden;
+    display: none;
+    flex-direction: column;
+    min-width: 160px;
+    z-index: 500;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .35);
+}
+
+.chat-options-menu.ativo {
+    display: flex;
+}
+
+.chat-option-btn {
+    width: 100%;
+    background: none;
+    border: none;
+    color: #e3e3e3;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    font-size: .85rem;
+    text-align: left;
+    cursor: pointer;
+    transition: .2s;
+}
+
+.chat-option-btn:hover {
+    background: rgba(34, 211, 238, .1);
+}
+
+.chat-option-btn.excluir {
+    color: #f87171;
+}
+
+.chat-option-btn.excluir:hover {
+    background: rgba(248, 113, 113, .1);
+}
+
+.menu-icon {
+    width: 15px;
+    height: 15px;
+    filter: invert(.7);
+}
+
 /* ── Rodapé / Perfil do Usuário ─────────────────────────────── */
 .sidebar-footer {
     padding-top: 16px;
@@ -1084,6 +1192,86 @@ main {
 }
 
 /* ==========================================================================
+   9. TELA DE BOAS-VINDAS (WELCOME)
+   ========================================================================== */
+
+.welcome {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 6px;
+    padding: 24px 20px;
+    overflow-y: auto;
+}
+
+.welcome-avatar-wrap {
+    width: 100%;
+    max-width: 220px;
+    margin-bottom: 18px;
+}
+
+.welcome-avatar {
+    width: 100%;
+    height: auto;
+    max-height: 220px;
+    object-fit: contain;
+    filter: drop-shadow(0 0 20px rgba(34, 211, 238, .25));
+}
+
+.welcome-titulo {
+    font-size: 1.8rem;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.g-text {
+    background: linear-gradient(90deg, #22d3ee, #a855f7);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.welcome-sub {
+    font-size: 1rem;
+    color: #a1a1aa;
+    margin-bottom: 18px;
+}
+
+.sugestoes {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    max-width: 700px;
+}
+
+.sugestao-chip {
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid rgba(255, 255, 255, .12);
+    color: #d4d4d8;
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-size: .88rem;
+    cursor: pointer;
+    transition: .2s;
+}
+
+.sugestao-chip:hover {
+    border-color: rgba(34, 211, 238, .4);
+    background: rgba(255, 255, 255, .08);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+.sugestao-chip:active {
+    transform: translateY(0) scale(.97);
+}
+
+/* ==========================================================================
    8. MEDIA QUERIES (Mobile unificado)
    ========================================================================== */
 
@@ -1136,6 +1324,19 @@ main {
     /* ── Input Wrap ── */
     .input-wrap {
         padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0px)) 14px;
+    }
+
+    /* ── Tela de Boas-vindas ── */
+    .welcome-avatar-wrap {
+        max-width: 160px;
+    }
+
+    .welcome-titulo {
+        font-size: 1.4rem;
+    }
+
+    .welcome-sub {
+        font-size: .9rem;
     }
 
     /* ── Modais ── */

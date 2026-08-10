@@ -1,211 +1,1029 @@
-/* =================================================================
-   IANA — animation-controller.js (integrado)
-   Contém DUAS coisas que trabalham juntas:
+/* ================================================================
+   IANA — animation-controller.js
 
-   1) IanaHUD — controla o estado visual da silhueta do troféu
-      (ocioso | ouvindo | pensando | falando), lendo o CSS em
-      trophy-hud.css via data-estado.
+   RESPONSABILIDADES:
 
-   2) AnimacaoChat — controla a transição welcome -> thinking-view
-      que roda só na 1ª mensagem da sessão. Chamado pelo chat.js.
+   1. Controlar o HUD da Iana.
+   2. Controlar o estado visual:
+      ocioso
+      ouvindo
+      pensando
+      falando
+   3. Controlar o indicador de pensamento do chat.
+   4. Controlar a primeira transição do welcome.
+   5. Permitir múltiplos HUDs.
+   6. Controlar o HUD da chamada de voz.
+================================================================ */
 
-   A integração acontece dentro do próprio AnimacaoChat: sempre que
-   ele muda de fase, ele também empurra o estado equivalente pro
-   IanaHUD, então o troféu e o texto "Pensando/Analisando/Respondendo"
-   ficam sincronizados na primeira mensagem.
-
-   Para as mensagens seguintes (fora da 1ª) e para a chamada de voz,
-   quem chama IanaHUD.setEstado(...) é o próprio chat.js diretamente
-   — ver os comentários "INTEGRAÇÃO HUD" nesse arquivo.
-   ================================================================= */
 'use strict';
 
-/* ── 1) IanaHUD ──────────────────────────────────────────────── */
-// Estilo Jarvis: anéis girando + núcleo pulsante + barrinhas reativas.
-// Suporta MAIS DE UM orbe montado ao mesmo tempo (o pequeno da topbar
-// e o grande da tela de chamada), todos sincronizados no mesmo estado.
+
+
+/* ================================================================
+   IANA HUD
+================================================================ */
+
 const IanaHUD = (() => {
+
     const elementos = new Set();
+
     let estadoAtual = 'ocioso';
 
+
+    /* ============================================================
+       MARKUP
+    ============================================================ */
+
     function montarMarkup() {
+
         return `
+
             <div class="jarvis-ring jarvis-ring-outer"></div>
+
             <div class="jarvis-ring jarvis-ring-mid"></div>
+
             <div class="jarvis-ring jarvis-ring-inner"></div>
+
             <div class="jarvis-core"></div>
+
             <div class="jarvis-bars">
-                <span></span><span></span><span></span><span></span><span></span>
+
+                <span></span>
+                <span></span>
+                <span></span>
+                <span></span>
+                <span></span>
+
             </div>
+
         `;
     }
 
-    /**
-     * Inicializa (ou reinicializa) um HUD dentro de um container existente.
-     * Pode ser chamado várias vezes com IDs diferentes — cada um vira um
-     * orbe independente, todos atualizados juntos por setEstado().
-     * @param {string} containerId - id do elemento que vai virar o HUD
-     * @param {'sm'|'lg'} tamanho - 'sm' (topbar, ~40px) ou 'lg' (chamada, grande)
-     */
-    function iniciar(containerId, tamanho = 'sm') {
-        const container = document.getElementById(containerId);
+
+    /* ============================================================
+       INICIAR
+    ============================================================ */
+
+    function iniciar(
+        containerId,
+        tamanho = 'sm'
+    ) {
+
+        const container =
+            document.getElementById(
+                containerId
+            );
+
+
         if (!container) {
-            console.warn(`IanaHUD: container #${containerId} não encontrado.`);
+
+            console.warn(
+                `IanaHUD: container #${containerId} não encontrado.`
+            );
+
+            return null;
+        }
+
+
+        container.classList.add(
+            'jarvis-hud',
+            `jarvis-hud--${tamanho}`
+        );
+
+
+        container.dataset.estado =
+            estadoAtual;
+
+
+        container.innerHTML =
+            montarMarkup();
+
+
+        elementos.add(
+            container
+        );
+
+
+        return container;
+    }
+
+
+    /* ============================================================
+       REMOVER
+    ============================================================ */
+
+    function remover(
+        containerId
+    ) {
+
+        const container =
+            document.getElementById(
+                containerId
+            );
+
+
+        if (!container) {
             return;
         }
-        container.classList.add('jarvis-hud', `jarvis-hud--${tamanho}`);
-        container.dataset.estado = estadoAtual;
-        container.innerHTML = montarMarkup();
-        elementos.add(container);
+
+
+        elementos.delete(
+            container
+        );
+
+
+        container.innerHTML = '';
+
+
+        container.classList.remove(
+            'jarvis-hud',
+            'jarvis-hud--sm',
+            'jarvis-hud--lg'
+        );
+
+
+        delete container.dataset.estado;
     }
 
-    /**
-     * Muda o estado visual de TODOS os orbes montados.
-     * @param {'ocioso'|'ouvindo'|'pensando'|'falando'} estado
-     */
-    function setEstado(estado) {
-        estadoAtual = estado;
-        elementos.forEach(el => { el.dataset.estado = estado; });
+
+    /* ============================================================
+       REMOVER TODOS
+    ============================================================ */
+
+    function removerTodos() {
+
+        elementos.forEach(
+            container => {
+
+                if (!container) {
+                    return;
+                }
+
+
+                container.innerHTML =
+                    '';
+
+
+                container.classList.remove(
+                    'jarvis-hud',
+                    'jarvis-hud--sm',
+                    'jarvis-hud--lg'
+                );
+
+
+                delete container.dataset.estado;
+
+            }
+        );
+
+
+        elementos.clear();
     }
+
+
+    /* ============================================================
+       MUDAR ESTADO
+    ============================================================ */
+
+    function setEstado(
+        estado
+    ) {
+
+        const estadosValidos = [
+
+            'ocioso',
+
+            'ouvindo',
+
+            'pensando',
+
+            'falando'
+
+        ];
+
+
+        if (
+            !estadosValidos.includes(
+                estado
+            )
+        ) {
+
+            console.warn(
+                `IanaHUD: estado inválido "${estado}".`
+            );
+
+            return;
+        }
+
+
+        estadoAtual =
+            estado;
+
+
+        elementos.forEach(
+            elemento => {
+
+                if (!elemento) {
+                    return;
+                }
+
+
+                elemento.dataset.estado =
+                    estado;
+
+            }
+        );
+    }
+
+
+    /* ============================================================
+       GET ESTADO
+    ============================================================ */
 
     function getEstado() {
+
         return estadoAtual;
     }
 
-    return { iniciar, setEstado, getEstado };
-})();
-window.IanaHUD = IanaHUD;
+
+    /* ============================================================
+       EXISTE
+    ============================================================ */
+
+    function existe(
+        containerId
+    ) {
+
+        const container =
+            document.getElementById(
+                containerId
+            );
 
 
-/* ── 2) AnimacaoChat ─────────────────────────────────────────── */
-class AnimacaoChat {
-    constructor() {
-        this.em_transicao = false;
-        this.estado_atual = 'repouso'; // repouso, pensando, respondendo
-        this.primeiraMensagemFeita = false;
-        this._timersFase = [];
+        return Boolean(
+
+            container &&
+            elementos.has(
+                container
+            )
+
+        );
     }
+
+
+    return {
+
+        iniciar,
+
+        remover,
+
+        removerTodos,
+
+        setEstado,
+
+        getEstado,
+
+        existe
+
+    };
+
+})();
+
+
+window.IanaHUD =
+    IanaHUD;
+
+
+
+/* ================================================================
+   ANIMAÇÃO DO CHAT
+================================================================ */
+
+class AnimacaoChat {
+
+    constructor() {
+
+        this.em_transicao =
+            false;
+
+
+        this.estado_atual =
+            'repouso';
+
+
+        this.primeiraMensagemFeita =
+            false;
+
+
+        this.pensando =
+            false;
+
+
+        this._timersFase =
+            [];
+
+    }
+
+
+    /* ============================================================
+       SLEEP
+    ============================================================ */
 
     sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
+
+        return new Promise(
+            resolve =>
+                setTimeout(
+                    resolve,
+                    ms
+                )
+        );
     }
 
+
+    /* ============================================================
+       ESTADO
+    ============================================================ */
+
     getEstado() {
+
         return this.estado_atual;
     }
 
+
+    /* ============================================================
+       TRANSIÇÃO
+    ============================================================ */
+
     emTransicao() {
+
         return this.em_transicao;
     }
 
-    /**
-     * Move o welcome pra fora de cena e mostra o thinking-view no lugar,
-     * com o status ciclando Pensando -> Analisando -> Respondendo.
-     * Sincroniza o IanaHUD para 'pensando' assim que a transição entra
-     * em vigor.
-     */
-    async iniciarPensamento() {
-        if (this.em_transicao || this.primeiraMensagemFeita) return;
-        this.em_transicao = true;
 
-        const welcomeContainer = document.getElementById('welcome');
-        const thinkingContainer = document.getElementById('thinking-view');
-        const inputWrapper = document.querySelector('.input-wrap');
-        const ianaLabel = document.querySelector('.iana-label-container');
-        const pilula = document.querySelector('.input-pill');
+    /* ============================================================
+       MOSTRAR INDICADOR DE PENSAMENTO
+       
+       NÃO MOSTRA TEXTO.
+       
+       SOMENTE O ÍCONE.
+    ============================================================ */
 
-        if (!welcomeContainer || !thinkingContainer) {
-            // Elementos não existem nesta página — não quebra nada,
-            // só não anima (ex: outra tela que reusa este script).
-            this.em_transicao = false;
+    mostrarPensando() {
+
+        const thinking =
+            document.getElementById(
+                'thinking-view'
+            );
+
+
+        const dot =
+            document.getElementById(
+                'thinking-view-dot'
+            );
+
+
+        if (!thinking || !dot) {
             return;
         }
 
-        if (ianaLabel) {
-            ianaLabel.classList.add('sumir');
-            await this.sleep(200);
-        }
 
-        welcomeContainer.classList.add('transitando');
-        if (inputWrapper) inputWrapper.classList.add('transitando');
-        if (pilula) pilula.classList.add('disabled');
-
-        thinkingContainer.style.display = 'flex';
-        await this.sleep(100);
-        thinkingContainer.classList.add('ativo');
-
-        this.estado_atual = 'pensando';
-        this.em_transicao = false;
-
-        // INTEGRAÇÃO HUD: sincroniza o troféu com a fase de pensamento.
-        window.IanaHUD?.setEstado('pensando');
-
-        this._cicloDeFases();
-    }
-
-    /**
-     * Alterna o texto/cor do status enquanto espera a resposta da API.
-     * Fica parado em "Respondendo" até finalizarPensamento() rodar.
-     */
-    _cicloDeFases() {
-        const dot = document.getElementById('thinking-view-dot');
-        const texto = document.getElementById('thinking-view-texto');
-        if (!dot || !texto) return;
-
-        const fases = [
-            { classe: 'thinking-dot', texto: 'Pensando' },
-            { classe: 'analyzing-dot', texto: 'Analisando' },
-            { classe: 'speaking-dot', texto: 'Respondendo' }
-        ];
+        /* Cancela qualquer timer antigo */
 
         this._limparTimersFase();
-        fases.forEach((fase, i) => {
-            const t = setTimeout(() => {
-                dot.className = fase.classe;
-                texto.textContent = fase.texto;
-            }, i * 1200);
-            this._timersFase.push(t);
-        });
+
+
+        /* Ativa */
+
+        thinking.style.display =
+            'flex';
+
+
+        requestAnimationFrame(
+            () => {
+
+                thinking.classList.add(
+                    'ativo'
+                );
+
+            }
+        );
+
+
+        thinking.setAttribute(
+            'aria-hidden',
+            'false'
+        );
+
+
+        this.pensando =
+            true;
+
+
+        this.estado_atual =
+            'pensando';
+
+
+        /* Estado do HUD */
+
+        window.IanaHUD?.setEstado(
+            'pensando'
+        );
     }
+
+
+    /* ============================================================
+       ESCONDER INDICADOR
+    ============================================================ */
+
+    async esconderPensando() {
+
+        const thinking =
+            document.getElementById(
+                'thinking-view'
+            );
+
+
+        if (!thinking) {
+            return;
+        }
+
+
+        this._limparTimersFase();
+
+
+        thinking.classList.remove(
+            'ativo'
+        );
+
+
+        thinking.setAttribute(
+            'aria-hidden',
+            'true'
+        );
+
+
+        await this.sleep(
+            220
+        );
+
+
+        thinking.style.display =
+            'none';
+
+
+        this.pensando =
+            false;
+    }
+
+
+    /* ============================================================
+       PRIMEIRA MENSAGEM
+       
+       A diferença aqui é que NÃO existem mais textos
+       "Pensando", "Analisando" ou "Respondendo".
+    ============================================================ */
+
+    async iniciarPensamento() {
+
+        if (
+            this.em_transicao ||
+            this.primeiraMensagemFeita
+        ) {
+
+            this.mostrarPensando();
+
+            return;
+        }
+
+
+        this.em_transicao =
+            true;
+
+
+        const welcome =
+            document.getElementById(
+                'welcome'
+            );
+
+
+        const inputWrapper =
+            document.querySelector(
+                '.input-wrap'
+            );
+
+
+        const pilula =
+            document.querySelector(
+                '.input-pill'
+            );
+
+
+        if (!welcome) {
+
+            this.em_transicao =
+                false;
+
+            this.mostrarPensando();
+
+            return;
+        }
+
+
+        /* --------------------------------------------------------
+           ESCONDE SUGESTÕES/WELCOME
+        -------------------------------------------------------- */
+
+        welcome.classList.add(
+            'transitando'
+        );
+
+
+        if (inputWrapper) {
+
+            inputWrapper.classList.add(
+                'transitando'
+            );
+        }
+
+
+        if (pilula) {
+
+            pilula.classList.add(
+                'disabled'
+            );
+        }
+
+
+        await this.sleep(
+            180
+        );
+
+
+        /* --------------------------------------------------------
+           MARCA PRIMEIRA MENSAGEM
+        -------------------------------------------------------- */
+
+        this.primeiraMensagemFeita =
+            true;
+
+
+        this.em_transicao =
+            false;
+
+
+        /* --------------------------------------------------------
+           MOSTRA ÍCONE
+        -------------------------------------------------------- */
+
+        this.mostrarPensando();
+    }
+
+
+    /* ============================================================
+       COMPATIBILIDADE
+       
+       Caso algum código antigo chame _cicloDeFases(),
+       não faz mais nada.
+       
+       Não haverá texto.
+    ============================================================ */
+
+    _cicloDeFases() {
+
+        return;
+    }
+
+
+    /* ============================================================
+       LIMPAR TIMERS
+    ============================================================ */
 
     _limparTimersFase() {
-        this._timersFase.forEach(t => clearTimeout(t));
-        this._timersFase = [];
+
+        this._timersFase.forEach(
+            timer =>
+                clearTimeout(
+                    timer
+                )
+        );
+
+
+        this._timersFase =
+            [];
     }
 
-    /**
-     * Esconde o thinking-view. A partir daqui já estamos em modo chat —
-     * mensagens seguintes usam o typing indicator normal do chat.js.
-     * Sincroniza o IanaHUD de volta pra 'ocioso' (chat.js pode
-     * sobrescrever pra 'falando' logo em seguida se for tocar TTS).
-     */
+
+    /* ============================================================
+       FINALIZAR PENSAMENTO
+       
+       Chamado quando a resposta da Iana chegou.
+    ============================================================ */
+
     async finalizarPensamento() {
-        if (this.em_transicao) return;
-        this.em_transicao = true;
+
         this._limparTimersFase();
 
-        const thinkingContainer = document.getElementById('thinking-view');
-        const inputWrapper = document.querySelector('.input-wrap');
-        const pilula = document.querySelector('.input-pill');
 
-        if (thinkingContainer) {
-            thinkingContainer.classList.remove('ativo');
-            await this.sleep(400);
-            thinkingContainer.style.display = 'none';
+        await this.esconderPensando();
+
+
+        const inputWrapper =
+            document.querySelector(
+                '.input-wrap'
+            );
+
+
+        const pilula =
+            document.querySelector(
+                '.input-pill'
+            );
+
+
+        if (inputWrapper) {
+
+            inputWrapper.classList.remove(
+                'transitando'
+            );
+
         }
 
-        if (inputWrapper) inputWrapper.classList.remove('transitando');
-        if (pilula) pilula.classList.remove('disabled');
 
-        this.primeiraMensagemFeita = true;
-        this.estado_atual = 'repouso';
-        this.em_transicao = false;
+        if (pilula) {
 
-        // INTEGRAÇÃO HUD: volta ao repouso visual.
-        window.IanaHUD?.setEstado('ocioso');
+            pilula.classList.remove(
+                'disabled'
+            );
+
+        }
+
+
+        this.estado_atual =
+            'repouso';
+
+
+        this.em_transicao =
+            false;
+
+
+        this.pensando =
+            false;
+
+
+        /*
+        O chat.js pode alterar para "falando"
+        caso esteja usando voz/TTS.
+        */
+
+        window.IanaHUD?.setEstado(
+            'ocioso'
+        );
     }
+
+
+    /* ============================================================
+       QUANDO A IANA COMEÇA A RESPONDER
+    ============================================================ */
+
+    iniciarResposta() {
+
+        this.estado_atual =
+            'respondendo';
+
+
+        window.IanaHUD?.setEstado(
+            'falando'
+        );
+    }
+
+
+    /* ============================================================
+       RESETAR CHAT
+       
+       Usado no Novo Chat.
+    ============================================================ */
+
+    resetar() {
+
+        this._limparTimersFase();
+
+
+        this.em_transicao =
+            false;
+
+
+        this.estado_atual =
+            'repouso';
+
+
+        this.primeiraMensagemFeita =
+            false;
+
+
+        this.pensando =
+            false;
+
+
+        const thinking =
+            document.getElementById(
+                'thinking-view'
+            );
+
+
+        const welcome =
+            document.getElementById(
+                'welcome'
+            );
+
+
+        const inputWrapper =
+            document.querySelector(
+                '.input-wrap'
+            );
+
+
+        const pilula =
+            document.querySelector(
+                '.input-pill'
+            );
+
+
+        /* --------------------------------------------------------
+           THINKING
+        -------------------------------------------------------- */
+
+        if (thinking) {
+
+            thinking.classList.remove(
+                'ativo'
+            );
+
+
+            thinking.style.display =
+                'none';
+
+
+            thinking.setAttribute(
+                'aria-hidden',
+                'true'
+            );
+        }
+
+
+        /* --------------------------------------------------------
+           WELCOME
+        -------------------------------------------------------- */
+
+        if (welcome) {
+
+            welcome.style.display =
+                '';
+
+
+            welcome.classList.remove(
+                'transitando',
+                'voltando'
+            );
+        }
+
+
+        /* --------------------------------------------------------
+           INPUT
+        -------------------------------------------------------- */
+
+        if (inputWrapper) {
+
+            inputWrapper.classList.remove(
+                'transitando',
+                'voltando'
+            );
+        }
+
+
+        if (pilula) {
+
+            pilula.classList.remove(
+                'disabled'
+            );
+        }
+
+
+        /* --------------------------------------------------------
+           HUD
+        -------------------------------------------------------- */
+
+        window.IanaHUD?.setEstado(
+            'ocioso'
+        );
+    }
+
 }
 
-// Instância global usada pelo chat.js
-const animacaoChat = new AnimacaoChat();
-window.animacaoChat = animacaoChat;
+
+
+/* ================================================================
+   INSTÂNCIA GLOBAL
+================================================================ */
+
+const animacaoChat =
+    new AnimacaoChat();
+
+
+window.animacaoChat =
+    animacaoChat;
+
+
+
+/* ================================================================
+   HUD PEQUENO
+================================================================ */
+
+function inicializarIanaHUD() {
+
+    const hud =
+        document.getElementById(
+            'iana-hud'
+        );
+
+
+    if (!hud) {
+        return;
+    }
+
+
+    IanaHUD.iniciar(
+        'iana-hud',
+        'sm'
+    );
+
+
+    IanaHUD.setEstado(
+        'ocioso'
+    );
+}
+
+
+
+/* ================================================================
+   INICIALIZAÇÃO
+================================================================ */
+
+if (
+    document.readyState ===
+    'loading'
+) {
+
+    document.addEventListener(
+        'DOMContentLoaded',
+        inicializarIanaHUD
+    );
+
+} else {
+
+    inicializarIanaHUD();
+
+}
+
+
+
+/* ================================================================
+   CHAMADA DE VOZ
+================================================================ */
+
+window.IanaVoiceUI = {
+
+
+    /* ============================================================
+       ABRIR
+    ============================================================ */
+
+    abrirHUD() {
+
+        let container =
+            document.getElementById(
+                'iana-voice-hud'
+            );
+
+
+        if (!container) {
+
+            container =
+                document.createElement(
+                    'div'
+                );
+
+
+            container.id =
+                'iana-voice-hud';
+
+
+            container.className =
+                'iana-voice-hud';
+
+
+            document.body.appendChild(
+                container
+            );
+        }
+
+
+        IanaHUD.iniciar(
+            'iana-voice-hud',
+            'lg'
+        );
+
+
+        IanaHUD.setEstado(
+            'ouvindo'
+        );
+
+
+        document.body.classList.add(
+            'iana-em-chamada'
+        );
+    },
+
+
+    /* ============================================================
+       FECHAR
+    ============================================================ */
+
+    fecharHUD() {
+
+        IanaHUD.remover(
+            'iana-voice-hud'
+        );
+
+
+        const container =
+            document.getElementById(
+                'iana-voice-hud'
+            );
+
+
+        if (container) {
+
+            container.remove();
+
+        }
+
+
+        document.body.classList.remove(
+            'iana-em-chamada'
+        );
+
+
+        IanaHUD.setEstado(
+            'ocioso'
+        );
+    },
+
+
+    /* ============================================================
+       OUVINDO
+    ============================================================ */
+
+    ouvindo() {
+
+        IanaHUD.setEstado(
+            'ouvindo'
+        );
+    },
+
+
+    /* ============================================================
+       PENSANDO
+    ============================================================ */
+
+    pensando() {
+
+        IanaHUD.setEstado(
+            'pensando'
+        );
+    },
+
+
+    /* ============================================================
+       FALANDO
+    ============================================================ */
+
+    falando() {
+
+        IanaHUD.setEstado(
+            'falando'
+        );
+    },
+
+
+    /* ============================================================
+       OCIOSO
+    ============================================================ */
+
+    ocioso() {
+
+        IanaHUD.setEstado(
+            'ocioso'
+        );
+    }
+
+};

@@ -12,6 +12,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI, Modality } from '@google/genai';
 import sgMail from '@sendgrid/mail';
 import dns from 'dns';
 import * as cheerio from 'cheerio';
@@ -122,7 +123,113 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
     const idUser = socket.request.user?.id;
     if (idUser) socket.join(`user_${idUser}`);
+
+    /* ── CHAMADA DE VOZ EM TEMPO REAL (Gemini Live) ──────────────
+       Streaming bidirecional de verdade: o áudio do microfone vai
+       sendo mandado em pedacinhos enquanto o usuário ainda está
+       falando, e a Iana já começa a responder em áudio antes da
+       "frase" acabar de ser processada — igual Gemini Live/voice
+       mode do ChatGPT. Nada disso passa pelo /chat/stream (que é
+       turno-a-turno); é uma sessão à parte, só pra essa chamada. */
+    socket.on('voz:iniciar', async () => {
+        if (!liveAI) {
+            socket.emit('voz:erro', { mensagem: 'Chamada de voz indisponível: GEMINI_API_KEY não configurada.' });
+            return;
+        }
+        if (sessoesVoz.has(socket.id)) return; // já tem sessão ativa pra esse socket
+
+        try {
+            const session = await liveAI.live.connect({
+                model: LIVE_MODEL,
+                config: {
+                    responseModalities: [Modality.AUDIO],
+                    speechConfig: {
+                        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Aoede' } } // voz feminina
+                    },
+                    systemInstruction: { parts: [{ text: SYSTEM_PROMPT_VOZ }] },
+                    inputAudioTranscription: {},   // transcrição do que o usuário fala
+                    outputAudioTranscription: {}   // transcrição do que a Iana fala
+                },
+                callbacks: {
+                    onopen: () => socket.emit('voz:pronto'),
+                    onmessage: (message) => {
+                        const sc = message.serverContent;
+                        if (!sc) return;
+
+                        if (sc.inputTranscription?.text) {
+                            socket.emit('voz:transcricao-usuario', { texto: sc.inputTranscription.text, final: false });
+                        }
+                        if (sc.outputTranscription?.text) {
+                            socket.emit('voz:transcricao-iana', { texto: sc.outputTranscription.text, final: false });
+                        }
+
+                        const parts = sc.modelTurn?.parts || [];
+                        for (const part of parts) {
+                            if (part.inlineData?.data) {
+                                socket.emit('voz:audio-resposta', { audio: part.inlineData.data });
+                            }
+                        }
+
+                        // Barge-in: usuário interrompeu a Iana no meio da fala.
+                        if (sc.interrupted) socket.emit('voz:interrompido');
+
+                        if (sc.turnComplete) {
+                            socket.emit('voz:transcricao-usuario', { texto: '', final: true });
+                            socket.emit('voz:transcricao-iana', { texto: '', final: true });
+                        }
+                    },
+                    onerror: (e) => {
+                        console.error('[VOZ LIVE] erro:', e.message);
+                        socket.emit('voz:erro', { mensagem: 'Erro na conexão de voz.' });
+                    },
+                    onclose: () => sessoesVoz.delete(socket.id)
+                }
+            });
+
+            sessoesVoz.set(socket.id, session);
+        } catch (e) {
+            console.error('[VOZ LIVE] falha ao conectar:', e.message);
+            socket.emit('voz:erro', { mensagem: 'Não consegui conectar com a Iana agora.' });
+        }
+    });
+
+    // Pedacinho de áudio do microfone (PCM 16-bit, 16kHz, base64) — chega
+    // continuamente enquanto o usuário fala, não só no fim da frase.
+    socket.on('voz:audio', (base64Audio) => {
+        const session = sessoesVoz.get(socket.id);
+        if (!session) return;
+        try {
+            session.sendRealtimeInput({ audio: { data: base64Audio, mimeType: 'audio/pcm;rate=16000' } });
+        } catch (e) { console.error('[VOZ LIVE] erro ao enviar áudio:', e.message); }
+    });
+
+    socket.on('voz:encerrar', () => {
+        const session = sessoesVoz.get(socket.id);
+        if (session) { try { session.close(); } catch (e) { } sessoesVoz.delete(socket.id); }
+    });
+
+    socket.on('disconnect', () => {
+        const session = sessoesVoz.get(socket.id);
+        if (session) { try { session.close(); } catch (e) { } sessoesVoz.delete(socket.id); }
+    });
 });
+
+/* ── GEMINI LIVE (sessão da chamada de voz) ──────────────────────
+   Client separado do genAI de texto (SDK diferente: @google/genai,
+   não o @google/generative-ai usado no /chat/stream). Mesma
+   GEMINI_API_KEY, mas a Live API pode ter cota/disponibilidade
+   diferente do modelo de texto — vale conferir no Google AI Studio
+   se a chave tem acesso antes de testar em produção. */
+const liveAI = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
+const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview';
+const sessoesVoz = new Map(); // socket.id -> sessão Live ativa
+
+const SYSTEM_PROMPT_VOZ =
+    'Você é a Iana, assistente gamer, numa CHAMADA DE VOZ em tempo real (não é chat de texto). ' +
+    'RESPONDA SEMPRE EM PORTUGUÊS DO BRASIL, nunca em outro idioma. ' +
+    'Fale de forma natural, curta e conversacional, como numa ligação de verdade — evite frases ' +
+    'longas ou listas, porque isso vai ser falado em voz alta. Tem personalidade forte, gamer, ' +
+    'gírias quando cabe.';
 
 /* ── GEMINI ───────────────────────────────────────────────────── */
 let genAI = null;

@@ -24,14 +24,21 @@ let gravandoAudio = false;
 let streamCamera = null;
 let streamVoz = null;
 
-// Chamada de voz: feed ao vivo (ver abrirVoz/fecharVoz) e visualização
-// real do microfone (Web Audio API), separada do SpeechRecognition —
-// só serve pra alimentar as barrinhas do orbe com o volume de verdade.
+// Chamada de voz em tempo real (Gemini Live via socket.io — ver
+// abrirVoz/fecharVoz). Nada de SpeechRecognition nem TTS do navegador
+// aqui: o áudio do microfone é streamado cru pro servidor, e o áudio
+// de resposta chega já pronto e é tocado direto.
 let emChamadaVoz = false;
-let audioCtxVoz = null;
-let analyserVoz = null;
-let streamAudioVozBars = null;
-let rafVozId = null;
+let socketVoz = null;
+let mutadoVoz = false;
+let micStreamVoz = null;
+let audioCtxCapturaVoz = null;
+let processorVozCaptura = null;
+let audioCtxReproducaoVoz = null;
+let proximoInicioReproducao = 0;
+let fontesAgendadasVoz = [];
+let bufferTranscricaoUsuario = '';
+let bufferTranscricaoIana = '';
 
 const TELAS = [
     'tela-login', 'tela-cadastro', 'tela-esqueci', 'tela-codigo',
@@ -95,7 +102,9 @@ function montarConfigPrompt() {
     return linhas.join('\n');
 }
 
-/* ── TTS (TEXT-TO-SPEECH) ─────────────────────────────────────── */
+/* ── TTS (TEXT-TO-SPEECH) — só usado no CHAT DE TEXTO. Na chamada de
+   voz (Gemini Live) o áudio já vem pronto do servidor, não passa por
+   aqui. ────────────────────────────────────────────────────────── */
 function getVoicesTTS() {
     return typeof speechSynthesis !== 'undefined' ? speechSynthesis.getVoices() : [];
 }
@@ -109,12 +118,6 @@ function escolherVozTTS() {
     return ttsVoice;
 }
 
-// INTEGRAÇÃO HUD: dispara 'falando' quando o áudio realmente começa e
-// volta pro estado certo (ouvindo, se estiver em chamada de voz; ocioso,
-// caso contrário) quando o áudio termina. Usar os eventos onstart/onend
-// da utterance é mais preciso que setar o estado na hora de chamar
-// falar(), porque sincroniza com o áudio de verdade, não com o texto
-// chegando.
 function falar(texto) {
     try {
         if (!ttsEnabled || typeof speechSynthesis === 'undefined' || !texto) return;
@@ -124,15 +127,8 @@ function falar(texto) {
         if (voz) ut.voice = voz;
         ut.rate = 1;
         ut.pitch = 1.05;
-
-        ut.onstart = () => {
-            window.IanaHUD?.setEstado('falando');
-        };
-        ut.onend = () => {
-            const emChamada = document.getElementById('overlay-voz')?.style.display === 'flex';
-            window.IanaHUD?.setEstado(emChamada ? 'ouvindo' : 'ocioso');
-        };
-
+        ut.onstart = () => { window.IanaHUD?.setEstado('falando'); };
+        ut.onend = () => { window.IanaHUD?.setEstado('ocioso'); };
         speechSynthesis.cancel();
         speechSynthesis.speak(ut);
     } catch (e) {
@@ -193,32 +189,51 @@ async function capturarFoto() {
     await processarEnvioIA('[Usuário enviou uma foto capturada pela câmera.]');
 }
 
-/* ── MODAL CHAMADA DE VOZ (estilo Jarvis) ─────────────────────── */
+/* ── CHAMADA DE VOZ EM TEMPO REAL (Gemini Live) ──────────────────
+   Fluxo: microfone -> PCM 16kHz -> socket.io -> servidor (sessão Live)
+   -> Gemini já responde em áudio conforme processa, sem esperar você
+   terminar de falar pra só então "processar tudo". O áudio de volta
+   (PCM 24kHz) chega em pedaços e é tocado assim que chega. ────────── */
+
 function abrirVoz() {
     const overlay = document.getElementById('overlay-voz');
     if (overlay) overlay.style.display = 'flex';
 
     emChamadaVoz = true;
+    mutadoVoz = false;
+    bufferTranscricaoUsuario = '';
+    bufferTranscricaoIana = '';
     window.IanaHUD?.iniciar('voz-hud-grande', 'lg');
+    window.IanaHUD?.setEstado('ouvindo');
     limparFeedVoz();
-    iniciarVisualizacaoAudio();
-    iniciarReconhecimentoVoz();
+
+    const statusEl = document.getElementById('voz-status');
+    if (statusEl) statusEl.textContent = 'Conectando...';
+
+    iniciarSocketVoz();
 }
 
 function fecharVoz() {
     const overlay = document.getElementById('overlay-voz');
     if (overlay) overlay.style.display = 'none';
-    if (window._recognitionVoz) {
-        try { window._recognitionVoz.stop(); } catch (e) { }
-        window._recognitionVoz = null;
+
+    if (socketVoz) {
+        try { socketVoz.emit('voz:encerrar'); } catch (e) { }
+        socketVoz.disconnect();
+        socketVoz = null;
     }
-    if (streamVoz) {
-        streamVoz.getTracks().forEach(t => t.stop());
-        streamVoz = null;
+
+    pararCapturaMicrofone();
+    pararReproducaoVoz();
+    if (audioCtxReproducaoVoz) {
+        audioCtxReproducaoVoz.close().catch(() => { });
+        audioCtxReproducaoVoz = null;
     }
-    speechSynthesis?.cancel();
-    pararVisualizacaoAudio();
+
     emChamadaVoz = false;
+    mutadoVoz = false;
+    bufferTranscricaoUsuario = '';
+    bufferTranscricaoIana = '';
 
     const interim = document.getElementById('voz-interim');
     if (interim) interim.textContent = '';
@@ -230,46 +245,195 @@ function fecharVoz() {
     window.IanaHUD?.setEstado('ocioso');
 }
 
-/* Volume real do microfone -> alimenta as barrinhas do orbe (--nivel).
-   Roda em paralelo ao SpeechRecognition (que não expõe volume). */
-async function iniciarVisualizacaoAudio() {
-    try {
-        streamAudioVozBars = await navigator.mediaDevices.getUserMedia({ audio: true });
-        audioCtxVoz = new (window.AudioContext || window.webkitAudioContext)();
-        const source = audioCtxVoz.createMediaStreamSource(streamAudioVozBars);
-        analyserVoz = audioCtxVoz.createAnalyser();
-        analyserVoz.fftSize = 32;
-        source.connect(analyserVoz);
-        loopVisualizacaoAudio();
-    } catch (e) {
-        console.warn('Visualização de áudio do microfone indisponível:', e.message);
-    }
-}
+/* Conecta o socket.io (exige login — mesma auth do resto do app) e
+   registra os eventos da sessão de voz. */
+function iniciarSocketVoz() {
+    const statusEl = document.getElementById('voz-status');
 
-function loopVisualizacaoAudio() {
-    if (!analyserVoz) return;
-    const dados = new Uint8Array(analyserVoz.frequencyBinCount);
-    analyserVoz.getByteFrequencyData(dados);
-    const media = dados.reduce((a, b) => a + b, 0) / dados.length;
-    const nivel = Math.min(1, media / 90);
-    document.querySelectorAll('.jarvis-bars').forEach(bars => {
-        bars.style.setProperty('--nivel', nivel.toFixed(2));
+    if (typeof io === 'undefined') {
+        if (statusEl) statusEl.textContent = 'Chamada de voz indisponível (socket.io não carregado).';
+        return;
+    }
+
+    socketVoz = io({ withCredentials: true });
+
+    socketVoz.on('connect', () => socketVoz.emit('voz:iniciar'));
+
+    socketVoz.on('connect_error', () => {
+        if (statusEl) statusEl.textContent = 'Faça login pra usar a chamada de voz.';
     });
-    rafVozId = requestAnimationFrame(loopVisualizacaoAudio);
+
+    socketVoz.on('voz:pronto', async () => {
+        if (statusEl) statusEl.textContent = 'Fale com a Iana';
+        try {
+            iniciarReproducaoVoz();
+            await iniciarCapturaMicrofone();
+        } catch (e) {
+            if (statusEl) statusEl.textContent = 'Não consegui acessar o microfone: ' + e.message;
+        }
+    });
+
+    socketVoz.on('voz:transcricao-usuario', ({ texto, final }) => {
+        const interim = document.getElementById('voz-interim');
+        if (final) {
+            if (bufferTranscricaoUsuario.trim()) adicionarNaFeedVoz('user', bufferTranscricaoUsuario.trim());
+            bufferTranscricaoUsuario = '';
+            if (interim) interim.textContent = '';
+        } else {
+            bufferTranscricaoUsuario += texto;
+            if (interim) interim.textContent = bufferTranscricaoUsuario;
+        }
+    });
+
+    socketVoz.on('voz:transcricao-iana', ({ texto, final }) => {
+        if (final) {
+            if (bufferTranscricaoIana.trim()) adicionarNaFeedVoz('iana', bufferTranscricaoIana.trim());
+            bufferTranscricaoIana = '';
+        } else {
+            bufferTranscricaoIana += texto;
+        }
+    });
+
+    // Áudio de resposta chegando em tempo real — toca assim que chega,
+    // sem esperar a frase inteira (é isso que dá a sensação "ao vivo").
+    socketVoz.on('voz:audio-resposta', ({ audio }) => tocarChunkAudio(audio));
+
+    // Barge-in: você começou a falar por cima dela — para o que estava tocando.
+    socketVoz.on('voz:interrompido', () => pararReproducaoVoz());
+
+    socketVoz.on('voz:erro', ({ mensagem }) => {
+        if (statusEl) statusEl.textContent = mensagem || 'Erro na chamada.';
+    });
+
+    socketVoz.on('disconnect', () => {
+        window.IanaHUD?.setEstado('ocioso');
+    });
 }
 
-function pararVisualizacaoAudio() {
-    if (rafVozId) cancelAnimationFrame(rafVozId);
-    rafVozId = null;
-    if (streamAudioVozBars) {
-        streamAudioVozBars.getTracks().forEach(t => t.stop());
-        streamAudioVozBars = null;
+/* ── CAPTURA DO MICROFONE (mic -> PCM 16kHz -> base64 -> socket) ── */
+async function iniciarCapturaMicrofone() {
+    micStreamVoz = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+    audioCtxCapturaVoz = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioCtxCapturaVoz.createMediaStreamSource(micStreamVoz);
+
+    // ScriptProcessorNode é o jeito mais simples e compatível de pegar
+    // os samples crus sem precisar carregar um AudioWorklet à parte;
+    // é deprecated mas ainda funciona em todo navegador relevante.
+    processorVozCaptura = audioCtxCapturaVoz.createScriptProcessor(4096, 1, 1);
+
+    // Precisa estar conectado até .destination pra o onaudioprocess
+    // disparar de forma confiável — mas com gain 0 pra não tocar o
+    // seu próprio microfone de volta (eco).
+    const silencioso = audioCtxCapturaVoz.createGain();
+    silencioso.gain.value = 0;
+
+    processorVozCaptura.onaudioprocess = (e) => {
+        if (mutadoVoz || !socketVoz?.connected) return;
+        const entrada = e.inputBuffer.getChannelData(0);
+
+        // Nível real pro visualizador do orbe (mesma captura — sem 2º
+        // getUserMedia separado só pra isso, como era antes).
+        let soma = 0;
+        for (let i = 0; i < entrada.length; i++) soma += entrada[i] * entrada[i];
+        const nivel = Math.min(1, Math.sqrt(soma / entrada.length) * 6);
+        document.querySelectorAll('.jarvis-bars').forEach(b => b.style.setProperty('--nivel', nivel.toFixed(2)));
+
+        const reamostrado = reamostrarPara16kHz(entrada, audioCtxCapturaVoz.sampleRate);
+        const pcm16 = float32ParaPCM16(reamostrado);
+        socketVoz.emit('voz:audio', arrayBufferParaBase64(pcm16.buffer));
+    };
+
+    source.connect(processorVozCaptura);
+    processorVozCaptura.connect(silencioso);
+    silencioso.connect(audioCtxCapturaVoz.destination);
+}
+
+function pararCapturaMicrofone() {
+    if (processorVozCaptura) { processorVozCaptura.disconnect(); processorVozCaptura = null; }
+    if (micStreamVoz) { micStreamVoz.getTracks().forEach(t => t.stop()); micStreamVoz = null; }
+    if (audioCtxCapturaVoz) { audioCtxCapturaVoz.close().catch(() => { }); audioCtxCapturaVoz = null; }
+    document.querySelectorAll('.jarvis-bars').forEach(b => b.style.setProperty('--nivel', 0));
+}
+
+// A Live API espera PCM a 16kHz, mas o microfone roda na taxa nativa
+// do aparelho (normalmente 44.1/48kHz) — reamostragem simples por
+// decimação (suficiente pra voz; não é qualidade de estúdio, mas é
+// leve o bastante pra rodar em tempo real sem travar).
+function reamostrarPara16kHz(float32, taxaOriginal) {
+    if (taxaOriginal === 16000) return float32;
+    const razao = taxaOriginal / 16000;
+    const novoTamanho = Math.floor(float32.length / razao);
+    const resultado = new Float32Array(novoTamanho);
+    for (let i = 0; i < novoTamanho; i++) resultado[i] = float32[Math.floor(i * razao)];
+    return resultado;
+}
+
+function float32ParaPCM16(float32Array) {
+    const pcm16 = new Int16Array(float32Array.length);
+    for (let i = 0; i < float32Array.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32Array[i]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
-    if (audioCtxVoz) {
-        audioCtxVoz.close().catch(() => { });
-        audioCtxVoz = null;
-    }
-    analyserVoz = null;
+    return pcm16;
+}
+
+function arrayBufferParaBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+}
+
+function base64ParaArrayBuffer(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+}
+
+/* ── REPRODUÇÃO DO ÁUDIO DE RESPOSTA (PCM 24kHz, chega em pedaços) ──
+   Agenda cada pedaço pra tocar logo depois do anterior (fila por
+   currentTime), então mesmo chegando em chunks separados soa como
+   uma fala contínua, sem cortes nem sobreposição. */
+function iniciarReproducaoVoz() {
+    audioCtxReproducaoVoz = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+    proximoInicioReproducao = 0;
+}
+
+function tocarChunkAudio(base64PCM) {
+    if (!audioCtxReproducaoVoz) return;
+
+    const pcm16 = new Int16Array(base64ParaArrayBuffer(base64PCM));
+    const float32 = new Float32Array(pcm16.length);
+    for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768;
+
+    const audioBuffer = audioCtxReproducaoVoz.createBuffer(1, float32.length, 24000);
+    audioBuffer.copyToChannel(float32, 0);
+
+    const source = audioCtxReproducaoVoz.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioCtxReproducaoVoz.destination);
+
+    const agora = audioCtxReproducaoVoz.currentTime;
+    const inicio = Math.max(agora, proximoInicioReproducao);
+    source.start(inicio);
+    proximoInicioReproducao = inicio + audioBuffer.duration;
+    fontesAgendadasVoz.push(source);
+
+    // INTEGRAÇÃO HUD: enquanto tem áudio agendado tocando, orbe "fala".
+    window.IanaHUD?.setEstado('falando');
+    source.onended = () => {
+        fontesAgendadasVoz = fontesAgendadasVoz.filter(s => s !== source);
+        if (!fontesAgendadasVoz.length) window.IanaHUD?.setEstado('ouvindo');
+    };
+}
+
+function pararReproducaoVoz() {
+    fontesAgendadasVoz.forEach(s => { try { s.stop(); } catch (e) { } });
+    fontesAgendadasVoz = [];
+    proximoInicioReproducao = 0;
 }
 
 /* ── FEED AO VIVO DA CHAMADA ──────────────────────────────────── */
@@ -290,58 +454,15 @@ function adicionarNaFeedVoz(tipo, texto) {
     feed.scrollTop = feed.scrollHeight;
 }
 
-function iniciarReconhecimentoVoz() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const statusEl = document.getElementById('voz-status');
-    const transcriptEl = document.getElementById('voz-interim');
-
-    if (!SpeechRecognition) {
-        if (statusEl) statusEl.textContent = 'Reconhecimento de voz não suportado neste navegador.';
-        return;
-    }
-
-    const rec = new SpeechRecognition();
-    rec.lang = 'pt-BR';
-    rec.continuous = true;
-    rec.interimResults = true;
-    window._recognitionVoz = rec;
-
-    rec.onresult = (e) => {
-        let texto = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-            texto += e.results[i][0].transcript;
-        }
-        if (transcriptEl) transcriptEl.textContent = texto;
-        if (e.results[e.results.length - 1].isFinal && texto.trim()) {
-            if (statusEl) statusEl.textContent = 'Processando...';
-            ttsNextResponse = true;
-            processarEnvioIA(texto.trim()).then(() => {
-                if (statusEl) statusEl.textContent = 'Fale com a Iana';
-                if (transcriptEl) transcriptEl.textContent = '';
-            });
-        }
-    };
-
-    rec.onerror = () => {
-        if (statusEl) statusEl.textContent = 'Erro ao ouvir. Tente novamente.';
-    };
-
-    rec.start();
-    // INTEGRAÇÃO HUD: começou a escutar.
-    window.IanaHUD?.setEstado('ouvindo');
-}
-
 function toggleMuteVoz() {
+    mutadoVoz = !mutadoVoz;
     const btn = document.getElementById('btn-voz-mute');
-    if (window._recognitionVoz) {
-        try { window._recognitionVoz.stop(); } catch (e) { }
-        window._recognitionVoz = null;
-        if (btn) { btn.textContent = '🔇'; btn.classList.add('mutado'); }
-        // INTEGRAÇÃO HUD: mutou, volta ao repouso.
-        window.IanaHUD?.setEstado('ocioso');
-    } else {
-        iniciarReconhecimentoVoz();
-        if (btn) { btn.textContent = '🎙️'; btn.classList.remove('mutado'); }
+    if (btn) {
+        btn.textContent = mutadoVoz ? '🔇' : '🎙️';
+        btn.classList.toggle('mutado', mutadoVoz);
+    }
+    if (mutadoVoz) {
+        document.querySelectorAll('.jarvis-bars').forEach(b => b.style.setProperty('--nivel', 0));
     }
 }
 

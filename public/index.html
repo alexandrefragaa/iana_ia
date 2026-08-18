@@ -23,7 +23,7 @@
                 <span class="brand-name">Iana</span>
             </div>
             <button class="btn-icon" id="sidebar-toggle" title="Recolher">
-                <img src="/img/escrever.png" style="width:20px;filter:invert(.7);">
+                <img src="/img/menu.png" style="width:20px;filter:invert(.7);">
             </button>
         </div>
 
@@ -44,7 +44,7 @@
 
         <div class="sidebar-footer" id="sidebar-footer" style="display:none;">
             <div class="user-row">
-                <img src="/img/iana-avatar.png" class="user-avatar" id="user-avatar-sidebar">
+                <img src="/img/iana-avatar.png" class="user-avatar" id="topbar-profile-avatar">
                 <span class="user-nome" id="user-nome-sidebar">Nome</span>
                 <button class="btn-icon btn-user-menu" id="btn-user-menu">
                     <img src="/img/points.png" style="width:18px;filter:invert(.7);">
@@ -63,33 +63,20 @@
     <main class="main" id="main">
 
         <header class="topbar">
-            <!-- Caso tenha um toggle para mobile na topbar, ele seria colocado aqui -->
-            <button class="btn-icon" id="topbar-menu-toggle" style="display:none;" title="Abrir menu">
-                ☰
-            </button>
+            <button class="btn-icon" id="topbar-menu-toggle" style="display:none;" title="Abrir menu">☰</button>
             <div class="topbar-right" id="auth-buttons">
                 <button class="btn-entrar" id="btn-entrar">Entrar</button>
                 <button class="btn-registrar" id="btn-registrar">Registrar</button>
             </div>
         </header>
 
+        <!-- FIX: id trocado de "msgs" para "chat-messages", que é o
+             primeiro nome que chat.js procura (obterElemento('chat-messages')
+             || obterElemento('mensagens')). A tela de boas-vindas agora é
+             inserida DENTRO desse container pelo próprio chat.js
+             (mostrarWelcome), não mais como irmã fixa no HTML. -->
         <div class="chatbox" id="chatbox">
-            <div class="welcome" id="welcome">
-                <div class="welcome-avatar-wrap">
-                    <img src="/img/iana-avatar.png" class="welcome-avatar" alt="Iana">
-                </div>
-                <h1 class="welcome-titulo" id="welcome-titulo">
-                    <span class="g-text">Olá! Que bom que chegou 👋</span>
-                </h1>
-                <p class="welcome-sub" id="welcome-sub">Como posso te ajudar hoje?</p>
-                <div class="sugestoes" id="sugestoes">
-                    <button class="sugestao-chip" onclick="usarSugestao('Como conseguir platina em Dead by Daylight?')">🏆 Platina em DBD</button>
-                    <button class="sugestao-chip" onclick="usarSugestao('Como criar builds maneiras e divertidas ou tóxicas no DBD')">🦇 Builds Dead By Daylight</button>
-                    <button class="sugestao-chip" onclick="usarSugestao('Onde encontrar todos os itens de Resident Evil 4?')">🧟 Itens RE4</button>
-                    <button class="sugestao-chip" onclick="usarSugestao('Como evoluir rápido no GTA RP?')">🚗 GTA RP Dicas</button>
-                </div>
-            </div>
-            <div class="msgs" id="msgs"></div>
+            <div class="msgs" id="chat-messages"></div>
         </div>
 
         <div class="input-wrap">
@@ -127,37 +114,41 @@
     <button class="upload-item" id="up-tela">🖥️ Compartilhar Tela</button>
 </div>
 
-<!-- MODAL CÂMERA -->
+<!-- MODAL CÂMERA — FIX: botões agora têm id (btn-camera-fechar /
+     btn-camera-capturar) porque é isso que chat.js procura, em vez
+     de só onclick inline. -->
 <div class="overlay" id="overlay-camera" style="display:none;">
     <div class="modal-camera">
-        <button class="modal-close" onclick="fecharCamera()">✕</button>
+        <button class="modal-close" id="btn-camera-fechar">✕</button>
         <h3>📷 Câmera</h3>
         <video id="camera-preview" autoplay playsinline style="width:100%;border-radius:12px;"></video>
         <div style="display:flex;gap:10px;margin-top:12px;">
-            <button class="btn-modal-acao" id="btn-capturar-foto">📸 Capturar</button>
-            <button class="btn-modal-sec" onclick="fecharCamera()">Cancelar</button>
+            <button class="btn-modal-acao" id="btn-camera-capturar">📸 Capturar</button>
+            <button class="btn-modal-sec" id="btn-camera-cancelar">Cancelar</button>
         </div>
     </div>
 </div>
 
-<!-- MODAL CHAMADA DE VOZ -->
-<div class="overlay" id="overlay-voz" style="display:none;">
-    <div class="modal-voz">
-        <div class="voz-avatar-wrap">
-            <img src="/img/iana-avatar.png" class="voz-avatar" id="voz-avatar">
-            <div class="voz-ondas" id="voz-ondas">
-                <span></span><span></span><span></span><span></span><span></span>
-            </div>
-        </div>
-        <h2 class="voz-titulo">Iana está ouvindo...</h2>
-        <p class="voz-status" id="voz-status">Fale com a Iana</p>
+<!-- MODAL CHAMADA DE VOZ — reescrito pro HUD estilo Jarvis (troféu
+     animado). O chat.js liga/desliga classes iana-voz-ouvindo /
+     iana-voz-processando / iana-voz-falando no próprio #overlay-voz,
+     e chama window.IanaHUD.setEstado() separadamente pro núcleo
+     visual dentro de #voz-hud-grande. -->
+<div class="overlay jarvis-call" id="overlay-voz" style="display:none;">
+    <div class="jarvis-call-inner">
 
-        <div class="voz-feed" id="voz-feed" aria-live="polite"></div>
+        <div class="jarvis-call-centro">
+            <div class="jarvis-hud jarvis-hud--lg" id="voz-hud-grande"></div>
+            <p class="voz-status" id="voz-status">Fale com a Iana</p>
+        </div>
+
+        <!-- chat.js escreve a última resposta da Iana aqui (voz-transcript)
+             e a legenda ao vivo do que você está falando aqui (voz-interim) -->
+        <p class="voz-transcript" id="voz-transcript"></p>
         <p class="voz-interim" id="voz-interim"></p>
-        <p class="voz-transcript" id="voz-transcript" aria-hidden="true"></p>
 
         <div class="voz-acoes">
-            <button class="btn-voz-mute" id="btn-voz-mute">🎙️</button>
+            <button class="btn-voz-mute" id="btn-voz-mute" title="Mutar">🎙️</button>
             <button class="btn-voz-encerrar" id="btn-voz-encerrar">Encerrar chamada</button>
         </div>
     </div>
@@ -221,21 +212,24 @@
             <div id="pesquisa-resultados"></div>
         </div>
 
+        <!-- FIX: campo único (feedback-input / feedback-erro), sem
+             assunto separado nem checkbox — é isso que chat.js e a
+             nova rota /feedback do server.js esperam. -->
         <div id="tela-feedback" style="display:none;">
             <button class="modal-close" onclick="fecharAuth()">✕</button>
             <h2 class="modal-titulo">Enviar Feedback</h2>
-            <input type="text" id="fb-assunto" placeholder="Assunto" class="modal-input">
-            <textarea id="fb-texto" placeholder="Descreva..." class="modal-input" style="min-height:100px;resize:vertical;"></textarea>
-            <label style="display:flex;gap:8px;align-items:center;font-size:.85rem;color:#a1a1aa;cursor:pointer;">
-                <input type="checkbox" id="fb-autoriza" style="accent-color:#a855f7;"> Autorizo o uso para melhorias
-            </label>
+            <textarea id="feedback-input" placeholder="Conte pra gente o que achou, ou o que podia melhorar..." class="modal-input" style="min-height:120px;resize:vertical;"></textarea>
+            <p class="modal-erro" id="feedback-erro"></p>
             <button class="btn-modal-acao" id="btn-fb-enviar">Enviar</button>
         </div>
 
+        <!-- FIX: id trocado de rename-input para renomear-input,
+             adicionado renomear-erro, que é o que chat.js usa. -->
         <div id="tela-renomear" style="display:none;">
             <button class="modal-close" onclick="fecharAuth()">✕</button>
             <h2 class="modal-titulo">Renomear Conversa</h2>
-            <input type="text" id="rename-input" placeholder="Novo título..." class="modal-input">
+            <input type="text" id="renomear-input" placeholder="Novo título..." class="modal-input">
+            <p class="modal-erro" id="renomear-erro"></p>
             <button class="btn-modal-acao" id="btn-salvar-rename">Salvar</button>
         </div>
 

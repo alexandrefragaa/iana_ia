@@ -1,4 +1,3 @@
-
 /* ==========================================================================
    styles.css — Estilos principais da IANA
    ========================================================================== */
@@ -343,9 +342,13 @@ main {
 
 /* ==========================================================================
    4.4 ITENS DO HISTÓRICO
+   FIX: o chat.js atual gera .historico-item / .historico-conversa /
+   .historico-titulo / .historico-menu-btn / .historico-acoes — nomes
+   diferentes do que existia aqui antes (.chat-item etc, que ficou sem
+   uso). Adicionadas as classes que o JS realmente cria.
    ========================================================================== */
 
-.chat-item {
+.historico-item {
     position: relative;
     display: flex;
     align-items: center;
@@ -357,29 +360,34 @@ main {
     transition: .2s;
 }
 
-.chat-item:hover {
+.historico-item:hover {
     background: rgba(255, 255, 255, .06);
 }
 
-.chat-item.active {
+.historico-item.ativo {
     background: rgba(34, 211, 238, .15);
 }
 
-.chat-titulo {
+.historico-conversa {
     flex: 1;
     min-width: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    padding: 0;
+}
+
+.historico-titulo {
+    display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: .88rem;
 }
 
-.chat-options-wrapper {
-    position: relative;
-    flex-shrink: 0;
-}
-
-.btn-chat-options {
+.historico-menu-btn {
     background: none;
     border: none;
     color: #a1a1aa;
@@ -388,35 +396,34 @@ main {
     border-radius: 6px;
     opacity: 0;
     transition: .2s;
+    flex-shrink: 0;
 }
 
-.chat-item:hover .btn-chat-options {
+.historico-item:hover .historico-menu-btn {
     opacity: 1;
 }
 
-.btn-chat-options:hover {
+.historico-menu-btn:hover {
     background: rgba(255, 255, 255, .08);
     color: #fff;
 }
 
-.chat-options-menu {
-    position: fixed;
+.historico-acoes {
+    position: absolute;
+    right: 8px;
+    top: calc(100% + 4px);
     background: #1a0a2e;
     border: 1px solid rgba(34, 211, 238, .3);
     border-radius: 10px;
     overflow: hidden;
-    display: none;
+    display: flex;
     flex-direction: column;
-    min-width: 160px;
+    min-width: 150px;
     z-index: 500;
     box-shadow: 0 10px 28px rgba(0, 0, 0, .35);
 }
 
-.chat-options-menu.ativo {
-    display: flex;
-}
-
-.chat-option-btn {
+.historico-acoes button {
     width: 100%;
     background: none;
     border: none;
@@ -431,15 +438,15 @@ main {
     transition: .2s;
 }
 
-.chat-option-btn:hover {
+.historico-acoes button:hover {
     background: rgba(34, 211, 238, .1);
 }
 
-.chat-option-btn.excluir {
+.historico-acoes [data-acao="excluir"] {
     color: #f87171;
 }
 
-.chat-option-btn.excluir:hover {
+.historico-acoes [data-acao="excluir"]:hover {
     background: rgba(248, 113, 113, .1);
 }
 
@@ -545,6 +552,32 @@ main {
 
 
 /* ==========================================================================
+   4.6 ÁREA DE MENSAGENS (chatbox)
+   FIX: essa regra nunca existiu — sem ela, #chatbox não tinha flex:1
+   nem overflow-y:auto, então a área de mensagens não rolava e podia
+   até estourar a altura da tela.
+   ========================================================================== */
+
+.chatbox {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 20px 20px 8px;
+}
+
+.chatbox::-webkit-scrollbar {
+    width: 8px;
+}
+
+.chatbox::-webkit-scrollbar-thumb {
+    background: rgba(34, 211, 238, .3);
+    border-radius: 10px;
+}
+
+
+/* ==========================================================================
    5. ÁREA DE DIGITAÇÃO
    ========================================================================== */
 
@@ -599,6 +632,19 @@ main {
 
 .pill-btn:active {
     transform: scale(.95);
+}
+
+/* FIX: .gravando nunca tinha estilo — botão de mic gravando ficava
+   visualmente idêntico ao parado, sem feedback nenhum de "tá gravando". */
+.pill-btn.gravando {
+    opacity: 1;
+    background: rgba(239, 68, 68, .18) !important;
+    animation: pulsarGravando 1.2s ease-in-out infinite;
+}
+
+@keyframes pulsarGravando {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, .4); }
+    50%      { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
 }
 
 .chat-textarea {
@@ -1293,19 +1339,38 @@ main {
 
 /* ==========================================================================
    8. TELA DE BOAS-VINDAS
+   FIX: chat.js (mostrarWelcome) agora insere DENTRO de #chat-messages:
+   <div class="iana-welcome"><div class="iana-welcome-content">
+   <h1>...</h1><p>...</p></div></div>
+   — as classes antigas (.welcome, .welcome-avatar-wrap, .g-text,
+   .sugestoes...) não são mais criadas por ninguém, então ficam aqui
+   só de referência (podem ser removidas depois se quiser limpar).
    ========================================================================== */
 
-.welcome {
+.iana-welcome {
     flex: 1;
     width: 100%;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
     text-align: center;
-    gap: 6px;
     padding: 24px 20px;
-    overflow-y: auto;
+}
+
+.iana-welcome-content h1 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 10px;
+    background: linear-gradient(90deg, #22d3ee, #a855f7);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.iana-welcome-content p {
+    font-size: 1rem;
+    color: #a1a1aa;
 }
 
 .welcome-avatar-wrap {
@@ -1322,23 +1387,11 @@ main {
     filter: drop-shadow(0 0 20px rgba(34, 211, 238, .25));
 }
 
-.welcome-titulo {
-    font-size: 1.8rem;
-    font-weight: 700;
-    line-height: 1.3;
-}
-
 .g-text {
     background: linear-gradient(90deg, #22d3ee, #a855f7);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-}
-
-.welcome-sub {
-    font-size: 1rem;
-    color: #a1a1aa;
-    margin-bottom: 18px;
 }
 
 .sugestoes {
@@ -1347,6 +1400,7 @@ main {
     justify-content: center;
     gap: 10px;
     max-width: 700px;
+    margin: 18px auto 0;
 }
 
 .sugestao-chip {
@@ -1475,8 +1529,12 @@ select:focus-visible {
 
     /* ── Tela de boas-vindas ───────────────────────────────── */
 
-    .welcome {
+    .iana-welcome {
         padding: 20px 14px;
+    }
+
+    .iana-welcome-content h1 {
+        font-size: 1.4rem;
     }
 
     .welcome-avatar-wrap {
@@ -1559,7 +1617,7 @@ select:focus-visible {
         padding-right: 10px;
     }
 
-    .welcome-titulo {
+    .iana-welcome-content h1 {
         font-size: 1.25rem;
     }
 

@@ -1,215 +1,99 @@
 /* ==========================================================================
    IANA — MENSAGENS DO CHAT
+   FIX: o chat.js atual (adicionarMensagemDOM / mostrarIndicadorDigitando)
+   cria .mensagem / .mensagem-usuario / .mensagem-ia / .mensagem-conteudo /
+   .mensagem-digitando / .typing-dot — nomes diferentes das classes que
+   existiam aqui antes (.iana-response-container, .user-msg-bubble,
+   .thinking-bubble...), que agora ninguém cria. Reescrito para bater
+   com o que o JS realmente gera.
    ========================================================================== */
 
 /* ==========================================================================
-   1. LINHA DE MENSAGEM DA IANA
+   1. LINHA DE MENSAGEM (comum aos dois lados)
    ========================================================================== */
 
-.iana-response-container {
-    width: 100%;
+.mensagem {
     display: flex;
-    align-items: flex-start;
-    gap: 12px;
+    width: 100%;
     margin-bottom: 15px;
 }
 
-.iana-avatar-img {
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
-    flex-shrink: 0;
-    object-fit: cover;
-    border-radius: 50%;
-    border: 2px solid #22d3ee;
-    padding: 2px;
-    background: #11051c;
-    box-shadow: 0 0 10px rgba(34, 211, 238, .4);
+.mensagem-ia {
+    justify-content: flex-start;
 }
 
-.iana-message-bubble {
-    flex: 1;
+.mensagem-usuario {
+    justify-content: flex-end;
+}
+
+.mensagem-conteudo {
     max-width: min(85%, 900px);
     width: fit-content;
     padding: 14px 18px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    hyphens: auto;
+    white-space: pre-wrap;
+}
+
+/* ==========================================================================
+   2. BOLHA DA IANA
+   ========================================================================== */
+
+.mensagem-ia .mensagem-conteudo {
     background: rgba(30, 27, 46, .8);
     border: 1px solid rgba(168, 85, 247, .2);
     border-radius: 4px 20px 20px 20px;
     color: #e3e3e3;
     font-size: 1rem;
-    line-height: 1.6;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-    hyphens: auto;
     box-shadow: 0 4px 15px rgba(0, 0, 0, .2);
 }
 
-.iana-message-bubble img {
-    object-fit: contain;
+.mensagem-ia .mensagem-conteudo img {
     display: block;
     max-width: 100%;
     height: auto;
     border-radius: 12px;
     margin: 12px 0;
-}
-
-.iana-message-bubble p {
-    margin-top: 0;
-    margin-bottom: 8px;
-}
-
-.iana-message-bubble p:last-child {
-    margin-bottom: 0;
-}
-
-.iana-message-bubble code {
-    background: rgba(0, 0, 0, .35);
-    padding: 2px 6px;
-    border-radius: 6px;
-    font-size: .9em;
-    white-space: break-spaces;
-    overflow-wrap: anywhere;
-    font-family: Consolas, "Courier New", monospace;
-}
-
-.iana-message-bubble pre {
-    background: rgba(0, 0, 0, .45);
-    padding: 14px;
-    border-radius: 10px;
-    overflow-x: auto;
-    overflow-y: auto;
-    margin: 10px 0;
-    max-width: 100%;
-}
-
-.iana-message-bubble pre::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-.iana-message-bubble pre::-webkit-scrollbar-thumb {
-    background: #555;
-    border-radius: 50px;
-}
-
-.iana-message-bubble pre::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.iana-message-bubble pre code {
-    white-space: pre;
-    background: none;
-    padding: 0;
-}
-
-.iana-message-bubble ul,
-.iana-message-bubble ol {
-    padding-left: 20px;
-    margin-top: 0;
-    margin-bottom: 8px;
-}
-
-.iana-message-bubble li {
-    margin-bottom: 4px;
-}
-
-.iana-message-bubble a {
-    overflow-wrap: anywhere;
-    color: #22d3ee;
-    text-decoration: none;
-    transition: .2s;
-}
-
-.iana-message-bubble a:hover {
-    color: #67e8f9;
-    text-decoration: underline;
-}
-
-.iana-message-bubble blockquote {
-    border-left: 4px solid #22d3ee;
-    padding-left: 14px;
-    margin: 12px 0;
-    opacity: .9;
-}
-
-.iana-message-bubble table {
-    display: block;
-    overflow-x: auto;
-    width: 100%;
-    max-width: 100%;
-    border-collapse: collapse;
-    margin: 12px 0;
-}
-
-.iana-message-bubble th,
-.iana-message-bubble td {
-    padding: 8px;
-    border: 1px solid rgba(255, 255, 255, .12);
-    text-align: left;
-}
-
-.iana-message-bubble th {
-    background: rgba(255, 255, 255, .06);
-    font-weight: 600;
-}
-
-.iana-message-bubble hr {
-    border: 0;
-    border-top: 1px solid rgba(255, 255, 255, .12);
-    margin: 16px 0;
+    object-fit: contain;
 }
 
 /* ==========================================================================
-   2. BOLHA DO USUÁRIO
+   3. BOLHA DO USUÁRIO
    ========================================================================== */
 
-.user-msg-wrap {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    width: 100%;
-    margin-bottom: 15px;
-}
-
-.user-msg-bubble {
+.mensagem-usuario .mensagem-conteudo {
     max-width: min(80%, 900px);
-    width: fit-content;
-    margin-left: auto;
-    padding: 14px 18px;
     background: linear-gradient(135deg, #4c1d95, #0891b2);
     color: white;
     border-radius: 20px 4px 20px 20px;
     line-height: 1.5;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-    hyphens: auto;
     box-shadow: 0 4px 15px rgba(34, 211, 238, .15);
 }
 
-.user-msg-bubble::selection,
-.iana-message-bubble::selection {
+.mensagem-conteudo::selection {
     background: #22d3ee;
     color: #000;
 }
 
 /* ==========================================================================
-   3. BOLHA DE PENSANDO
+   4. INDICADOR "DIGITANDO"
    ========================================================================== */
 
-.thinking-bubble {
-    padding: 14px 18px;
+.mensagem-digitando .mensagem-conteudo {
     background: rgba(30, 27, 46, .8);
     border: 1px solid rgba(168, 85, 247, .2);
     border-radius: 4px 20px 20px 20px;
     box-shadow: 0 4px 15px rgba(0, 0, 0, .2);
-    min-height: 52px;
-    width: fit-content;
+    min-height: 22px;
     display: flex;
     align-items: center;
     gap: 6px;
+    padding: 16px 18px;
 }
 
-.thinking-bubble .dot {
+.typing-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
@@ -217,85 +101,14 @@
     animation: bounceThinking 1.4s infinite ease-in-out both;
 }
 
-.thinking-bubble .dot:nth-child(2) {
+.typing-dot:nth-child(2) {
     animation-delay: -.16s;
     background: #22d3ee;
 }
 
-.thinking-bubble .dot:nth-child(3) {
+.typing-dot:nth-child(3) {
     animation-delay: -.08s;
 }
-
-/* ==========================================================================
-   4. LINHA DE AÇÕES
-   ========================================================================== */
-
-.msg-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 6px;
-}
-
-.msg-actions.user-actions {
-    justify-content: flex-end;
-}
-
-.msg-action-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    opacity: .55;
-    font-size: .85rem;
-    line-height: 1;
-    padding: 2px;
-    color: inherit;
-    transition:
-        transform .2s,
-        opacity .2s,
-        color .2s;
-}
-
-.msg-action-btn:hover {
-    opacity: 1;
-    transform: scale(1.1);
-}
-
-.msg-expand-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: #22d3ee;
-    font-size: .8rem;
-    opacity: .85;
-    padding: 0;
-    transition:
-        transform .2s,
-        opacity .2s,
-        color .2s;
-}
-
-.msg-expand-btn:hover {
-    color: #67e8f9;
-    opacity: 1;
-    text-decoration: underline;
-}
-
-/* ==========================================================================
-   5. CLAMP
-   ========================================================================== */
-
-.msg-clamped {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
-    overflow: hidden;
-}
-
-/* ==========================================================================
-   6. ANIMAÇÕES
-   ========================================================================== */
 
 @keyframes bounceThinking {
     0%,
@@ -311,6 +124,70 @@
     }
 }
 
+/* ==========================================================================
+   5. TEXTO RICO DENTRO DA BOLHA DA IANA (markdown, código, listas)
+   ========================================================================== */
+
+.mensagem-ia .mensagem-conteudo p {
+    margin: 0 0 8px;
+}
+
+.mensagem-ia .mensagem-conteudo p:last-child {
+    margin-bottom: 0;
+}
+
+.mensagem-ia .mensagem-conteudo code {
+    background: rgba(0, 0, 0, .35);
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-size: .9em;
+    white-space: break-spaces;
+    overflow-wrap: anywhere;
+    font-family: Consolas, "Courier New", monospace;
+}
+
+.mensagem-ia .mensagem-conteudo pre {
+    background: rgba(0, 0, 0, .45);
+    padding: 14px;
+    border-radius: 10px;
+    overflow-x: auto;
+    margin: 10px 0;
+    max-width: 100%;
+}
+
+.mensagem-ia .mensagem-conteudo pre code {
+    white-space: pre;
+    background: none;
+    padding: 0;
+}
+
+.mensagem-ia .mensagem-conteudo ul,
+.mensagem-ia .mensagem-conteudo ol {
+    padding-left: 20px;
+    margin: 0 0 8px;
+}
+
+.mensagem-ia .mensagem-conteudo a {
+    overflow-wrap: anywhere;
+    color: #22d3ee;
+    text-decoration: none;
+    transition: .2s;
+}
+
+.mensagem-ia .mensagem-conteudo a:hover {
+    color: #67e8f9;
+    text-decoration: underline;
+}
+
+.mensagem-ia .mensagem-conteudo strong {
+    color: #fff;
+    font-weight: 700;
+}
+
+/* ==========================================================================
+   6. ANIMAÇÃO DE ENTRADA
+   ========================================================================== */
+
 @keyframes mensagem-subir {
     from {
         opacity: 0;
@@ -323,85 +200,31 @@
     }
 }
 
-.user-msg-wrap.nova-mensagem,
-.iana-response-container.nova-mensagem {
-    animation:
-        mensagem-subir
-        .45s
-        cubic-bezier(.22, 1, .36, 1);
+.mensagem {
+    animation: mensagem-subir .35s cubic-bezier(.22, 1, .36, 1);
 }
 
 /* ==========================================================================
-   7. LINKS / CONTEÚDO
-   ========================================================================== */
-
-.iana-message-bubble strong {
-    color: #fff;
-    font-weight: 700;
-}
-
-.iana-message-bubble em {
-    color: #d4d4d8;
-}
-
-.iana-message-bubble h1,
-.iana-message-bubble h2,
-.iana-message-bubble h3,
-.iana-message-bubble h4 {
-    color: #fff;
-    line-height: 1.3;
-    margin-top: 16px;
-    margin-bottom: 8px;
-}
-
-.iana-message-bubble h1:first-child,
-.iana-message-bubble h2:first-child,
-.iana-message-bubble h3:first-child {
-    margin-top: 0;
-}
-
-/* ==========================================================================
-   8. RESPONSIVIDADE
+   7. RESPONSIVIDADE
    ========================================================================== */
 
 @media (max-width: 768px) {
 
-    .iana-response-container {
-        gap: 8px;
-    }
-
-    .iana-avatar-img {
-        width: 32px;
-        height: 32px;
-        min-width: 32px;
-    }
-
-    .iana-message-bubble,
-    .user-msg-bubble {
+    .mensagem-conteudo {
         max-width: 96%;
         padding: 12px 14px;
         font-size: .95rem;
     }
-
-    .iana-message-bubble pre {
-        padding: 10px;
-        border-radius: 8px;
-    }
-
-    .iana-message-bubble table {
-        font-size: .85rem;
-    }
 }
 
 /* ==========================================================================
-   9. ACESSIBILIDADE
+   8. ACESSIBILIDADE
    ========================================================================== */
 
 @media (prefers-reduced-motion: reduce) {
 
-    .user-msg-wrap.nova-mensagem,
-    .iana-response-container.nova-mensagem,
-    .thinking-bubble .dot {
+    .mensagem,
+    .typing-dot {
         animation: none !important;
     }
 }

@@ -18,6 +18,7 @@ import * as cheerio from 'cheerio';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import crypto from 'crypto';
+import WebSocket from 'ws'; // npm install ws — cliente WS pra falar com a ElevenLabs
 
 dotenv.config();
 
@@ -103,7 +104,7 @@ app.use(sessionMiddleware);
 app.use(passport.initialize());
 app.use(passport.session());
 
-/* ── SOCKET.IO ────────────────────────────────────────────────── */
+/* ── SOCKET.IO (voz em tempo real + sessão de visão) ─────────────── */
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
     cors: { origin: origensPermitidas, credentials: true }
@@ -119,165 +120,7 @@ io.use((socket, next) => {
     });
 });
 
-/* ── ELEVENLABS (voz exclusiva da Iana) ──────────────────────────
-   Voz modelada especificamente pra Iana via Voice Design (ver
-   desenhar-voz-iana.js / salvar-voz-iana.js) — não são as vozes
-   prontas de nenhum provedor terceiro. */
-let sgReady = false;
-const ELEVEN_API_KEY  = process.env.ELEVENLABS_API_KEY;
-const ELEVEN_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
-const elevenlabsPronto = !!(ELEVEN_API_KEY && ELEVEN_VOICE_ID);
-
-if (elevenlabsPronto) {
-    console.log('✅ ElevenLabs (voz da Iana) inicializado');
-} else {
-    console.warn('⚠️ ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID ausentes — chamada de voz sem áudio de saída');
-}
-
-/* Sintetiza um texto na voz da Iana e transmite os pedaços de áudio
-   (PCM 16-bit, 24kHz — é o formato que o chat.js espera decodificar)
-   via callback onChunk, à medida que chegam da ElevenLabs.
-   Retorna um AbortController pra permitir cancelar (barge-in). */
-function sintetizarVozIana(texto, onChunk, onDone, onError) {
-    const controller = new AbortController();
-
-    (async () => {
-        try {
-            const res = await fetch(
-                `https://api.elevenlabs.io/v1/text-to-speech/${ELEVEN_VOICE_ID}/stream?output_format=pcm_24000`,
-                {
-                    method: 'POST',
-                    signal: controller.signal,
-                    headers: {
-                        'xi-api-key': ELEVEN_API_KEY,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        text: texto,
-                        model_id: 'eleven_flash_v2_5',
-                        voice_settings: { stability: 0.5, similarity_boost: 0.8 }
-                    })
-                }
-            );
-
-            if (!res.ok || !res.body) {
-                throw new Error(`ElevenLabs respondeu ${res.status}: ${await res.text().catch(() => '')}`);
-            }
-
-            const reader = res.body.getReader();
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                onChunk(Buffer.from(value).toString('base64'));
-            }
-            onDone();
-        } catch (e) {
-            if (e.name !== 'AbortError') onError(e);
-        }
-    })();
-
-    return controller;
-}
-
-io.on('connection', (socket) => {
-    const idUser = socket.request.user?.id;
-    const nomeUser = socket.request.user?.nome || 'Visitante';
-    if (idUser) socket.join(`user_${idUser}`);
-
-    let sinteseEmAndamento = null;
-    let idConvVoz = null;
-
-    /* ── VOICE MODE (texto transcrito no navegador → IA → ElevenLabs) ──
-       Fluxo: o navegador já transcreve a fala do usuário com o
-       SpeechRecognition nativo (grátis, sem custo de API) e manda só o
-       TEXTO final aqui. O servidor gera a resposta reaproveitando a
-       mesma cadeia Python → Gemini → fixo do chat de texto normal, e
-       sintetiza a resposta na voz da Iana via ElevenLabs, streamando
-       de volta em pedaços. */
-    socket.on('voz:iniciar', () => {
-        socket.emit('voz:pronto');
-    });
-
-    socket.on('voz:texto', async (textoRecebido) => {
-        const texto = String(textoRecebido || '').trim();
-        if (!texto) return;
-
-        try {
-            const idConv = await garantirConversa(idUser, idConvVoz, texto);
-            idConvVoz = idConv;
-
-            if (idUser && idConv) {
-                pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)',
-                    [idConv, idUser, 'user', texto]).catch(e => console.error('[DB msg voz]', e.message));
-            }
-
-            let historico = [];
-            if (idUser && idConv) {
-                try {
-                    const [r] = await pool.query(
-                        'SELECT mensagem, remetente FROM mensagens WHERE conversa_id=? ORDER BY id DESC LIMIT 8',
-                        [idConv]
-                    );
-                    historico = r.reverse();
-                } catch (e) { console.error('[DB historico voz]', e.message); }
-            }
-
-            const resposta = await gerarRespostaIA({
-                nome: nomeUser, idConv, msg: texto, historico, humor: detectarHumor(texto),
-                config: '', modoVoz: true
-            });
-
-            if (idUser && idConv) {
-                pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)',
-                    [idConv, idUser, 'iana', resposta]).catch(e => console.error('[DB msg iana voz]', e.message));
-            }
-
-            socket.emit('voz:transcricao-iana', { texto: resposta });
-
-            if (!elevenlabsPronto) {
-                socket.emit('voz:erro', { mensagem: 'Voz da Iana não configurada (ELEVENLABS_API_KEY/ELEVENLABS_VOICE_ID ausentes).' });
-                socket.emit('voz:fala-finalizada');
-                return;
-            }
-
-            sinteseEmAndamento = sintetizarVozIana(
-                resposta,
-                (chunkBase64) => socket.emit('voz:audio-resposta', { audio: chunkBase64 }),
-                () => { sinteseEmAndamento = null; socket.emit('voz:fala-finalizada'); },
-                (e) => {
-                    console.error('[VOZ] ElevenLabs falhou:', e.message);
-                    sinteseEmAndamento = null;
-                    socket.emit('voz:erro', { mensagem: 'Falha ao gerar a voz da resposta.' });
-                    socket.emit('voz:fala-finalizada');
-                }
-            );
-        } catch (e) {
-            console.error('[VOZ] Erro ao processar texto:', e.message);
-            socket.emit('voz:erro', { mensagem: 'Não consegui processar sua mensagem.' });
-            socket.emit('voz:fala-finalizada');
-        }
-    });
-
-    // Barge-in: usuário voltou a falar por cima da resposta.
-    socket.on('voz:interromper', () => {
-        sinteseEmAndamento?.abort();
-        sinteseEmAndamento = null;
-        socket.emit('voz:interrompido');
-    });
-
-    socket.on('voz:encerrar', () => {
-        sinteseEmAndamento?.abort();
-        sinteseEmAndamento = null;
-        idConvVoz = null;
-    });
-
-    socket.on('disconnect', () => {
-        sinteseEmAndamento?.abort();
-        sinteseEmAndamento = null;
-    });
-});
-
-/* ── GEMINI ───────────────────────────────────────────────────── */
+/* ── GEMINI (texto) ───────────────────────────────────────────── */
 let genAI = null;
 try {
     if (process.env.GEMINI_API_KEY) {
@@ -288,10 +131,161 @@ try {
     }
 } catch (e) { console.error('❌ Gemini erro:', e.message); }
 
+/* ── ELEVENLABS (voz da chamada) ──────────────────────────────────
+   A voz de verdade da Iana (a que você modelou) só existe aqui, no
+   backend. O Gemini só gera o TEXTO da resposta (rápido, modo
+   normal); esse texto é mandado pra ElevenLabs, que devolve áudio
+   PCM 16-bit 24kHz em pedacinhos via WebSocket — cada pedaço já sai
+   pro navegador assim que chega, sem esperar a fala inteira ficar
+   pronta. */
+const ELEVEN_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || '42swcOVaxVM4TNSGUmkc';
+const ELEVEN_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2';
+
+function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro }) {
+    if (!process.env.ELEVENLABS_API_KEY) {
+        onErro(new Error('ELEVENLABS_API_KEY não configurada no servidor.'));
+        return;
+    }
+    if (!texto?.trim()) { onFim(); return; }
+
+    const url = `wss://api.elevenlabs.io/v1/text-to-speech/${ELEVEN_VOICE_ID}/stream-input`
+        + `?model_id=${encodeURIComponent(ELEVEN_MODEL_ID)}&output_format=pcm_24000`;
+
+    let finalizado = false;
+    const ws = new WebSocket(url, { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY } });
+
+    const timeout = setTimeout(() => {
+        if (finalizado) return;
+        finalizado = true;
+        try { ws.close(); } catch (e) { }
+        onErro(new Error('Timeout esperando áudio da ElevenLabs.'));
+    }, 20000);
+
+    ws.on('open', () => {
+        // 1ª mensagem: configura a voz. 2ª: o texto de verdade.
+        // 3ª (texto vazio): sinaliza pro servidor deles que acabou —
+        // sem isso a conexão fica esperando mais texto pra sempre.
+        ws.send(JSON.stringify({
+            text: ' ',
+            voice_settings: { stability: 0.5, similarity_boost: 0.8, use_speaker_boost: true },
+            generation_config: { chunk_length_schedule: [120, 160, 250, 290] }
+        }));
+        ws.send(JSON.stringify({ text: texto }));
+        ws.send(JSON.stringify({ text: '' }));
+    });
+
+    ws.on('message', (data) => {
+        try {
+            const msg = JSON.parse(data.toString());
+            if (msg.audio) onAudioChunk(msg.audio); // já vem em base64, PCM cru
+            if (msg.isFinal) {
+                if (finalizado) return;
+                finalizado = true;
+                clearTimeout(timeout);
+                onFim();
+                try { ws.close(); } catch (e) { }
+            }
+        } catch (e) {
+            if (finalizado) return;
+            finalizado = true;
+            clearTimeout(timeout);
+            onErro(e);
+        }
+    });
+
+    ws.on('error', (e) => {
+        if (finalizado) return;
+        finalizado = true;
+        clearTimeout(timeout);
+        onErro(e);
+    });
+}
+
+/* ── SOCKET.IO: eventos de voz e visão ────────────────────────── */
+const historicoVozPorSocket = new Map(); // socket.id -> últimas falas da chamada (não persiste no MySQL)
+
+const SYSTEM_PROMPT_VOZ =
+    'Você está numa CHAMADA DE VOZ em tempo real (não é chat de texto). ' +
+    'Fale de forma curta, natural e conversacional — como numa ligação de ' +
+    'verdade — porque isso vai ser narrado em voz alta. Evite listas e ' +
+    'textos longos. RESPONDA SEMPRE EM PORTUGUÊS DO BRASIL.';
+
+io.on('connection', (socket) => {
+    const idUser = socket.request.user?.id;
+    if (idUser) socket.join(`user_${idUser}`);
+
+    /* ── CHAMADA DE VOZ ──────────────────────────────────────────
+       Fluxo: o navegador transcreve sua fala (SpeechRecognition) e
+       manda só o TEXTO final aqui via 'voz:texto'. O servidor gera a
+       resposta em texto (Gemini) e já manda pra ElevenLabs virar
+       áudio com a voz modelada, streamando os pedaços de volta. */
+    socket.on('voz:iniciar', () => {
+        historicoVozPorSocket.set(socket.id, []);
+        socket.emit('voz:pronto');
+    });
+
+    socket.on('voz:texto', async (textoRecebido) => {
+        const msg = String(textoRecebido || '').trim();
+        if (!msg) return;
+        if (msg.length > 2000) {
+            socket.emit('voz:erro', { mensagem: 'Fala muito longa.' });
+            return;
+        }
+
+        const nome = socket.request.user?.nome || 'Visitante';
+        const historico = historicoVozPorSocket.get(socket.id) || [];
+
+        try {
+            const resposta = await gerarRespostaIA({
+                nome,
+                idConv: null,
+                msg,
+                historico,
+                humor: detectarHumor(msg),
+                config: SYSTEM_PROMPT_VOZ
+            });
+
+            historico.push({ remetente: 'user', mensagem: msg });
+            historico.push({ remetente: 'iana', mensagem: resposta });
+            historicoVozPorSocket.set(socket.id, historico.slice(-10));
+
+            socket.emit('voz:transcricao-iana', { texto: resposta });
+
+            falarComElevenLabs(resposta, {
+                onAudioChunk: (base64) => socket.emit('voz:audio-resposta', { audio: base64 }),
+                onFim: () => socket.emit('voz:fala-finalizada'),
+                onErro: (e) => {
+                    console.error('[ELEVENLABS]', e.message);
+                    socket.emit('voz:erro', { mensagem: 'Erro ao gerar a voz da Iana.' });
+                }
+            });
+        } catch (e) {
+            console.error('[VOZ TEXTO]', e.message);
+            socket.emit('voz:erro', { mensagem: 'Erro ao processar sua fala.' });
+        }
+    });
+
+    // Você começou a falar em cima da fala dela — o navegador já
+    // detecta e para de tocar sozinho; esse evento só existe pra
+    // avisar o servidor caso ele precise abortar algo em andamento.
+    socket.on('voz:interromper', () => {
+        socket.emit('voz:interrompido');
+    });
+
+    socket.on('voz:encerrar', () => {
+        historicoVozPorSocket.delete(socket.id);
+    });
+
+    socket.on('disconnect', () => {
+        historicoVozPorSocket.delete(socket.id);
+    });
+});
+
 /* ── SENDGRID ─────────────────────────────────────────────────── */
+let sendgridPronto = false;
 if (process.env.SENDGRID_API_KEY) {
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    sgReady = true;
+    sendgridPronto = true;
     console.log('✅ SendGrid inicializado');
 } else {
     console.warn('⚠️ SENDGRID_API_KEY ausente — envio de e-mail desativado');
@@ -341,15 +335,9 @@ async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
     return txt;
 }
 
-async function askGemini(mensagem, historico = [], instrucaoEmocional = '', configPrompt = '', modoVoz = false) {
+async function askGemini(mensagem, historico = [], instrucaoEmocional = '', configPrompt = '') {
     if (LOCAL_ONLY) return null;
     if (!genAI) return null;
-
-    const regraVoz = modoVoz
-        ? '\n\nVOCÊ ESTÁ NUMA CHAMADA DE VOZ AGORA (não é chat de texto). Fale curto, natural, ' +
-          'conversacional — como numa ligação de verdade. NUNCA use listas, markdown, ou frases ' +
-          'longas demais, porque isso vai ser falado em voz alta.'
-        : '';
 
     const system = (process.env.SYSTEM_PROMPT ||
         'Você é a Iana, uma assistente gamer animada, criativa, humanizada e solidária. ' +
@@ -359,7 +347,6 @@ async function askGemini(mensagem, historico = [], instrucaoEmocional = '', conf
         'e cultura nerd, games. ' +
         'REGRA DE CONVERSA: Em cumprimentos, perguntas sobre como você está ou reflexões normais, seja super breve, natural, sem "textão" e apenas siga o fluxo da conversa. ' +
         'Por outro lado, quando o usuário tiver uma dúvida de jogo e você tiver informações no contexto, usa TUDO para criar uma resposta completa, detalhada e útil, e mostra serviço. Nesse caso específico, sempre faz uma pergunta no final para continuar ajudando o usuário.')
-        + regraVoz
         + (instrucaoEmocional ? `\n\n[TOM]: ${instrucaoEmocional}` : '')
         + (configPrompt ? `\n\n[PERSONALIZAÇÃO]:\n${configPrompt}` : '');
 
@@ -424,24 +411,18 @@ async function askPython(nome, conversa, mensagem, historico = []) {
 }
 
 /* Gera a resposta da IA reaproveitando a cadeia Python → Gemini → fixo.
-   modoVoz=true pede respostas curtas e sem markdown (falado em voz alta). */
-async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config, modoVoz = false }) {
+   Usado por /chat (texto) e pela chamada de voz (voz:texto). */
+async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config }) {
     let resposta = null, origem = null;
 
-    // Modo voz não passa pelo Python por padrão: o iana.py foi desenhado
-    // pro chat de texto (memória vetorial, links, etc.) e sua latência de
-    // cold-start do modelo de embeddings prejudica a sensação de "ao
-    // vivo" da chamada. Pode ligar com ENABLE_PYTHON_VOZ=true se quiser.
-    const usaPython = process.env.ENABLE_PYTHON !== 'false' && (!modoVoz || process.env.ENABLE_PYTHON_VOZ === 'true');
-
-    if (usaPython) {
+    if (process.env.ENABLE_PYTHON !== 'false') {
         try {
             resposta = await askPython(nome, idConv || 'geral', msg, historico);
             origem = 'python';
         } catch (e) { console.error('[Python] falhou, caindo pro Gemini via Node:', e.message); }
     }
     if (!resposta) {
-        resposta = await askGemini(msg, historico, instrucaoHumor(humor), config, modoVoz);
+        resposta = await askGemini(msg, historico, instrucaoHumor(humor), config);
         origem = resposta ? 'gemini-node' : origem;
     }
     if (!resposta) {
@@ -453,7 +434,7 @@ async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config, mo
             console.warn('[AVISO] Python e Gemini falharam. Usando resposta do sistema.');
         }
     }
-    console.log(`[CHAT] origem=${origem} modoVoz=${modoVoz}`);
+    console.log(`[CHAT] origem=${origem}`);
     return resposta;
 }
 
@@ -684,7 +665,7 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
             const codigo = Math.floor(100000 + Math.random() * 900000).toString();
             codigos.set(email, { codigo, exp: Date.now() + 15 * 60 * 1000 });
 
-            if (sgReady) {
+            if (sendgridPronto) {
                 try {
                     await sgMail.send({
                         from: process.env.EMAIL_FROM || 'iana@example.com',
@@ -730,17 +711,13 @@ app.post('/auth/mudar-senha', async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro ao salvar.' }); }
 });
 
-/* ── FEEDBACK ─────────────────────────────────────────────────── 
-   FIX: schema simplificado pra bater com o chat.js — ele manda só
-   { feedback, conversa_id }, sem assunto/autorizou separados. */
+/* ── FEEDBACK ─────────────────────────────────────────────────── */
 app.post('/feedback', chatLimiter, async (req, res) => {
     const texto = req.body.feedback?.trim();
-    const idConversa = req.body.conversa_id || null;
+    if (!texto) return res.status(400).json({ erro: 'Descreva seu feedback.' });
 
-    if (!texto) return res.status(400).json({ erro: 'Digite seu feedback.' });
-
-    if (!sgReady) {
-        console.warn('[FEEDBACK] Recebido mas SENDGRID_API_KEY não configurada:', { texto, idConversa });
+    if (!sendgridPronto) {
+        console.warn('[FEEDBACK] Recebido mas SENDGRID_API_KEY não configurada:', texto);
         return res.status(503).json({ erro: 'Envio de feedback temporariamente indisponível.' });
     }
 
@@ -749,10 +726,9 @@ app.post('/feedback', chatLimiter, async (req, res) => {
             from: process.env.EMAIL_FROM || 'iana@example.com',
             to: process.env.FEEDBACK_TO_EMAIL || process.env.EMAIL_FROM,
             replyTo: req.user?.email || undefined,
-            subject: `[Iana Feedback] de ${req.user?.nome || 'Visitante'}`,
+            subject: '[Iana Feedback]',
             html: `<div style="font-family:sans-serif;padding:20px">
                 <p><strong>De:</strong> ${req.user?.nome || 'Visitante'} (${req.user?.email || 'sem login'})</p>
-                <p><strong>Conversa:</strong> ${idConversa || 'nenhuma'}</p>
                 <p><strong>Mensagem:</strong></p>
                 <p>${texto.replace(/\n/g, '<br>')}</p>
             </div>`
@@ -765,19 +741,11 @@ app.post('/feedback', chatLimiter, async (req, res) => {
     }
 });
 
-/* ── CONVERSAS ────────────────────────────────────────────────── 
-   FIX: rotas renomeadas de /chat/conversas para /conversas (sem
-   prefixo), e método/verbo ajustados, pra bater com o chat.js:
-     GET    /conversas
-     GET    /conversas/:id
-     PATCH  /conversas/:id            (renomear)
-     POST   /conversas/:id/fixar      (fixar/desafixar)
-     DELETE /conversas/:id
-*/
+/* ── CONVERSAS ────────────────────────────────────────────────── */
 async function garantirConversa(idUsuario, idConversa, mensagem) {
     if (!idUsuario) return idConversa || null;
     const id = idConversa || `conv_${idUsuario}_${Date.now()}`;
-    const titulo = mensagem.replace(/\[.*?\]/g,'').trim().slice(0,40) || 'Nova Conversa';
+    const titulo = mensagem.replace(/\[.*?\]/g, '').trim().slice(0, 40) || 'Nova Conversa';
     try {
         await pool.query(
             'INSERT INTO conversas (id,usuario_id,titulo,atualizado_em) VALUES (?,?,?,NOW()) ON DUPLICATE KEY UPDATE atualizado_em=NOW()',
@@ -793,9 +761,7 @@ app.get('/conversas', auth, async (req, res) => {
             'SELECT id, titulo, fixada, atualizado_em FROM conversas WHERE usuario_id=? ORDER BY fixada DESC, atualizado_em DESC, id DESC',
             [req.user.id]
         );
-        res.json({ conversas: r.map(c => ({
-            id: c.id, titulo: c.titulo, fixada: !!c.fixada, updated_at: c.atualizado_em
-        })) });
+        res.json(r.map(c => ({ id: c.id, titulo: c.titulo, fixada: !!c.fixada, updatedAt: c.atualizado_em })));
     } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
@@ -807,24 +773,25 @@ app.get('/conversas/:id', auth, async (req, res) => {
         );
         res.json({
             id: req.params.id,
-            mensagens: r.map(m => ({ conteudo: m.mensagem, role: m.remetente === 'user' ? 'usuario' : 'ia', criado_em: m.criado_em }))
+            mensagens: r.map(m => ({ role: m.remetente === 'user' ? 'user' : 'assistant', content: m.mensagem, criado_em: m.criado_em }))
         });
     } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
 app.patch('/conversas/:id', auth, async (req, res) => {
-    const { titulo } = req.body;
-    if (!titulo?.trim()) return res.status(400).json({ erro: 'Título obrigatório.' });
+    const titulo = req.body.titulo?.trim();
+    if (!titulo) return res.status(400).json({ erro: 'Título obrigatório.' });
     try {
-        await pool.query('UPDATE conversas SET titulo=? WHERE id=? AND usuario_id=?', [titulo.trim(), req.params.id, req.user.id]);
+        await pool.query('UPDATE conversas SET titulo=? WHERE id=? AND usuario_id=?', [titulo, req.params.id, req.user.id]);
         res.json({ ok: true });
     } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
 app.post('/conversas/:id/fixar', auth, async (req, res) => {
     try {
-        const [[atual]] = await pool.query('SELECT fixada FROM conversas WHERE id=? AND usuario_id=?', [req.params.id, req.user.id]);
-        const novoValor = atual ? (atual.fixada ? 0 : 1) : 1;
+        const [r] = await pool.query('SELECT fixada FROM conversas WHERE id=? AND usuario_id=?', [req.params.id, req.user.id]);
+        if (!r.length) return res.status(404).json({ erro: 'Conversa não encontrada.' });
+        const novoValor = r[0].fixada ? 0 : 1;
         await pool.query('UPDATE conversas SET fixada=? WHERE id=? AND usuario_id=?', [novoValor, req.params.id, req.user.id]);
         res.json({ ok: true, fixada: !!novoValor });
     } catch (e) { res.status(500).json({ erro: e.message }); }
@@ -838,22 +805,24 @@ app.delete('/conversas/:id', auth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 
-/* ── CHAT (texto) ─────────────────────────────────────────────── 
-   FIX: rota renomeada de /chat/stream para /chat, pra bater com o
-   chat.js. Aceita tanto {mensagem, conversa_id} quanto os nomes
-   alternativos que o chat.js também manda ({message, id_conversa}). */
+/* ── CHAT (texto) ─────────────────────────────────────────────── */
 app.post('/chat', chatLimiter, async (req, res) => {
-    const nome    = req.user?.nome || 'Visitante';
-    const idUser  = req.user?.id || null;
-    const msg     = (req.body.mensagem || req.body.message)?.trim();
-    const config  = req.body.config || req.body.configuracao || '';
-    const idConversaBody = req.body.conversa_id || req.body.id_conversa || null;
+    const nome   = req.user?.nome || 'Visitante';
+    const idUser = req.user?.id || null;
+    const msg    = (req.body.mensagem || req.body.message || '').trim();
+    const config = req.body.config || req.body.configuracao || '';
+    const idConvBody = req.body.conversa_id || req.body.id_conversa || null;
 
     if (!msg) return res.status(400).json({ erro: 'Mensagem vazia.' });
     if (msg.length > 8000) return res.status(400).json({ erro: 'Mensagem muito longa.' });
 
+    // NOTA: anexos (imagem/áudio/arquivo) vêm no payload mas ainda não
+    // são analisados pelo Gemini aqui — só o texto placeholder que o
+    // chat.js já manda junto (ex: "[Usuário enviou uma imagem: x.png]")
+    // é usado. Analisar o conteúdo de verdade (visão) é um passo à parte.
+
     const contextoLinks = await montarContextoLinks(msg);
-    const idConv = await garantirConversa(idUser, idConversaBody, msg);
+    const idConv = await garantirConversa(idUser, idConvBody, msg);
 
     if (idUser && idConv) {
         pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'user', msg]).catch(e => console.error('[DB msg user]', e.message));
@@ -874,7 +843,7 @@ app.post('/chat', chatLimiter, async (req, res) => {
         ? `${msg}\n\n[CONTEXTO — conteúdo extraído do(s) link(s) enviado(s) pelo usuário, use isso pra responder]:\n${contextoLinks}`
         : msg;
 
-    const humor = detectarHumor(msg);
+    const humor = req.body.estadoEmocional || detectarHumor(msg);
     const resposta = await gerarRespostaIA({ nome, idConv, msg: msgParaIA, historico, humor, config });
 
     if (idUser && idConv) {
@@ -905,7 +874,6 @@ app.post('/chat/visao', visionLimiter, authToken, async (req, res) => {
     } catch (e) { console.error('[DB historico visao]', e.message); }
 
     const msg = `[LEITURA AUTOMÁTICA DE TELA em tempo real — comente de forma breve e útil, como se estivesse acompanhando o jogo ao vivo]:\n${resumo}`;
-
     const resposta = await gerarRespostaIA({ nome, idConv, msg, historico, humor: 'normal', config: '' });
 
     pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)',

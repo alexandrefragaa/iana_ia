@@ -310,6 +310,11 @@ function instrucaoHumor(humor) {
     return {
         raiva:      'O usuário está irritado. Responda com empatia, calma, sem ser seco.',
         estressado: 'O usuário está estressado. Responda com leveza e tranquilidade.',
+        // FIX: 'frustrado' vem do detectarEstadoEmocional() do
+        // features.js (agora enviado pelo chat.js em estadoEmocional),
+        // mas essa função não reconhecia esse valor — caía no ||''
+        // e a instrução era ignorada silenciosamente.
+        frustrado:  'O usuário parece frustrado. Responda com paciência, sem soar impaciente ou repetitivo.',
         normal:     ''
     }[humor] || '';
 }

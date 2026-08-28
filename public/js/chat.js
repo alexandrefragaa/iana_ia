@@ -3512,7 +3512,15 @@ async function processarEnvioIA(
             config:
                 configPrompt,
             configuracao:
-                configPrompt
+                configPrompt,
+            // FIX: features.js expõe detectarEstadoEmocional() mas
+            // ninguém chamava — o servidor tinha só o fallback dele
+            // (detectarHumor), sem o estado "frustrado" que só o
+            // features.js detecta.
+            estadoEmocional:
+                typeof detectarEstadoEmocional === 'function'
+                    ? detectarEstadoEmocional(texto)
+                    : undefined
         };
 
         if (anexo) {

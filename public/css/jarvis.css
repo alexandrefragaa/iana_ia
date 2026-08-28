@@ -1,10 +1,18 @@
 /* ==========================================================================
-   jarvis.css — HUD estilo Jarvis (orbe com anéis) + tela de chamada de voz
-   Linke no <head> do index.html, depois do mensagens.css:
-   <link rel="stylesheet" href="/css/jarvis.css">
+   jarvis.css — HUD estilo Jarvis (orbe) + tela de chamada de voz
+   FIX: versão anterior deste arquivo estilizava .modal-voz /
+   .voz-avatar-wrap / .voz-avatar / .voz-ondas / .voz-titulo — nenhum
+   desses elementos existe no index.html atual (a tela de chamada usa
+   .jarvis-call / .jarvis-hud / #voz-hud-grande / #voz-transcript).
+   Reescrito pro HTML real. Também removido o ".voz-transcript {
+   display:none }" que estava presente antes — ele escondia a fala da
+   Iana sem nenhum motivo.
    ========================================================================== */
 
-/* ── ORBE (anéis + núcleo) ─────────────────────────────────────── */
+/* ── ORBE (anéis + núcleo + barrinhas) ───────────────────────────
+   Markup interno (.jarvis-ring*, .jarvis-core, .jarvis-bars) é
+   injetado pelo IanaHUD em animation-controller.js — aqui só o CSS. */
+
 .jarvis-hud {
     position: relative;
     display: flex;
@@ -69,7 +77,6 @@
     50%      { transform: scale(1.12); opacity: 1; }
 }
 
-/* Barrinhas reativas (reagem ao volume real do microfone — ver chat.js) */
 .jarvis-bars {
     position: absolute;
     inset: 0;
@@ -114,14 +121,17 @@
     opacity: 1;
 }
 
+.jarvis-hud[data-estado="processando"] .jarvis-ring-outer,
 .jarvis-hud[data-estado="pensando"] .jarvis-ring-outer {
     animation-duration: 1.6s;
 }
 
+.jarvis-hud[data-estado="processando"] .jarvis-ring-mid,
 .jarvis-hud[data-estado="pensando"] .jarvis-ring-mid {
     animation-duration: 1.1s;
 }
 
+.jarvis-hud[data-estado="processando"] .jarvis-core,
 .jarvis-hud[data-estado="pensando"] .jarvis-core {
     animation-duration: 1s;
 }
@@ -136,10 +146,14 @@
     opacity: 1;
 }
 
-/* ── TELA DE CHAMADA (estilo voice-mode) ─────────────────────── */
+/* ── TELA DE CHAMADA ───────────────────────────────────────────
+   #overlay-voz já herda .overlay (fixed, fundo escuro, flex center)
+   do styles.css — aqui só o visual específico da chamada. */
+
 .jarvis-call {
     background: radial-gradient(circle at center, rgba(34, 211, 238, .08) 0%, rgba(5, 6, 10, .97) 65%, #05060a 100%);
     backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
 }
 
 .jarvis-call-inner {
@@ -173,9 +187,7 @@
     letter-spacing: .5px;
 }
 
-/* FIX: index.html atual usa #voz-transcript (um parágrafo só com a
-   última fala da Iana) em vez do antigo #voz-feed (lista de bolhas) —
-   .voz-feed* abaixo ficou sem uso, mantido só de referência. */
+/* Última fala da Iana durante a chamada. */
 .voz-transcript {
     width: 100%;
     max-width: 440px;
@@ -186,72 +198,25 @@
     text-align: center;
 }
 
-/* Transcrição ao vivo — os dois lados da conversa (compacta, fica
-   embaixo do orbe que é o foco principal da tela agora) */
-.voz-feed {
-    width: 100%;
-    max-height: 22vh;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 4px 4px 8px;
-    margin-bottom: 4px;
-    flex-shrink: 0;
-}
-
-.voz-feed::-webkit-scrollbar {
-    width: 6px;
-}
-
-.voz-feed::-webkit-scrollbar-thumb {
-    background: rgba(34, 211, 238, .3);
-    border-radius: 10px;
-}
-
-.voz-feed-msg {
-    padding: 10px 16px;
-    border-radius: 16px;
-    font-size: .92rem;
-    line-height: 1.4;
-    max-width: 90%;
-    text-align: left;
-    animation: entrarBolhaVoz .25s ease;
-}
-
-@keyframes entrarBolhaVoz {
-    from { opacity: 0; transform: translateY(6px); }
-    to   { opacity: 1; transform: translateY(0); }
-}
-
-.voz-feed-user {
-    align-self: flex-end;
-    background: linear-gradient(135deg, #4c1d95, #0891b2);
-    color: #fff;
-    border-radius: 16px 4px 16px 16px;
-}
-
-.voz-feed-iana {
-    align-self: flex-start;
-    background: rgba(30, 27, 46, .8);
-    border: 1px solid rgba(34, 211, 238, .25);
-    color: #e3e3e3;
-    border-radius: 4px 16px 16px 16px;
-}
-
-/* Legenda ao vivo (o que você tá falando, antes de confirmar) */
+/* Legenda ao vivo do que você está falando (transcrição parcial,
+   antes de confirmar a frase). */
 .voz-interim {
+    width: 100%;
     min-height: 20px;
+    margin: 4px 0 0;
     font-size: .88rem;
-    color: rgba(34, 211, 238, .8);
     font-style: italic;
-    margin-bottom: 20px;
+    color: rgba(34, 211, 238, .8);
+    text-align: center;
 }
 
 .voz-acoes {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 16px;
+    margin-top: auto;
+    padding-top: 20px;
 }
 
 .btn-voz-mute {
@@ -263,11 +228,12 @@
     color: #e3e3e3;
     font-size: 1.3rem;
     cursor: pointer;
-    transition: .2s;
+    transition: background .2s ease, transform .2s ease, border-color .2s ease;
 }
 
 .btn-voz-mute:hover {
     background: rgba(34, 211, 238, .12);
+    transform: scale(1.05);
 }
 
 .btn-voz-mute.mutado {
@@ -284,11 +250,16 @@
     color: #fff;
     font-weight: 600;
     cursor: pointer;
-    transition: .2s;
+    transition: filter .2s ease, transform .2s ease;
 }
 
 .btn-voz-encerrar:hover {
     filter: brightness(1.1);
+    transform: translateY(-1px);
+}
+
+.btn-voz-encerrar:active {
+    transform: translateY(0);
 }
 
 @media (max-width: 600px) {
@@ -296,7 +267,28 @@
         width: min(64vw, 260px);
         height: min(64vw, 260px);
     }
-    .voz-feed {
-        max-height: 18vh;
+    .jarvis-call-inner {
+        padding: 28px 16px 20px;
+    }
+    .voz-acoes {
+        gap: 12px;
+    }
+    .btn-voz-mute {
+        width: 48px;
+        height: 48px;
+    }
+    .btn-voz-encerrar {
+        padding: 13px 20px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .jarvis-ring,
+    .jarvis-core {
+        animation: none !important;
+    }
+    .btn-voz-mute,
+    .btn-voz-encerrar {
+        transition: none !important;
     }
 }

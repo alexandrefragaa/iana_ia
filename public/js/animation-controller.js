@@ -1,28 +1,27 @@
-
 /* =================================================================
    IANA — animation-controller.js
 
-   Transição:
-   welcome -> thinking-view -> chat
+   Duas coisas neste arquivo:
 
-   A animação acontece somente na primeira mensagem da conversa.
+   1) AnimacaoChat — transição welcome -> thinking-view -> chat.
+      Só roda na 1ª mensagem da conversa; se os elementos (#welcome,
+      #thinking-view) não existirem no HTML atual, ela detecta isso
+      e não faz nada (sem erro) — ver comentário "Sem welcome" abaixo.
 
-   Mensagens seguintes:
-   - não repetem a transição;
-   - usam o indicador de digitação normal do chat.js.
-
-   Compatível com:
-   - chat.js
-   - features.js
-   - thinking-view opcional
-   - layout atual sem thinking-view-dot/texto
+   2) IanaHUD — o orbe estilo Jarvis usado na tela de chamada de voz
+      (#voz-hud-grande) e em qualquer outro elemento com a classe
+      .jarvis-hud. FIX: essa parte tinha sumido de versões anteriores
+      deste arquivo — sem ela, o <div class="jarvis-hud"> ficava vazio
+      pra sempre (nada nunca injetava os anéis dentro dele). Agora ela
+      se auto-monta sozinha (não depende de chat.js chamar nada) e
+      também aceita ser chamada manualmente via IanaHUD.iniciar(id).
    ================================================================= */
 
 'use strict';
 
 
 /* ────────────────────────────────────────────────────────────────
-   CONTROLADOR
+   1) CONTROLADOR DE TRANSIÇÃO (welcome -> thinking -> chat)
    ──────────────────────────────────────────────────────────────── */
 
 class AnimacaoChat {
@@ -47,20 +46,12 @@ class AnimacaoChat {
     }
 
 
-    /* ────────────────────────────────────────────────────────────
-       UTILITÁRIO
-       ──────────────────────────────────────────────────────────── */
-
     sleep(ms) {
         return new Promise(resolve => {
             setTimeout(resolve, ms);
         });
     }
 
-
-    /* ────────────────────────────────────────────────────────────
-       ESTADO
-       ──────────────────────────────────────────────────────────── */
 
     getEstado() {
         return this.estado_atual;
@@ -77,23 +68,12 @@ class AnimacaoChat {
     }
 
 
-    /* ────────────────────────────────────────────────────────────
-       INICIAR PENSAMENTO
-       ──────────────────────────────────────────────────────────── */
-
     async iniciarPensamento() {
 
-        /*
-         * Não inicia duas transições simultaneamente.
-         */
         if (this.em_transicao) {
             return false;
         }
 
-        /*
-         * Se a primeira mensagem já aconteceu,
-         * não repete a animação.
-         */
         if (this.primeiraMensagemFeita) {
             return false;
         }
@@ -117,11 +97,10 @@ class AnimacaoChat {
 
 
         /*
-         * Sem welcome:
-         *
-         * Não há nada para animar.
-         * Mesmo assim marcamos a primeira mensagem como feita
-         * para impedir novas tentativas.
+         * Sem welcome (o HTML atual não tem mais #welcome — o
+         * chat.js insere a tela de boas-vindas dinamicamente com
+         * outra estrutura): não há nada pra animar. Marcamos como
+         * feito pra não tentar de novo, e seguimos sem erro.
          */
         if (!welcomeContainer) {
 
@@ -133,28 +112,14 @@ class AnimacaoChat {
         }
 
 
-        /* ─────────────────────────────────────────────────────────
-           LABEL DA IANA
-           ───────────────────────────────────────────────────────── */
-
         if (ianaLabel) {
-
             ianaLabel.classList.add('sumir');
-
             await this.sleep(200);
         }
 
 
-        /* ─────────────────────────────────────────────────────────
-           WELCOME
-           ───────────────────────────────────────────────────────── */
-
         welcomeContainer.classList.add('transitando');
 
-
-        /* ─────────────────────────────────────────────────────────
-           INPUT
-           ───────────────────────────────────────────────────────── */
 
         if (inputWrapper) {
             inputWrapper.classList.add('transitando');
@@ -166,52 +131,22 @@ class AnimacaoChat {
         }
 
 
-        /* ─────────────────────────────────────────────────────────
-           THINKING VIEW
-           ───────────────────────────────────────────────────────── */
-
-        /*
-         * O thinking-view é opcional.
-         *
-         * Isso permite que o mesmo JS seja utilizado
-         * em páginas que não possuem esse elemento.
-         */
-
         if (thinkingContainer) {
-
             thinkingContainer.style.display = 'flex';
-
-            /*
-             * Pequeno delay para permitir que o navegador
-             * registre display:flex antes da animação CSS.
-             */
             await this.sleep(50);
-
             thinkingContainer.classList.add('ativo');
         }
 
 
-        /* ─────────────────────────────────────────────────────────
-           ESTADO
-           ───────────────────────────────────────────────────────── */
-
         this.estado_atual = 'pensando';
-
         this.em_transicao = false;
 
         return true;
     }
 
 
-    /* ────────────────────────────────────────────────────────────
-       FINALIZAR PENSAMENTO
-       ──────────────────────────────────────────────────────────── */
-
     async finalizarPensamento() {
 
-        /*
-         * Não executa duas finalizações simultaneamente.
-         */
         if (this.em_transicao) {
             return false;
         }
@@ -228,26 +163,12 @@ class AnimacaoChat {
             document.querySelector('.input-pill');
 
 
-        /* ─────────────────────────────────────────────────────────
-           THINKING VIEW
-           ───────────────────────────────────────────────────────── */
-
         if (thinkingContainer) {
-
             thinkingContainer.classList.remove('ativo');
-
-            /*
-             * Tempo da animação de saída.
-             */
             await this.sleep(250);
-
             thinkingContainer.style.display = 'none';
         }
 
-
-        /* ─────────────────────────────────────────────────────────
-           INPUT
-           ───────────────────────────────────────────────────────── */
 
         if (inputWrapper) {
             inputWrapper.classList.remove('transitando');
@@ -259,32 +180,19 @@ class AnimacaoChat {
         }
 
 
-        /* ─────────────────────────────────────────────────────────
-           ESTADO FINAL
-           ───────────────────────────────────────────────────────── */
-
         this.primeiraMensagemFeita = true;
-
         this.estado_atual = 'repouso';
-
         this.em_transicao = false;
 
         return true;
     }
 
 
-    /* ────────────────────────────────────────────────────────────
-       RESET
-       ──────────────────────────────────────────────────────────── */
-
     resetar() {
 
         this.em_transicao = false;
-
         this.estado_atual = 'repouso';
-
         this.primeiraMensagemFeita = false;
-
 
         const welcomeContainer =
             document.getElementById('welcome');
@@ -302,53 +210,32 @@ class AnimacaoChat {
             document.querySelector('.input-pill');
 
 
-        /*
-         * Welcome
-         */
         if (welcomeContainer) {
             welcomeContainer.classList.remove('transitando');
         }
 
 
-        /*
-         * Thinking view
-         */
         if (thinkingContainer) {
-
             thinkingContainer.classList.remove('ativo');
-
             thinkingContainer.style.display = 'none';
         }
 
 
-        /*
-         * Input
-         */
         if (inputWrapper) {
             inputWrapper.classList.remove('transitando');
         }
 
 
-        /*
-         * Input pill
-         */
         if (pilula) {
             pilula.classList.remove('disabled');
         }
 
 
-        /*
-         * Label
-         */
         if (ianaLabel) {
             ianaLabel.classList.remove('sumir');
         }
     }
 
-
-    /* ────────────────────────────────────────────────────────────
-       DEFINIR ESTADO
-       ──────────────────────────────────────────────────────────── */
 
     definirEstado(estado) {
 
@@ -369,17 +256,84 @@ class AnimacaoChat {
 }
 
 
-/* ────────────────────────────────────────────────────────────────
-   INSTÂNCIA GLOBAL
-   ──────────────────────────────────────────────────────────────── */
-
 const animacaoChat = new AnimacaoChat();
-
 window.animacaoChat = animacaoChat;
+window.AnimacaoChat = AnimacaoChat;
 
 
 /* ────────────────────────────────────────────────────────────────
-   COMPATIBILIDADE
+   2) IanaHUD — orbe estilo Jarvis (anéis + núcleo + barrinhas)
+
+   FIX: recolocado nesta versão do arquivo. Não depende de nenhum
+   outro script chamar iniciar() — ele mesmo procura por qualquer
+   elemento .jarvis-hud já existente no HTML (ex: #voz-hud-grande)
+   e monta os anéis dentro na hora que a página carrega. setEstado()
+   também garante a montagem antes de aplicar o estado, então mesmo
+   que um .jarvis-hud apareça depois (inserido dinamicamente por
+   outro script) ele ainda funciona.
    ──────────────────────────────────────────────────────────────── */
 
-window.AnimacaoChat = AnimacaoChat;
+const IanaHUD = (() => {
+    let estadoAtual = 'ocioso';
+
+    function montarMarkup() {
+        return `
+            <div class="jarvis-ring jarvis-ring-outer"></div>
+            <div class="jarvis-ring jarvis-ring-mid"></div>
+            <div class="jarvis-ring jarvis-ring-inner"></div>
+            <div class="jarvis-core"></div>
+            <div class="jarvis-bars">
+                <span></span><span></span><span></span><span></span><span></span>
+            </div>
+        `;
+    }
+
+    function montarTodos() {
+        document.querySelectorAll('.jarvis-hud').forEach(el => {
+            if (el.dataset.jarvisMontado === 'true') return;
+            el.innerHTML = montarMarkup();
+            el.dataset.estado = estadoAtual;
+            el.dataset.jarvisMontado = 'true';
+        });
+    }
+
+    /**
+     * Chamada opcional — útil quando o container ainda não tem a
+     * classe .jarvis-hud no HTML (ex: um id genérico que precisa
+     * virar orbe via JS). Se o HTML já tiver a classe, isso é
+     * redundante e inofensivo.
+     * @param {string} containerId
+     * @param {'sm'|'lg'} tamanho
+     */
+    function iniciar(containerId, tamanho = 'sm') {
+        const el = document.getElementById(containerId);
+        if (!el) {
+            console.warn(`IanaHUD: container #${containerId} não encontrado.`);
+            return;
+        }
+        el.classList.add('jarvis-hud', `jarvis-hud--${tamanho}`);
+        montarTodos();
+    }
+
+    function setEstado(estado) {
+        estadoAtual = estado;
+        montarTodos();
+        document.querySelectorAll('.jarvis-hud').forEach(el => {
+            el.dataset.estado = estado;
+        });
+    }
+
+    function getEstado() {
+        return estadoAtual;
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', montarTodos, { once: true });
+    } else {
+        montarTodos();
+    }
+
+    return { iniciar, setEstado, getEstado };
+})();
+
+window.IanaHUD = IanaHUD;

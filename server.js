@@ -197,6 +197,14 @@ function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro }) {
         try {
             const msg = JSON.parse(data.toString());
             if (msg.audio) onAudioChunk(msg.audio); // já vem em base64, PCM cru
+            if (msg.error) {
+                if (finalizado) return;
+                finalizado = true;
+                clearTimeout(timeout);
+                onErro(new Error(msg.message || 'A ElevenLabs recusou a geração de áudio.'));
+                try { ws.close(); } catch (e) { }
+                return;
+            }
             if (msg.isFinal) {
                 if (finalizado) return;
                 finalizado = true;

@@ -285,32 +285,18 @@
 }
 
 .voz-status {
-    font-size: 1.05rem;
-    color: #a1a1aa;
-    letter-spacing: .5px;
+    display: none;
 }
 
 /* Última fala da Iana durante a chamada. */
 .voz-transcript {
-    width: 100%;
-    max-width: 440px;
-    min-height: 24px;
-    font-size: 1rem;
-    line-height: 1.5;
-    color: #e3e3e3;
-    text-align: center;
+    display: none;
 }
 
 /* Legenda ao vivo do que você está falando (transcrição parcial,
    antes de confirmar a frase). */
 .voz-interim {
-    width: 100%;
-    min-height: 20px;
-    margin: 4px 0 0;
-    font-size: .88rem;
-    font-style: italic;
-    color: rgba(34, 211, 238, .8);
-    text-align: center;
+    display: none;
 }
 
 .voz-acoes {

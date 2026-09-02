@@ -163,10 +163,21 @@ try {
    pronta. */
 const ELEVEN_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || '42swcOVaxVM4TNSGUmkc';
 const ELEVEN_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2';
+const ELEVEN_API_KEY = (process.env.ELEVENLABS_API_KEY_SECRET || process.env.ELEVENLABS_API_KEY || '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '');
 
-function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro }) {
-    if (!process.env.ELEVENLABS_API_KEY) {
+if (ELEVEN_API_KEY && !ELEVEN_API_KEY.startsWith('sk_')) {
+    console.error('❌ ELEVENLABS_API_KEY inválida: use a API key secreta que começa com sk_.');
+}
+
+function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro, emocao = 'normal' }) {
+    if (!ELEVEN_API_KEY) {
         onErro(new Error('ELEVENLABS_API_KEY não configurada no servidor.'));
+        return;
+    }
+    if (!ELEVEN_API_KEY.startsWith('sk_')) {
+        onErro(new Error('A credencial ElevenLabs configurada é um Key ID, não uma API key secreta.'));
         return;
     }
     if (!texto?.trim()) { onFim(); return; }
@@ -175,7 +186,7 @@ function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro }) {
         + `?model_id=${encodeURIComponent(ELEVEN_MODEL_ID)}&output_format=pcm_24000`;
 
     let finalizado = false;
-    const ws = new WebSocket(url, { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY } });
+    const ws = new WebSocket(url, { headers: { 'xi-api-key': ELEVEN_API_KEY } });
 
     const timeout = setTimeout(() => {
         if (finalizado) return;
@@ -188,9 +199,17 @@ function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro }) {
         // 1ª mensagem: configura a voz. 2ª: o texto de verdade.
         // 3ª (texto vazio): sinaliza pro servidor deles que acabou —
         // sem isso a conexão fica esperando mais texto pra sempre.
+        const ajustesVoz = {
+            triste: { stability: 0.72, similarity_boost: 0.8, style: 0.2, speed: 0.9, use_speaker_boost: true },
+            raiva: { stability: 0.34, similarity_boost: 0.8, style: 0.55, speed: 1.05, use_speaker_boost: true },
+            alegre: { stability: 0.42, similarity_boost: 0.8, style: 0.65, speed: 1.08, use_speaker_boost: true },
+            entediada: { stability: 0.78, similarity_boost: 0.8, style: 0.12, speed: 0.9, use_speaker_boost: true },
+            normal: { stability: 0.5, similarity_boost: 0.8, style: 0.35, speed: 1, use_speaker_boost: true }
+        }[emocao] || { stability: 0.5, similarity_boost: 0.8, style: 0.35, speed: 1, use_speaker_boost: true };
+
         ws.send(JSON.stringify({
             text: ' ',
-            voice_settings: { stability: 0.5, similarity_boost: 0.8, use_speaker_boost: true },
+            voice_settings: ajustesVoz,
             generation_config: { chunk_length_schedule: [120, 160, 250, 290] }
         }));
         // Frases curtas precisam de flush para vencer o limite inicial do buffer.
@@ -239,9 +258,12 @@ const historicoVozPorSocket = new Map(); // socket.id -> estado e últimas falas
 
 const SYSTEM_PROMPT_VOZ =
     'Você está numa CHAMADA DE VOZ em tempo real (não é chat de texto). ' +
-    'Fale de forma curta, natural e conversacional — como numa ligação de ' +
-    'verdade — porque isso vai ser narrado em voz alta. Evite listas e ' +
-    'textos longos. RESPONDA SEMPRE EM PORTUGUÊS DO BRASIL.';
+    'Converse de forma espontânea, humana e contextual, como numa ligação ' +
+    'real. Escute a intenção, use o histórico da conversa e responda ao que ' +
+    'foi dito, sem frases prontas, saudações repetidas ou respostas genéricas. ' +
+    'Se a pessoa mudar de assunto, acompanhe naturalmente. Seja breve quando ' +
+    'a fala for simples e desenvolva quando necessário. RESPONDA SEMPRE EM ' +
+    'PORTUGUÊS DO BRASIL.';
 
 io.on('connection', (socket) => {
     const idUser = socket.request.user?.id;
@@ -281,6 +303,7 @@ io.on('connection', (socket) => {
         }
 
         const nome = socket.request.user?.nome || 'Visitante';
+        const emocao = detectarEmocaoVoz(msg);
         const estado = historicoVozPorSocket.get(socket.id) || { idConversa: null, historico: [] };
         const historico = estado.historico || [];
         const idConversa = await garantirConversa(
@@ -296,8 +319,8 @@ io.on('connection', (socket) => {
                 idConv: idConversa,
                 msg,
                 historico,
-                humor: detectarHumor(msg),
-                config: SYSTEM_PROMPT_VOZ
+                humor: emocao,
+                config: `${SYSTEM_PROMPT_VOZ}\n\n[ADAPTAÇÃO EMOCIONAL]: ${instrucaoEmocaoVoz(emocao)}`
             });
 
             historico.push({ remetente: 'user', mensagem: msg });
@@ -319,6 +342,7 @@ io.on('connection', (socket) => {
             socket.emit('voz:transcricao-iana', { texto: resposta, conversa_id: idConversa });
 
             falarComElevenLabs(resposta, {
+                emocao,
                 onAudioChunk: (base64) => socket.emit('voz:audio-resposta', { audio: base64 }),
                 onFim: () => socket.emit('voz:fala-finalizada'),
                 onErro: (e) => {
@@ -371,6 +395,29 @@ function detectarHumor(texto) {
     if (pct > 70 || /\*{4,}/.test(texto)) return 'raiva';
     if (/!{2,}|\?{2,}/.test(texto)) return 'estressado';
     return 'normal';
+}
+
+function detectarEmocaoVoz(texto) {
+    const msg = String(texto || '').toLowerCase();
+    const letras = (msg.match(/[a-záàâãéêíóôõúç]/gi) || []).length;
+    const caps = (texto.match(/[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]/g) || []).length;
+    const intensidade = letras ? caps / letras : 0;
+
+    if (/\b(odeio|raiva|irritad|absurdo|merda|droga|porra|caramba|inacreditável)\b/.test(msg) || intensidade > 0.55 || /!{2,}/.test(msg)) return 'raiva';
+    if (/\b(triste|tristesa|chorando|chorei|sozinho|solidão|mal hoje|desanimad|deprimid|perdi)\b/.test(msg)) return 'triste';
+    if (/\b(entediad|tédio|sem graça|cansad|não aguento mais|que saco)\b/.test(msg)) return 'entediada';
+    if (/\b(feliz|felicidade|animad|alegre|adorei|incrível|perfeito|boa notícia|haha|kkkk|rsrs)\b/.test(msg) || /!/.test(msg)) return 'alegre';
+    return 'normal';
+}
+
+function instrucaoEmocaoVoz(emocao) {
+    return {
+        triste: 'A pessoa parece triste. Acolha com calma e calor humano, sem dramatizar nem usar frases prontas.',
+        raiva: 'A pessoa parece irritada. Mantenha serenidade, reconheça a frustração e seja útil sem confrontar.',
+        alegre: 'A pessoa está alegre. Acompanhe a energia com naturalidade, sem exagerar nem parecer artificial.',
+        entediada: 'A pessoa parece entediada ou cansada. Seja mais dinâmica e interessante, sem forçar entusiasmo.',
+        normal: 'Converse normalmente, acompanhando o ritmo e o estilo da pessoa sem imitar de forma caricata.'
+    }[emocao] || 'Converse normalmente, com naturalidade e contexto.';
 }
 
 function instrucaoHumor(humor) {

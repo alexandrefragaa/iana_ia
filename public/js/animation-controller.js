@@ -278,23 +278,16 @@ const IanaHUD = (() => {
 
     function montarMarkup() {
         return `
-            <div class="jarvis-scanlines"></div>
-            <div class="jarvis-grid"></div>
-            <div class="jarvis-ring jarvis-ring-outer"></div>
-            <div class="jarvis-ring jarvis-ring-mid"></div>
-            <div class="jarvis-ring jarvis-ring-inner"></div>
-            <div class="jarvis-particles" aria-hidden="true">
-                <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-            </div>
-            <div class="jarvis-trophy" aria-hidden="true">
-                <div class="jarvis-trophy-cup">
-                    <span class="jarvis-trophy-highlight"></span>
+            <div class="jarvis-orb" aria-hidden="true">
+                <div class="jarvis-orb-shell"></div>
+                <div class="jarvis-orb-grid"></div>
+                <div class="jarvis-orb-scan"></div>
+                <div class="jarvis-orb-ring jarvis-orb-ring--one"></div>
+                <div class="jarvis-orb-ring jarvis-orb-ring--two"></div>
+                <div class="jarvis-orb-core"></div>
+                <div class="jarvis-orb-nodes">
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
                 </div>
-                <div class="jarvis-trophy-handle jarvis-trophy-handle--left"></div>
-                <div class="jarvis-trophy-handle jarvis-trophy-handle--right"></div>
-                <div class="jarvis-trophy-stem"></div>
-                <div class="jarvis-trophy-foot"></div>
-                <div class="jarvis-trophy-base"></div>
             </div>
             <div class="jarvis-bars">
                 <span></span><span></span><span></span><span></span><span></span>

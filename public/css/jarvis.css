@@ -130,32 +130,140 @@
     to   { transform: rotate(360deg); }
 }
 
-.jarvis-core {
+.jarvis-trophy {
     position: absolute;
-    inset: 36%;
-    border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, #fff 0 4%, #a5f3fc 10%, #22d3ee 40%, rgba(168, 85, 247, .18) 72%, transparent 100%);
-    border: 1px solid rgba(255, 255, 255, .75);
-    box-shadow: 0 0 16px rgba(34, 211, 238, .9), 0 0 36px rgba(168, 85, 247, .6), inset 0 0 18px rgba(255, 255, 255, .8);
-    animation: pulsarCore 2.4s ease-in-out infinite;
+    width: 42%;
+    height: 72%;
+    top: 12%;
+    left: 29%;
+    filter: drop-shadow(0 0 9px rgba(34, 211, 238, .95)) drop-shadow(0 0 22px rgba(168, 85, 247, .55));
+    animation: pulsarTrofeu 2.4s ease-in-out infinite;
+    z-index: 2;
 }
 
-.jarvis-core::before,
-.jarvis-core::after {
+.jarvis-trophy-cup {
+    position: absolute;
+    width: 62%;
+    height: 49%;
+    top: 3%;
+    left: 19%;
+    background:
+        radial-gradient(circle at 20% 28%, #e879f9 0 2px, transparent 3px),
+        radial-gradient(circle at 43% 18%, #67e8f9 0 2px, transparent 3px),
+        radial-gradient(circle at 72% 34%, #22d3ee 0 2px, transparent 3px),
+        radial-gradient(circle at 35% 58%, #e879f9 0 2px, transparent 3px),
+        radial-gradient(circle at 64% 70%, #67e8f9 0 2px, transparent 3px),
+        linear-gradient(27deg, transparent 47%, rgba(232, 121, 249, .8) 48% 49%, transparent 50%),
+        linear-gradient(153deg, transparent 47%, rgba(103, 232, 249, .85) 48% 49%, transparent 50%),
+        repeating-linear-gradient(90deg, transparent 0 18px, rgba(34, 211, 238, .24) 19px 20px),
+        repeating-linear-gradient(0deg, transparent 0 15px, rgba(232, 121, 249, .2) 16px 17px);
+    border: 1px solid rgba(190, 250, 255, .95);
+    clip-path: polygon(8% 0, 92% 0, 82% 62%, 63% 88%, 37% 88%, 18% 62%);
+    box-shadow: inset 0 0 14px rgba(34, 211, 238, .2), 0 0 8px rgba(232, 121, 249, .45);
+    mix-blend-mode: screen;
+}
+
+.jarvis-trophy-cup::after {
     content: '';
     position: absolute;
-    inset: -28%;
-    border: 1px solid rgba(103, 232, 249, .45);
-    border-radius: 50%;
-    transform: rotateX(70deg) rotateZ(25deg);
-    animation: orbitaHolografica 3.5s linear infinite;
+    left: 18%;
+    right: 18%;
+    bottom: 9%;
+    height: 2px;
+    background: linear-gradient(90deg, #e879f9, #fff 48%, #22d3ee);
+    box-shadow: 0 0 8px #67e8f9;
 }
 
-.jarvis-core::after {
-    inset: -48%;
+.jarvis-trophy-highlight {
+    position: absolute;
+    top: 8%;
+    bottom: 24%;
+    left: 26%;
+    width: 2px;
+    background: rgba(255, 255, 255, .85);
+    box-shadow: 0 0 7px #fff;
+}
+
+.jarvis-trophy-handle {
+    position: absolute;
+    top: 12%;
+    width: 32%;
+    height: 27%;
+    border: 1px solid #22d3ee;
+    border-radius: 50%;
+    background: repeating-linear-gradient(35deg, transparent 0 7px, rgba(232, 121, 249, .5) 8px 9px);
+    box-shadow: 0 0 8px rgba(34, 211, 238, .75), inset 0 0 5px rgba(232, 121, 249, .7);
+}
+
+.jarvis-trophy-handle--left {
+    left: 0;
+    transform: rotate(-18deg);
+}
+
+.jarvis-trophy-handle--right {
+    right: 0;
+    transform: rotate(18deg);
+}
+
+.jarvis-trophy-stem {
+    position: absolute;
+    width: 12%;
+    height: 22%;
+    left: 44%;
+    top: 45%;
+    background: repeating-linear-gradient(0deg, #a855f7 0 1px, transparent 2px 6px), linear-gradient(90deg, #a855f7, #e0f2fe 48%, #22d3ee);
+    box-shadow: 0 0 8px #22d3ee;
+}
+
+.jarvis-trophy-foot {
+    position: absolute;
+    width: 32%;
+    height: 8%;
+    left: 34%;
+    top: 64%;
+    background: repeating-linear-gradient(35deg, transparent 0 6px, rgba(232, 121, 249, .7) 7px 8px), repeating-linear-gradient(-35deg, transparent 0 7px, rgba(103, 232, 249, .8) 8px 9px);
+    clip-path: polygon(18% 0, 82% 0, 100% 100%, 0 100%);
+    box-shadow: 0 0 8px #22d3ee;
+}
+
+.jarvis-trophy-base {
+    position: absolute;
+    width: 68%;
+    height: 13%;
+    left: 16%;
+    bottom: 5%;
+    border: 2px solid #22d3ee;
+    background:
+        radial-gradient(circle at 18% 45%, #e879f9 0 2px, transparent 3px),
+        radial-gradient(circle at 48% 25%, #67e8f9 0 2px, transparent 3px),
+        radial-gradient(circle at 78% 55%, #22d3ee 0 2px, transparent 3px),
+        repeating-linear-gradient(90deg, transparent 0 17px, rgba(34, 211, 238, .38) 18px 19px),
+        repeating-linear-gradient(0deg, transparent 0 10px, rgba(232, 121, 249, .35) 11px 12px);
+    clip-path: polygon(8% 0, 92% 0, 100% 100%, 0 100%);
+    box-shadow: 0 0 12px rgba(34, 211, 238, .85);
+}
+
+@keyframes pulsarTrofeu {
+    0%, 100% { transform: translateY(0) scale(1); opacity: .86; }
+    50% { transform: translateY(-3px) scale(1.035); opacity: 1; }
+}
+
+.jarvis-trophy::before,
+.jarvis-trophy::after {
+    content: '';
+    position: absolute;
+    inset: -20%;
+    border: 1px solid rgba(103, 232, 249, .45);
+    border-radius: 50%;
+    transform: rotateX(70deg) rotateZ(25deg) scaleX(.7);
+    animation: orbitaHolografica 4s linear infinite;
+}
+
+.jarvis-trophy::after {
+    inset: -34%;
     border-color: rgba(232, 121, 249, .35);
-    transform: rotateX(70deg) rotateZ(-35deg);
-    animation-duration: 5s;
+    transform: rotateX(70deg) rotateZ(-35deg) scaleX(.7);
+    animation-duration: 5.5s;
     animation-direction: reverse;
 }
 
@@ -203,7 +311,7 @@
     border-top-color: #34d399;
 }
 
-.jarvis-hud[data-estado="ouvindo"] .jarvis-core {
+.jarvis-hud[data-estado="ouvindo"] .jarvis-trophy {
     background: radial-gradient(circle at center, #6ee7b7, #34d399 45%, rgba(34, 211, 238, .4) 100%);
     box-shadow: 0 0 20px rgba(52, 211, 153, .7), 0 0 40px rgba(34, 211, 238, .4);
 }
@@ -222,14 +330,13 @@
     animation-duration: 1.1s;
 }
 
-.jarvis-hud[data-estado="processando"] .jarvis-core,
-.jarvis-hud[data-estado="pensando"] .jarvis-core {
+.jarvis-hud[data-estado="processando"] .jarvis-trophy,
+.jarvis-hud[data-estado="pensando"] .jarvis-trophy {
     animation-duration: 1s;
 }
 
-.jarvis-hud[data-estado="falando"] .jarvis-core {
-    background: radial-gradient(circle at center, #fff, #22d3ee 45%, rgba(168, 85, 247, .5) 100%);
-    box-shadow: 0 0 26px rgba(34, 211, 238, .9), 0 0 50px rgba(168, 85, 247, .5);
+.jarvis-hud[data-estado="falando"] .jarvis-trophy {
+    filter: drop-shadow(0 0 13px rgba(34, 211, 238, 1)) drop-shadow(0 0 30px rgba(168, 85, 247, .75));
     animation-duration: .9s;
 }
 
@@ -373,7 +480,7 @@
 
 @media (prefers-reduced-motion: reduce) {
     .jarvis-ring,
-    .jarvis-core {
+    .jarvis-trophy {
         animation: none !important;
     }
     .btn-voz-mute,

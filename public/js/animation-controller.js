@@ -286,7 +286,16 @@ const IanaHUD = (() => {
             <div class="jarvis-particles" aria-hidden="true">
                 <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
             </div>
-            <div class="jarvis-core"></div>
+            <div class="jarvis-trophy" aria-hidden="true">
+                <div class="jarvis-trophy-cup">
+                    <span class="jarvis-trophy-highlight"></span>
+                </div>
+                <div class="jarvis-trophy-handle jarvis-trophy-handle--left"></div>
+                <div class="jarvis-trophy-handle jarvis-trophy-handle--right"></div>
+                <div class="jarvis-trophy-stem"></div>
+                <div class="jarvis-trophy-foot"></div>
+                <div class="jarvis-trophy-base"></div>
+            </div>
             <div class="jarvis-bars">
                 <span></span><span></span><span></span><span></span><span></span>
             </div>

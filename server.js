@@ -132,8 +132,9 @@ io.engine.use((req, res, next) => sessionMiddleware(req, res, next));
 io.use((socket, next) => {
     passport.initialize()(socket.request, {}, () => {
         passport.session()(socket.request, {}, () => {
-            if (socket.request.isAuthenticated?.()) return next();
-            next(new Error('não autenticado'));
+            // Voz também funciona para visitantes; apenas o histórico
+            // persistente continua restrito a usuários autenticados.
+            next();
         });
     });
 });

@@ -4230,6 +4230,19 @@ function iniciarEventosCamera() {
         'click',
         capturarFoto
     );
+
+    obterElemento('btn-camera-cancelar')?.addEventListener(
+        'click',
+        fecharCamera
+    );
+
+    obterElemento('overlay-camera')?.addEventListener('click', event => {
+        if (event.target.id === 'overlay-camera') fecharCamera();
+    });
+
+    obterElemento('overlay-auth')?.addEventListener('click', event => {
+        if (event.target.id === 'overlay-auth') fecharAuth();
+    });
 }
 
 

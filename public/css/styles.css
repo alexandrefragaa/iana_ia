@@ -659,8 +659,8 @@ button:disabled {
     width: 40px;
     height: 40px;
     flex: 0 0 40px;
-    background: rgba(34, 211, 238, .12) !important;
-    border: 1px solid rgba(103, 232, 249, .42);
+    background: rgba(255, 255, 255, .08) !important;
+    border: 1px solid rgba(255, 255, 255, .8);
     cursor: pointer;
     padding: 0;
     border-radius: 10px;
@@ -668,14 +668,15 @@ button:disabled {
     align-items: center;
     justify-content: center;
     transition: .2s;
-    opacity: .88;
-    color: #a5f3fc;
+    opacity: 1;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .28);
 }
 
 .pill-btn:hover {
     opacity: 1;
-    background: rgba(34, 211, 238, .25) !important;
-    border-color: #67e8f9;
+    background: rgba(255, 255, 255, .18) !important;
+    border-color: #ffffff;
     transform: translateY(-1px);
     box-shadow: 0 0 12px rgba(34, 211, 238, .25);
 }
@@ -688,7 +689,7 @@ button:disabled {
    visualmente idêntico ao parado, sem feedback nenhum de "tá gravando". */
 .pill-btn.gravando {
     opacity: 1;
-    background: rgba(239, 68, 68, .3) !important;
+    background: rgba(248, 113, 113, .2) !important;
     border-color: #f87171;
     animation: pulsarGravando 1.2s ease-in-out infinite;
 }
@@ -729,20 +730,22 @@ button:disabled {
     width: 40px;
     height: 40px;
     flex: 0 0 40px;
-    background: rgba(34, 211, 238, .12) !important;
-    border: 1px solid rgba(103, 232, 249, .42);
+    background: rgba(255, 255, 255, .08) !important;
+    border: 1px solid rgba(255, 255, 255, .8);
     border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     flex-shrink: 0;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .28);
     transition: .2s;
 }
 
 .btn-send:hover {
-    background: rgba(34, 211, 238, .25) !important;
-    border-color: #67e8f9;
+    background: rgba(255, 255, 255, .18) !important;
+    border-color: #ffffff;
     transform: translateY(-1px);
     box-shadow: 0 0 14px rgba(34, 211, 238, .5);
 }
@@ -756,7 +759,7 @@ button:disabled {
     width: 20px !important;
     height: 20px;
     object-fit: contain;
-    filter: brightness(1.35) saturate(.8) !important;
+    filter: brightness(0) invert(1) !important;
 }
 
 .disclaimer {

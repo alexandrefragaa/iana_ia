@@ -3,7 +3,8 @@ export function isValidGameContent(title, url) {
     const keywords = [
         "game", "guide", "boss", "walkthrough",
         "elden ring", "weapon", "build", "quest",
-        "location", "item", "achievement"
+        "location", "item", "achievement", "conversacional", 
+        "talking", "talk", "speaking"
     ];
 
     const text = (title + url).toLowerCase();

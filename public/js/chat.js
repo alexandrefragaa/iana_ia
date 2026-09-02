@@ -1397,6 +1397,11 @@ function iniciarReconhecimentoVoz() {
 
         console.info('[IANA SPEECH] texto reconhecido:', texto);
 
+        if (vozFalando && vozSocket?.connected) {
+            vozSocket.emit('voz:interromper');
+            pararAudioEleven();
+        }
+
         removerWelcome();
         adicionarMensagemDOM('usuario', texto);
 

@@ -210,7 +210,7 @@ function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro, emocao = 'norm
         ws.send(JSON.stringify({
             text: ' ',
             voice_settings: ajustesVoz,
-            generation_config: { chunk_length_schedule: [120, 160, 250, 290] }
+            generation_config: { chunk_length_schedule: [50, 80, 120, 160] }
         }));
         // Frases curtas precisam de flush para vencer o limite inicial do buffer.
         ws.send(JSON.stringify({ text: `${texto.trim()} `, flush: true }));
@@ -251,10 +251,23 @@ function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro, emocao = 'norm
         clearTimeout(timeout);
         onErro(e);
     });
+
+    return ws;
+}
+
+function prepararTextoFalado(texto) {
+    return String(texto || '')
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/[#*_>`~-]+/g, '')
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+        .replace(/https?:\/\/\S+/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 /* ── SOCKET.IO: eventos de voz e visão ────────────────────────── */
 const historicoVozPorSocket = new Map(); // socket.id -> estado e últimas falas da chamada
+const ttsPorSocket = new Map();
 
 const SYSTEM_PROMPT_VOZ =
     'Você está numa CHAMADA DE VOZ em tempo real (não é chat de texto). ' +
@@ -304,7 +317,14 @@ io.on('connection', (socket) => {
 
         const nome = socket.request.user?.nome || 'Visitante';
         const emocao = detectarEmocaoVoz(msg);
-        const estado = historicoVozPorSocket.get(socket.id) || { idConversa: null, historico: [] };
+        const estado = historicoVozPorSocket.get(socket.id) || { idConversa: null, historico: [], turno: 0 };
+        estado.turno = (estado.turno || 0) + 1;
+        const turnoAtual = estado.turno;
+        const ttsAnterior = ttsPorSocket.get(socket.id);
+        if (ttsAnterior) {
+            ttsAnterior.close();
+            ttsPorSocket.delete(socket.id);
+        }
         const historico = estado.historico || [];
         const idConversa = await garantirConversa(
             socket.request.user?.id || null,
@@ -340,17 +360,27 @@ io.on('connection', (socket) => {
                 );
             }
 
-            socket.emit('voz:transcricao-iana', { texto: resposta, conversa_id: idConversa });
+            const textoFalado = prepararTextoFalado(resposta);
+            socket.emit('voz:transcricao-iana', { texto: textoFalado, conversa_id: idConversa });
 
-            falarComElevenLabs(resposta, {
+            const ttsAtual = falarComElevenLabs(textoFalado, {
                 emocao,
-                onAudioChunk: (base64) => socket.emit('voz:audio-resposta', { audio: base64 }),
-                onFim: () => socket.emit('voz:fala-finalizada'),
+                onAudioChunk: (base64) => {
+                    if (estado.turno === turnoAtual) socket.emit('voz:audio-resposta', { audio: base64 });
+                },
+                onFim: () => {
+                    if (estado.turno === turnoAtual) {
+                        ttsPorSocket.delete(socket.id);
+                        socket.emit('voz:fala-finalizada');
+                    }
+                },
                 onErro: (e) => {
+                    ttsPorSocket.delete(socket.id);
                     console.error('[ELEVENLABS]', e.message);
                     socket.emit('voz:erro', { mensagem: `Erro ao gerar a voz da Iana: ${e.message}` });
                 }
             });
+            ttsPorSocket.set(socket.id, ttsAtual);
         } catch (e) {
             console.error('[VOZ TEXTO]', e.message);
             socket.emit('voz:erro', { mensagem: 'Erro ao processar sua fala.' });
@@ -361,14 +391,25 @@ io.on('connection', (socket) => {
     // detecta e para de tocar sozinho; esse evento só existe pra
     // avisar o servidor caso ele precise abortar algo em andamento.
     socket.on('voz:interromper', () => {
+        const ttsAtual = ttsPorSocket.get(socket.id);
+        if (ttsAtual) {
+            ttsAtual.close();
+            ttsPorSocket.delete(socket.id);
+        }
+        const estado = historicoVozPorSocket.get(socket.id);
+        if (estado) estado.turno = (estado.turno || 0) + 1;
         socket.emit('voz:interrompido');
     });
 
     socket.on('voz:encerrar', () => {
+        ttsPorSocket.get(socket.id)?.close();
+        ttsPorSocket.delete(socket.id);
         historicoVozPorSocket.delete(socket.id);
     });
 
     socket.on('disconnect', () => {
+        ttsPorSocket.get(socket.id)?.close();
+        ttsPorSocket.delete(socket.id);
         historicoVozPorSocket.delete(socket.id);
     });
 });

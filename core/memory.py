@@ -1,34 +1,39 @@
 # memory.py
-# Memória persistente da Iana usando MySQL.
+# ================================================================
+# MEMÓRIA PERSISTENTE DA IANA
 #
 # Responsabilidades:
-# - fatos/memórias permanentes
-# - URLs/documentos já aprendidos
-# - histórico de mensagens
-# - consulta simples por palavras-chave
+# - Memórias/fatos permanentes no MySQL
+# - Documentos aprendidos
+# - Histórico das conversas
+# - Consulta textual de memórias
+# - Controle de documentos já processados
 #
-# O ChromaDB continua sendo responsabilidade do iana.py/learning_engine.py.
+# O ChromaDB continua sendo responsabilidade do learning_engine.py
+# ================================================================
+
+from __future__ import annotations
 
 import os
 import ssl as ssl_lib
-import threading
 import sys
+import threading
 from contextlib import contextmanager
+from typing import Any, Dict, List, Optional
 
 import pymysql
 import pymysql.cursors
 
 
+# ================================================================
+# CONFIGURAÇÃO
+# ================================================================
+
 _lock = threading.RLock()
 
 GLOBAL_USER_ID = "__global__"
 
-
-# ============================================================
-# CONFIGURAÇÃO MYSQL
-# ============================================================
-
-_DB_CONFIG = {
+DB_CONFIG = {
     "host": os.getenv("DB_HOST", "localhost"),
     "port": int(os.getenv("DB_PORT", "3306")),
     "user": os.getenv("DB_USER", "root"),
@@ -38,33 +43,32 @@ _DB_CONFIG = {
     "cursorclass": pymysql.cursors.DictCursor,
     "autocommit": True,
     "connect_timeout": 10,
-    "read_timeout": 20,
-    "write_timeout": 20,
+    "read_timeout": 30,
+    "write_timeout": 30,
 }
 
-
 # SSL opcional
-if os.getenv("DB_SSL", "").lower() == "true":
-    _ctx = ssl_lib.create_default_context()
+if os.getenv("DB_SSL", "").strip().lower() == "true":
+    ssl_context = ssl_lib.create_default_context()
 
     # Mantém compatibilidade com sua configuração atual.
-    # Para produção, o ideal é usar certificado válido.
-    _ctx.check_hostname = False
-    _ctx.verify_mode = ssl_lib.CERT_NONE
+    # Em produção, prefira certificado válido.
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl_lib.CERT_NONE
 
-    _DB_CONFIG["ssl"] = _ctx
+    DB_CONFIG["ssl"] = ssl_context
 
 
 _tabelas_ok = False
 
 
-# ============================================================
+# ================================================================
 # CONEXÃO
-# ============================================================
+# ================================================================
 
 @contextmanager
 def _conn():
-    conn = pymysql.connect(**_DB_CONFIG)
+    conn = pymysql.connect(**DB_CONFIG)
 
     try:
         yield conn
@@ -72,9 +76,9 @@ def _conn():
         conn.close()
 
 
-# ============================================================
+# ================================================================
 # TABELAS
-# ============================================================
+# ================================================================
 
 def _garantir_tabelas():
     global _tabelas_ok
@@ -90,27 +94,31 @@ def _garantir_tabelas():
             with conn.cursor() as cur:
 
                 # ------------------------------------------------
-                # MEMÓRIAS / FATOS
+                # FATOS / MEMÓRIAS
                 # ------------------------------------------------
 
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS fatos_iana (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
 
                         user_id VARCHAR(191) NOT NULL,
 
-                        categoria VARCHAR(32) NOT NULL,
+                        categoria VARCHAR(64) NOT NULL,
 
                         jogo VARCHAR(191) NULL,
 
-                        texto TEXT NOT NULL,
+                        texto LONGTEXT NOT NULL,
 
-                        fonte_url VARCHAR(512) NULL,
+                        fonte_url VARCHAR(2048) NULL,
 
-                        doc_id VARCHAR(64) NULL,
+                        doc_id VARCHAR(191) NULL,
 
                         criado_em TIMESTAMP
                             DEFAULT CURRENT_TIMESTAMP,
+
+                        atualizado_em TIMESTAMP
+                            DEFAULT CURRENT_TIMESTAMP
+                            ON UPDATE CURRENT_TIMESTAMP,
 
                         UNIQUE KEY uq_doc_id (doc_id),
 
@@ -131,16 +139,30 @@ def _garantir_tabelas():
 
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS aprendidos_iana (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
 
-                        chave VARCHAR(255) NOT NULL,
+                        chave VARCHAR(512) NOT NULL,
 
-                        tipo VARCHAR(32) NOT NULL,
+                        tipo VARCHAR(64) NOT NULL,
+
+                        titulo VARCHAR(500) NULL,
+
+                        fonte_url VARCHAR(2048) NULL,
+
+                        content_hash CHAR(64) NULL,
 
                         criado_em TIMESTAMP
                             DEFAULT CURRENT_TIMESTAMP,
 
-                        UNIQUE KEY uq_chave (chave)
+                        atualizado_em TIMESTAMP
+                            DEFAULT CURRENT_TIMESTAMP
+                            ON UPDATE CURRENT_TIMESTAMP,
+
+                        UNIQUE KEY uq_chave (chave),
+
+                        INDEX idx_tipo (tipo),
+
+                        INDEX idx_hash (content_hash)
 
                     ) ENGINE=InnoDB
                       DEFAULT CHARSET=utf8mb4
@@ -149,9 +171,6 @@ def _garantir_tabelas():
 
                 # ------------------------------------------------
                 # HISTÓRICO
-                #
-                # Se a tabela já existir, CREATE IF NOT EXISTS
-                # não altera a tabela existente.
                 # ------------------------------------------------
 
                 cur.execute("""
@@ -183,32 +202,45 @@ def _garantir_tabelas():
         _tabelas_ok = True
 
 
-# ============================================================
+# ================================================================
 # DISPONIBILIDADE
-# ============================================================
+# ================================================================
 
-def _db_disponivel():
+def _db_disponivel() -> bool:
     try:
         _garantir_tabelas()
         return True
 
     except Exception as e:
         sys.stderr.write(
-            f"[AVISO] memory.py: MySQL indisponível: {e}\n"
+            f"[memory] MySQL indisponível: {e}\n"
         )
+
         return False
 
 
-# ============================================================
-# APRENDIZADO
-# ============================================================
+def testar_conexao() -> bool:
+    """
+    Testa a conexão com MySQL.
+    """
 
-def ja_aprendeu_mysql(chave):
+    return _db_disponivel()
+
+
+# ================================================================
+# DOCUMENTOS APRENDIDOS
+# ================================================================
+
+def obter_documento_aprendido(chave: str) -> Optional[Dict[str, Any]]:
+    """
+    Retorna os metadados de um documento aprendido.
+    """
+
     if not chave:
-        return False
+        return None
 
     if not _db_disponivel():
-        return False
+        return None
 
     try:
         with _lock:
@@ -217,7 +249,14 @@ def ja_aprendeu_mysql(chave):
 
                     cur.execute(
                         """
-                        SELECT 1
+                        SELECT
+                            chave,
+                            tipo,
+                            titulo,
+                            fonte_url,
+                            content_hash,
+                            criado_em,
+                            atualizado_em
                         FROM aprendidos_iana
                         WHERE chave = %s
                         LIMIT 1
@@ -225,21 +264,40 @@ def ja_aprendeu_mysql(chave):
                         (chave,)
                     )
 
-                    return cur.fetchone() is not None
+                    return cur.fetchone()
 
     except Exception as e:
         sys.stderr.write(
-            f"[memory] erro ja_aprendeu_mysql: {e}\n"
+            f"[memory] erro obter_documento_aprendido: {e}\n"
         )
+
+        return None
+
+
+def ja_aprendeu_mysql(chave: str) -> bool:
+    """
+    Verifica se uma fonte/documento já foi registrada.
+    """
+
+    return obter_documento_aprendido(chave) is not None
+
+
+def registrar_aprendizado_mysql(
+    chave: str,
+    tipo: str = "documento",
+    titulo: Optional[str] = None,
+    fonte_url: Optional[str] = None,
+    content_hash: Optional[str] = None,
+) -> bool:
+    """
+    Registra ou atualiza um documento aprendido.
+    """
+
+    if not chave:
         return False
 
-
-def registrar_aprendizado_mysql(chave, tipo="url"):
-    if not chave:
-        return
-
     if not _db_disponivel():
-        return
+        return False
 
     try:
         with _lock:
@@ -248,34 +306,154 @@ def registrar_aprendizado_mysql(chave, tipo="url"):
 
                     cur.execute(
                         """
-                        INSERT IGNORE INTO aprendidos_iana
-                            (chave, tipo)
+                        INSERT INTO aprendidos_iana
+                        (
+                            chave,
+                            tipo,
+                            titulo,
+                            fonte_url,
+                            content_hash
+                        )
                         VALUES
-                            (%s, %s)
+                        (
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            %s
+                        )
+
+                        ON DUPLICATE KEY UPDATE
+
+                            tipo = VALUES(tipo),
+
+                            titulo = VALUES(titulo),
+
+                            fonte_url = VALUES(fonte_url),
+
+                            content_hash = VALUES(content_hash),
+
+                            atualizado_em = CURRENT_TIMESTAMP
                         """,
-                        (chave, tipo)
+                        (
+                            chave,
+                            tipo,
+                            titulo,
+                            fonte_url,
+                            content_hash
+                        )
                     )
+
+        return True
 
     except Exception as e:
         sys.stderr.write(
             f"[memory] erro registrar aprendizado: {e}\n"
         )
 
+        return False
 
-# ============================================================
-# MEMÓRIA SEMÂNTICA / FATOS
-# ============================================================
+
+# ================================================================
+# MEMÓRIA / FATOS
+# ================================================================
+
+def save_memory(
+    texto: str,
+    categoria: str,
+    jogo: Optional[str] = None,
+    fonte_url: Optional[str] = None,
+    doc_id: Optional[str] = None,
+    user_id: str = GLOBAL_USER_ID,
+) -> bool:
+    """
+    Salva um fato ou documento no MySQL.
+
+    Por padrão, conhecimento minerado fica em __global__,
+    porque pertence à base de conhecimento da Iana e não
+    a um usuário específico.
+    """
+
+    texto = str(texto or "").strip()
+
+    if not texto:
+        return False
+
+    if not _db_disponivel():
+        return False
+
+    try:
+        with _lock:
+            with _conn() as conn:
+                with conn.cursor() as cur:
+
+                    cur.execute(
+                        """
+                        INSERT INTO fatos_iana
+                        (
+                            user_id,
+                            categoria,
+                            jogo,
+                            texto,
+                            fonte_url,
+                            doc_id
+                        )
+                        VALUES
+                        (
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            %s
+                        )
+
+                        ON DUPLICATE KEY UPDATE
+
+                            texto = VALUES(texto),
+
+                            categoria = VALUES(categoria),
+
+                            jogo = VALUES(jogo),
+
+                            fonte_url = VALUES(fonte_url),
+
+                            atualizado_em = CURRENT_TIMESTAMP
+                        """,
+                        (
+                            str(user_id),
+                            categoria or "geral",
+                            jogo,
+                            texto,
+                            fonte_url,
+                            doc_id
+                        )
+                    )
+
+        return True
+
+    except Exception as e:
+        sys.stderr.write(
+            f"[memory] erro save_memory: {e}\n"
+        )
+
+        return False
+
 
 def get_memory(
-    query,
+    query: str,
     id_usuario_numerico=None,
-    limit=10
-):
+    limit: int = 10,
+) -> List[str]:
     """
     Busca memórias relacionadas à pergunta.
 
-    Retorna apenas texto.
+    Usa uma pontuação simples por palavras.
+    O conhecimento semântico principal continua vindo
+    do ChromaDB.
     """
+
+    query = str(query or "").strip()
 
     if not query:
         return []
@@ -284,6 +462,8 @@ def get_memory(
         return []
 
     try:
+        limit = max(1, min(int(limit), 50))
+
         with _lock:
             with _conn() as conn:
                 with conn.cursor() as cur:
@@ -302,6 +482,7 @@ def get_memory(
                                 user_id = %s
                                 OR user_id = %s
                             ORDER BY criado_em DESC
+                            LIMIT 500
                             """,
                             (
                                 GLOBAL_USER_ID,
@@ -321,22 +502,25 @@ def get_memory(
                             FROM fatos_iana
                             WHERE user_id = %s
                             ORDER BY criado_em DESC
+                            LIMIT 500
                             """,
                             (GLOBAL_USER_ID,)
                         )
 
                     rows = cur.fetchall()
 
-        # ----------------------------------------------------
-        # Pontuação simples
-        # ----------------------------------------------------
-
         query_lower = query.lower()
 
         palavras = {
-            p.strip(".,!?;:()[]{}\"'")
-            for p in query_lower.split()
-            if len(p.strip(".,!?;:()[]{}\"'")) >= 2
+            palavra.strip(
+                ".,!?;:()[]{}\"'“”‘’"
+            )
+            for palavra in query_lower.split()
+            if len(
+                palavra.strip(
+                    ".,!?;:()[]{}\"'“”‘’"
+                )
+            ) >= 2
         }
 
         candidatos = []
@@ -349,6 +533,7 @@ def get_memory(
 
             texto_lower = texto.lower()
             jogo_lower = jogo.lower()
+            categoria_lower = categoria.lower()
 
             score = 0
 
@@ -360,10 +545,9 @@ def get_memory(
                 if palavra in jogo_lower:
                     score += 4
 
-                if palavra in categoria.lower():
+                if palavra in categoria_lower:
                     score += 1
 
-            # Nome completo do jogo encontrado
             if jogo and jogo_lower in query_lower:
                 score += 8
 
@@ -378,7 +562,7 @@ def get_memory(
                 )
 
         candidatos.sort(
-            key=lambda x: x[0],
+            key=lambda item: item[0],
             reverse=True
         )
 
@@ -387,16 +571,19 @@ def get_memory(
         for _, texto, jogo, fonte in candidatos[:limit]:
 
             if jogo:
+
                 resultado.append(
-                    f"[MEMÓRIA — {jogo}]\n{texto}"
+                    f"[MEMÓRIA — {jogo}]\n"
+                    f"{texto}"
                 )
+
             else:
+
                 resultado.append(texto)
 
         return resultado
 
     except Exception as e:
-
         sys.stderr.write(
             f"[memory] erro get_memory: {e}\n"
         )
@@ -404,17 +591,16 @@ def get_memory(
         return []
 
 
-# ============================================================
+# ================================================================
 # HISTÓRICO
-# ============================================================
+# ================================================================
 
 def get_historico_conversa(
-    id_conversa,
-    limit=8
-):
+    id_conversa: str,
+    limit: int = 8,
+) -> List[Dict[str, Any]]:
     """
-    Retorna o histórico no mesmo formato usado
-    pelo server.js/Gemini.
+    Retorna o histórico da conversa.
     """
 
     if not id_conversa:
@@ -451,7 +637,6 @@ def get_historico_conversa(
         return rows
 
     except Exception as e:
-
         sys.stderr.write(
             f"[memory] erro histórico: {e}\n"
         )
@@ -460,18 +645,21 @@ def get_historico_conversa(
 
 
 def salvar_mensagem(
-    conversa_id,
-    mensagem,
-    remetente,
-    usuario_id=None
-):
+    conversa_id: str,
+    mensagem: str,
+    remetente: str,
+    usuario_id=None,
+) -> bool:
     """
-    Salva uma mensagem no MySQL.
+    Salva uma mensagem da conversa.
 
     remetente:
         user
         iana
     """
+
+    conversa_id = str(conversa_id or "").strip()
+    mensagem = str(mensagem or "").strip()
 
     if not conversa_id or not mensagem:
         return False
@@ -485,7 +673,6 @@ def salvar_mensagem(
         return False
 
     try:
-
         with _lock:
             with _conn() as conn:
                 with conn.cursor() as cur:
@@ -493,14 +680,19 @@ def salvar_mensagem(
                     cur.execute(
                         """
                         INSERT INTO mensagens
-                            (
-                                conversa_id,
-                                usuario_id,
-                                remetente,
-                                mensagem
-                            )
+                        (
+                            conversa_id,
+                            usuario_id,
+                            remetente,
+                            mensagem
+                        )
                         VALUES
-                            (%s, %s, %s, %s)
+                        (
+                            %s,
+                            %s,
+                            %s,
+                            %s
+                        )
                         """,
                         (
                             conversa_id,
@@ -513,7 +705,6 @@ def salvar_mensagem(
         return True
 
     except Exception as e:
-
         sys.stderr.write(
             f"[memory] erro salvar_mensagem: {e}\n"
         )
@@ -521,70 +712,100 @@ def salvar_mensagem(
         return False
 
 
-# ============================================================
-# SALVAR MEMÓRIA
-# ============================================================
+# ================================================================
+# ESTATÍSTICAS
+# ================================================================
 
-def save_memory(
-    texto,
-    categoria,
-    jogo=None,
-    fonte_url=None,
-    doc_id=None,
-    user_id=GLOBAL_USER_ID
-):
-    if not texto:
-        return False
+def estatisticas_memoria() -> Dict[str, int]:
+    """
+    Retorna quantidade de documentos, fatos e mensagens.
+    """
+
+    resultado = {
+        "documentos_aprendidos": 0,
+        "fatos": 0,
+        "mensagens": 0,
+    }
 
     if not _db_disponivel():
-        return False
+        return resultado
 
     try:
-
         with _lock:
             with _conn() as conn:
                 with conn.cursor() as cur:
 
                     cur.execute(
-                        """
-                        INSERT INTO fatos_iana
-                            (
-                                user_id,
-                                categoria,
-                                jogo,
-                                texto,
-                                fonte_url,
-                                doc_id
-                            )
-                        VALUES
-                            (%s, %s, %s, %s, %s, %s)
-
-                        ON DUPLICATE KEY UPDATE
-
-                            texto = VALUES(texto),
-
-                            categoria = VALUES(categoria),
-
-                            jogo = VALUES(jogo),
-
-                            fonte_url = VALUES(fonte_url)
-                        """,
-                        (
-                            str(user_id),
-                            categoria or "geral",
-                            jogo,
-                            texto,
-                            fonte_url,
-                            doc_id
-                        )
+                        "SELECT COUNT(*) AS total FROM aprendidos_iana"
                     )
 
-        return True
+                    row = cur.fetchone()
+
+                    resultado["documentos_aprendidos"] = int(
+                        row["total"]
+                    )
+
+                    cur.execute(
+                        "SELECT COUNT(*) AS total FROM fatos_iana"
+                    )
+
+                    row = cur.fetchone()
+
+                    resultado["fatos"] = int(
+                        row["total"]
+                    )
+
+                    cur.execute(
+                        "SELECT COUNT(*) AS total FROM mensagens"
+                    )
+
+                    row = cur.fetchone()
+
+                    resultado["mensagens"] = int(
+                        row["total"]
+                    )
+
+        return resultado
 
     except Exception as e:
-
         sys.stderr.write(
-            f"[memory] erro save_memory: {e}\n"
+            f"[memory] erro estatísticas: {e}\n"
         )
 
-        return False
+        return resultado
+
+
+# ================================================================
+# TESTE DIRETO
+# ================================================================
+
+if __name__ == "__main__":
+
+    print("=" * 60)
+    print("🧠 TESTE DA MEMÓRIA MYSQL DA IANA")
+    print("=" * 60)
+
+    if testar_conexao():
+
+        print("✅ MySQL conectado.")
+
+        stats = estatisticas_memoria()
+
+        print(
+            f"📚 Documentos aprendidos: "
+            f"{stats['documentos_aprendidos']}"
+        )
+
+        print(
+            f"🧠 Fatos/memórias: "
+            f"{stats['fatos']}"
+        )
+
+        print(
+            f"💬 Mensagens: "
+            f"{stats['mensagens']}"
+        )
+
+    else:
+
+        print("❌ Não foi possível conectar ao MySQL.")

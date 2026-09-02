@@ -1,28 +1,19 @@
-#!/usr/bin/env python3
-import requests
+from __future__ import annotations
+
 import hashlib
 import json
-import time
-import sys
 import os
+import re
+import sys
+import time
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import urljoin, urlparse
+
+import requests
 from bs4 import BeautifulSoup
 
 
-def resolver_arquivo(nome_arquivo, pasta_raiz=None):
-    base = Path(pasta_raiz or Path(__file__).resolve().parent.parent)
-    candidatos = [
-        base / "data" / nome_arquivo,
-        base / nome_arquivo,
-        Path(__file__).resolve().parent.parent / "data" / nome_arquivo,
-        Path(__file__).resolve().parent.parent / nome_arquivo,
-    ]
-    for caminho in candidatos:
-        if caminho.exists():
-            return caminho
-    return base / "data" / nome_arquivo
-
-# Importa o motor de aprendizado
 try:
     from learning_engine import learn
 except ImportError:
@@ -32,536 +23,1280 @@ except ImportError:
         print("❌ learning_engine.py não encontrado.")
         sys.exit(1)
 
-# ── CONFIGURAÇÃO ───────────────────────────────────────────────────
-PASTA_RAIZ = Path(__file__).resolve().parent.parent
-PASTA_DATA = PASTA_RAIZ / "data"
-PASTA_DATA.mkdir(exist_ok=True)
-print(f"DEBUG: O script está procurando os arquivos em: {PASTA_DATA}")
 
-ARQUIVO_LINKS        = resolver_arquivo("links_para_mineracao.txt")
-ARQUIVO_TITULOS      = resolver_arquivo("titulos_para_buscar.txt")
-ARQUIVO_FEITOS       = resolver_arquivo("links_concluidos.txt")
-ARQUIVOS_PARA_LER    = resolver_arquivo("reworks_dbd.txt")
-ARQUIVO_ATUALIZACOES = resolver_arquivo("update_sources.txt")
-ARQUIVO_ESTADO_ATU   = resolver_arquivo("update_source_state.json")
+BASE_DIR = Path(
+    os.getenv(
+        "IANA_BASE_DIR",
+        str(Path(__file__).resolve().parent)
+    )
+).resolve()
+
+DATA_DIR = Path(
+    os.getenv(
+        "IANA_DATA_DIR",
+        str(BASE_DIR / "data")
+    )
+).resolve()
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def resolver_arquivo(nome_arquivo: str) -> Path:
+    candidatos = [
+        DATA_DIR / nome_arquivo,
+        BASE_DIR / nome_arquivo,
+        BASE_DIR / "data" / nome_arquivo,
+        BASE_DIR.parent / nome_arquivo,
+        BASE_DIR.parent / "data" / nome_arquivo,
+    ]
+
+    for caminho in candidatos:
+        if caminho.exists():
+            return caminho
+
+    return DATA_DIR / nome_arquivo
+
+
+ARQUIVO_REWORKS = resolver_arquivo("reworks_dbd.txt")
+ARQUIVO_LINKS_CONCLUIDOS = resolver_arquivo("links_concluidos.txt")
+ARQUIVO_TITULOS = resolver_arquivo("titulos_para_buscar.txt")
+ARQUIVO_UPDATES = resolver_arquivo("update_sources.txt")
+ARQUIVO_LINKS_MINERACAO = resolver_arquivo("links_para_mineracao.txt")
+ARQUIVO_ESTADO = resolver_arquivo("update_source_state.json")
+
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"
+    "User-Agent": (
+        "Mozilla/5.0 "
+        "(Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 "
+        "(KHTML, like Gecko) "
+        "Chrome/128.0 Safari/537.36"
+    ),
+    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept": (
+        "text/html,"
+        "application/xhtml+xml,"
+        "application/xml;q=0.9,"
+        "*/*;q=0.8"
+    ),
 }
 
-# ── UTILITÁRIOS ────────────────────────────────────────────────────
-def ja_processado(url):
-    if not ARQUIVO_FEITOS.exists():
-        return False
-    return url in ARQUIVO_FEITOS.read_text(encoding='utf-8')
-
-def marcar_como_feito(url):
-    with open(ARQUIVO_FEITOS, 'a', encoding='utf-8') as f:
-        f.write(url + '\n')
-
-def uid(texto):
-    return "url_" + hashlib.md5(texto.encode('utf-8')).hexdigest()
+SESSION = requests.Session()
+SESSION.headers.update(HEADERS)
+REQUEST_TIMEOUT = (5, 20)
 
 
-def hash_texto(texto):
-    return hashlib.md5(texto.strip().encode('utf-8')).hexdigest() if texto else ''
+def normalizar_url(url: str) -> str:
+    url = str(url or "").strip()
+
+    if not url:
+        return ""
+
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        return ""
+
+    return url.rstrip()
 
 
-def carregar_estado_atualizacoes():
-    if not ARQUIVO_ESTADO_ATU.exists():
+def extrair_urls(texto: str) -> List[str]:
+    if not texto:
+        return []
+
+    urls = re.findall(
+        r'https?://[^\s<>"\']+',
+        texto,
+        flags=re.IGNORECASE,
+    )
+
+    resultado = []
+    vistos = set()
+
+    for url in urls:
+        url = url.rstrip(".,;:!?)]}")
+
+        if "](" in url:
+            url = url.split("](", 1)[-1].rstrip(")")
+
+        url = normalizar_url(url)
+
+        if not url or url in vistos:
+            continue
+
+        vistos.add(url)
+        resultado.append(url)
+
+    return resultado
+
+
+def uid_url(url: str) -> str:
+    return (
+        "url_"
+        + hashlib.sha256(
+            url.strip().lower().encode("utf-8")
+        ).hexdigest()[:48]
+    )
+
+
+def uid_texto(texto: str, prefixo: str) -> str:
+    return (
+        prefixo
+        + "_"
+        + hashlib.sha256(
+            texto.strip().lower().encode("utf-8")
+        ).hexdigest()[:48]
+    )
+
+
+def hash_texto(texto: str) -> str:
+    return hashlib.sha256(
+        str(texto or "").strip().encode("utf-8")
+    ).hexdigest()
+
+
+def ler_arquivo(caminho: Path) -> str:
+    if not caminho.exists():
+        return ""
+
+    for encoding in ("utf-8", "utf-8-sig", "latin-1"):
+        try:
+            return caminho.read_text(encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            print(f"⚠️ Erro lendo {caminho}: {e}")
+            return ""
+
+    return ""
+
+
+def ler_linhas(caminho: Path) -> List[str]:
+    texto = ler_arquivo(caminho)
+
+    return [
+        linha.strip()
+        for linha in texto.splitlines()
+        if linha.strip()
+    ]
+
+
+def carregar_links_concluidos() -> set:
+    if not ARQUIVO_LINKS_CONCLUIDOS.exists():
+        return set()
+
+    return set(
+        extrair_urls(
+            ler_arquivo(ARQUIVO_LINKS_CONCLUIDOS)
+        )
+    )
+
+
+def marcar_link_concluido(url: str):
+    url = normalizar_url(url)
+
+    if not url:
+        return
+
+    ARQUIVO_LINKS_CONCLUIDOS.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    if url in carregar_links_concluidos():
+        return
+
+    with ARQUIVO_LINKS_CONCLUIDOS.open(
+        "a",
+        encoding="utf-8",
+    ) as arquivo:
+        arquivo.write(url + "\n")
+
+
+def carregar_estado() -> Dict:
+    if not ARQUIVO_ESTADO.exists():
         return {}
+
     try:
-        return json.loads(ARQUIVO_ESTADO_ATU.read_text(encoding='utf-8'))
+        dados = json.loads(
+            ler_arquivo(ARQUIVO_ESTADO)
+        )
+
+        return dados if isinstance(dados, dict) else {}
     except Exception:
         return {}
 
 
-def salvar_estado_atualizacoes(estado):
-    ARQUIVO_ESTADO_ATU.write_text(json.dumps(estado, indent=2, ensure_ascii=False), encoding='utf-8')
+def salvar_estado(estado: Dict):
+    ARQUIVO_ESTADO.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    ARQUIVO_ESTADO.write_text(
+        json.dumps(
+            estado,
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
-# ── EXTRAÇÃO DE CONTEÚDO ───────────────────────────────────────────
-def extrair_conteudo(url):
-    """
-    Faz o scraping real da página e retorna (titulo, conteudo).
-    Extrai parágrafos, listas, títulos — tudo que tem texto útil.
-    """
+def limpar_soup(soup: BeautifulSoup):
+    for tag in soup(
+        [
+            "script",
+            "style",
+            "noscript",
+            "template",
+            "svg",
+            "canvas",
+            "nav",
+            "footer",
+            "header",
+            "aside",
+            "form",
+            "iframe",
+            "advertisement",
+        ]
+    ):
+        tag.decompose()
+
+
+def texto_limpo(elemento) -> str:
+    return re.sub(
+        r"\s+",
+        " ",
+        elemento.get_text(" ", strip=True),
+    ).strip()
+
+
+def extrair_conteudo(
+    url: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    url = normalizar_url(url)
+
+    if not url:
+        return None, None
+
     try:
-        r = requests.get(url, headers=HEADERS, timeout=12)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+        response = SESSION.get(
+            url,
+            timeout=REQUEST_TIMEOUT,
+            allow_redirects=True,
+        )
 
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "iframe"]):
-            tag.decompose()
+        response.raise_for_status()
 
-        titulo = soup.title.text.strip() if soup.title else url.split("/")[-1]
+        content_type = (
+            response.headers
+            .get("Content-Type", "")
+            .lower()
+        )
+
+        if (
+            content_type
+            and "html" not in content_type
+            and "xhtml" not in content_type
+        ):
+            print(f"  ⚠️ Não é HTML: {url}")
+            return None, None
+
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser",
+        )
+
+        limpar_soup(soup)
+
+        titulo = ""
+
+        h1 = soup.find("h1")
+
+        if h1:
+            titulo = texto_limpo(h1)
+
+        if not titulo and soup.title:
+            titulo = texto_limpo(soup.title)
+
+        if not titulo:
+            titulo = (
+                urlparse(url)
+                .path
+                .strip("/")
+                .split("/")[-1]
+                or url
+            )
+
+        container = (
+            soup.find("article")
+            or soup.find("main")
+            or soup.find(attrs={"role": "main"})
+            or soup.body
+        )
+
+        if not container:
+            return titulo, None
+
         blocos = []
 
-        for h in soup.find_all(["h1", "h2", "h3"]):
-            txt = h.get_text(strip=True)
-            if len(txt) > 5:
-                blocos.append(f"## {txt}")
+        for heading in container.find_all(
+            ["h1", "h2", "h3", "h4"]
+        ):
+            texto = texto_limpo(heading)
 
-        for p in soup.find_all("p"):
-            txt = p.get_text(strip=True)
-            if len(txt) > 40:
-                blocos.append(txt)
+            if len(texto) >= 4:
+                blocos.append(f"## {texto}")
 
-        for li in soup.find_all("li"):
-            txt = li.get_text(strip=True)
-            if len(txt) > 20:
-                blocos.append(f"• {txt}")
+        for p in container.find_all("p"):
+            texto = texto_limpo(p)
 
-        for tr in soup.find_all("tr"):
-            celulas = [td.get_text(strip=True) for td in tr.find_all(["td", "th"]) if td.get_text(strip=True)]
+            if len(texto) >= 40:
+                blocos.append(texto)
+
+        for li in container.find_all("li"):
+            texto = texto_limpo(li)
+
+            if len(texto) >= 25:
+                blocos.append(f"• {texto}")
+
+        for tr in container.find_all("tr"):
+            celulas = []
+
+            for td in tr.find_all(["td", "th"]):
+                texto = texto_limpo(td)
+
+                if texto:
+                    celulas.append(texto)
+
             if celulas:
                 blocos.append(" | ".join(celulas))
 
-        conteudo = "\n".join(blocos)
+        resultado = []
+        vistos = set()
 
-        if len(conteudo) > 6000:
-            conteudo = conteudo[:6000] + "\n...[continua]"
+        for bloco in blocos:
+            chave = bloco.strip().lower()
+
+            if chave in vistos:
+                continue
+
+            vistos.add(chave)
+            resultado.append(bloco.strip())
+
+        conteudo = "\n\n".join(resultado).strip()
+
+        if len(conteudo) < 80:
+            texto_total = texto_limpo(container)
+
+            if len(texto_total) >= 80:
+                conteudo = texto_total
+
+        if len(conteudo) < 80:
+            return titulo, None
+
+        try:
+            limite = int(
+                os.getenv(
+                    "IANA_MAX_PAGE_CHARS",
+                    "30000",
+                )
+            )
+        except ValueError:
+            limite = 30000
+
+        if len(conteudo) > limite:
+            conteudo = (
+                conteudo[:limite]
+                + "\n\n[Conteúdo limitado pelo minerador.]"
+            )
 
         return titulo, conteudo
 
     except requests.exceptions.Timeout:
         print(f"  ⏱️ Timeout: {url}")
+
     except requests.exceptions.HTTPError as e:
-        print(f"  ❌ HTTP {e.response.status_code}: {url}")
+        codigo = (
+            e.response.status_code
+            if e.response
+            else "?"
+        )
+        print(f"  ❌ HTTP {codigo}: {url}")
+
+    except requests.exceptions.RequestException as e:
+        print(f"  ❌ Erro HTTP: {url} — {e}")
+
     except Exception as e:
-        print(f"  ❌ Erro ao extrair {url}: {e}")
+        print(f"  ❌ Erro extraindo {url}: {e}")
 
     return None, None
 
-# ── FASE 1: LINKS ──────────────────────────────────────────────────
-def minerar_links():
-    if not ARQUIVO_LINKS.exists():
-        print(f"⚠️ ARQUIVO NÃO ENCONTRADO: {ARQUIVO_LINKS}")
-        return 0, 0
 
-    conteudo_arquivo = ARQUIVO_LINKS.read_text(encoding='utf-8')
-    linhas = conteudo_arquivo.splitlines()
-    
-    urls = [linha.strip() for linha in linhas if linha.strip().startswith("http")]
-    print(f"🔍 Encontradas {len(urls)} URLs para análise. Iniciando mineração silenciosa...\n")
-    
-    ok, err, pulados = 0, 0, 0
+def aprender_url(
+    url: str,
+    categoria: str = "web_mining",
+) -> str:
+    titulo, conteudo = extrair_conteudo(url)
 
-    for i, url in enumerate(urls, 1):
-        if ja_processado(url):
-            pulados += 1
+    if not titulo or not conteudo:
+        return "ERRO"
+
+    return learn(
+        titulo=titulo,
+        conteudo=conteudo,
+        categoria=categoria,
+        id_documento=uid_url(url),
+        url=url,
+    )
+
+
+def minerar_urls(
+    urls: List[str],
+    categoria: str,
+    marcar_feitos: bool = True,
+) -> Tuple[int, int, int]:
+    urls_unicas = []
+    vistos = set()
+
+    for url in urls:
+        url = normalizar_url(url)
+
+        if not url or url in vistos:
             continue
 
-        titulo, conteudo = extrair_conteudo(url)
+        vistos.add(url)
+        urls_unicas.append(url)
 
-        if not conteudo or len(conteudo) < 80:
-            err += 1
+    concluidos = carregar_links_concluidos()
+
+    novos = 0
+    pulados = 0
+    erros = 0
+
+    print(f"\n🔎 {len(urls_unicas)} URLs encontradas")
+
+    for indice, url in enumerate(urls_unicas, 1):
+        print(f"\n[{indice}/{len(urls_unicas)}]")
+        print(f"🌐 {url}")
+
+        if marcar_feitos and url in concluidos:
+            pulados += 1
+            print("⏭️ Já consta como concluído.")
             continue
 
-        status = learn(
-            titulo=titulo,
-            conteudo=conteudo,
-            categoria="web_mining",
-            id_documento=uid(url),
-            url=url
-        )
+        status = aprender_url(url, categoria)
 
-        if status in ["NOVO", "ATUALIZADO"]:
-            marcar_como_feito(url)
-            print(f"✅ [{i}/{len(urls)}] Aprendido: {titulo[:60]} ({status})")
-            ok += 1
-        elif status in ["EXISTE", "PARECIDO"]:
-            marcar_como_feito(url)
-            print(f"⏭️ [{i}/{len(urls)}] Já conhecido: {titulo[:60]} ({status})")
+        if status in ("NOVO", "ATUALIZADO"):
+            novos += 1
+            print(f"✅ Aprendido: {status}")
+
+            if marcar_feitos:
+                marcar_link_concluido(url)
+
+        elif status in ("EXISTE", "PARECIDO"):
             pulados += 1
+            print(f"⏭️ {status}")
+
+            if marcar_feitos:
+                marcar_link_concluido(url)
+
         else:
-            err += 1
+            erros += 1
+            print("❌ Falha")
 
-        time.sleep(1)
+        time.sleep(0.5)
 
-    print(f"\n📊 Resultados dos Links: {ok} Novos | {pulados} Já conhecidos | {err} Erros")
-    return ok, err
+    return novos, pulados, erros
+
+
+def minerar_links_concluidos():
+    if not ARQUIVO_LINKS_CONCLUIDOS.exists():
+        print("⚠️ links_concluidos.txt não encontrado.")
+        return 0, 0, 0
+
+    texto = ler_arquivo(ARQUIVO_LINKS_CONCLUIDOS)
+    urls = extrair_urls(texto)
+
+    print("\n📚 FASE 1 — links_concluidos.txt")
+
+    return minerar_urls(
+        urls,
+        categoria="web_mining",
+        marcar_feitos=False,
+    )
+
+
+def minerar_links():
+    if not ARQUIVO_LINKS_MINERACAO.exists():
+        print(
+            "ℹ️ links_para_mineracao.txt "
+            "não existe. Ignorando."
+        )
+        return 0, 0, 0
+
+    texto = ler_arquivo(ARQUIVO_LINKS_MINERACAO)
+    urls = extrair_urls(texto)
+
+    print("\n🔗 FASE 2 — links_para_mineracao.txt")
+
+    return minerar_urls(
+        urls,
+        categoria="web_mining",
+        marcar_feitos=True,
+    )
 
 
 def minerar_atualizacoes():
-    if not ARQUIVO_ATUALIZACOES.exists():
-        print(f"⚠️ Arquivo não encontrado: {ARQUIVO_ATUALIZACOES}")
+    if not ARQUIVO_UPDATES.exists():
+        print("ℹ️ update_sources.txt não encontrado.")
         return 0
 
-    fontes = [
-        linha.strip() for linha in ARQUIVO_ATUALIZACOES.read_text(encoding='utf-8').splitlines()
-        if linha.strip() and not linha.strip().startswith("#")
+    texto = ler_arquivo(ARQUIVO_UPDATES)
+
+    linhas = [
+        linha.strip()
+        for linha in texto.splitlines()
+        if linha.strip()
+        and not linha.strip().startswith("#")
     ]
 
-    if not fontes:
-        print("⚠️ Nenhuma fonte de atualização encontrada.")
+    urls = []
+
+    for linha in linhas:
+        urls.extend(extrair_urls(linha))
+
+    urls = list(dict.fromkeys(urls))
+
+    if not urls:
+        print("⚠️ Nenhuma URL em update_sources.txt.")
         return 0
 
-    estado = carregar_estado_atualizacoes()
-    ok = 0
+    estado = carregar_estado()
+    atualizados = 0
 
-    print(f"\n🔔 Mineração de atualizações: {len(fontes)} fontes")
-    for i, url in enumerate(fontes, 1):
-        print(f"[{i}/{len(fontes)}] {url}")
+    print("\n🔄 FASE 3 — update_sources.txt")
+
+    for indice, url in enumerate(urls, 1):
+        print(f"\n[{indice}/{len(urls)}]")
+        print(f"🔄 {url}")
+
         titulo, conteudo = extrair_conteudo(url)
-        if not conteudo or len(conteudo) < 120:
-            print("  ⚠️ Conteúdo insuficiente ou inválido. Pulando.")
+
+        if not titulo or not conteudo:
+            print("⚠️ Conteúdo insuficiente.")
             continue
 
         digest = hash_texto(conteudo)
-        if estado.get(url) == digest:
-            print("  ⏭️ Sem mudança desde a última verificação")
+        digest_anterior = estado.get(url)
+
+        if digest_anterior == digest:
+            print("⏭️ Fonte sem alteração.")
             continue
 
         status = learn(
             titulo=titulo,
             conteudo=conteudo,
             categoria="update",
-            id_documento=uid(url),
-            url=url
+            id_documento=uid_url(url),
+            url=url,
         )
 
-        if status in ["NOVO", "ATUALIZADO"]:
-            ok += 1
-            print(f"  ✅ {status}")
+        if status in ("NOVO", "ATUALIZADO"):
+            atualizados += 1
+            print(f"✅ {status}: {titulo}")
+
+            estado[url] = digest
+            salvar_estado(estado)
+
+        elif status == "EXISTE":
+            estado[url] = digest
+            salvar_estado(estado)
+
+            print("⏭️ Já estava atualizado.")
+
         else:
-            print(f"  ⏭️ {status}")
+            print(f"⚠️ Resultado: {status}")
 
-        estado[url] = digest
-        salvar_estado_atualizacoes(estado)
-        time.sleep(1)
+        time.sleep(0.5)
 
-    print(f"\n📊 Atualizações processadas: {ok} novas/atualizadas")
-    return ok
+    print(f"\n📊 Updates: {atualizados} atualizados.")
 
-
-def extrair_textos_reworks(linhas):
-    itens = []
-    for linha in linhas:
-        texto = linha.strip()
-        if not texto or texto.startswith("#"):
-            continue
-        if texto.lower().startswith("jogo:"):
-            continue
-        if texto.lower().startswith("troféu:"):
-            continue
-        if texto.lower().startswith("como platinar:"):
-            continue
-        itens.append(texto)
-    return itens
+    return atualizados
 
 
-def extrair_links_personagens_dbd(html, base_url):
-    """Extrai links de páginas de personagens DBD a partir de páginas de categoria."""
-    soup = BeautifulSoup(html, "html.parser")
-    links = []
-    vistos = set()
-    for tag in soup.find_all("a", href=True):
-        href = tag.get("href", "")
-        if not href:
-            continue
-        texto = href.strip()
-        if texto.startswith("http"):
-            url = texto
-        elif texto.startswith("/"):
-            url = base_url.rstrip("/") + texto
-        else:
-            continue
-        if "deadbydaylight.fandom.com/wiki/" not in url:
-            continue
-        if any(token in url.lower() for token in ["category:", "special:", "file:", "mediawiki"]):
-            continue
-        if "wiki/" not in url:
-            continue
-        if url.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".svg")):
-            continue
-        if url in vistos:
-            continue
-        vistos.add(url)
-        links.append(url)
-    return links
+def buscar_wikipedia(
+    consulta: str,
+) -> Optional[Tuple[str, str, str]]:
+    consulta = str(consulta or "").strip()
+
+    if not consulta:
+        return None
+
+    try:
+        wikipedia_api = "https://pt.wikipedia.org/w/api.php"
+
+        search_response = SESSION.get(
+            wikipedia_api,
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": consulta,
+                "srlimit": 3,
+                "format": "json",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+
+        search_response.raise_for_status()
+
+        search_data = search_response.json()
+
+        resultados = (
+            search_data
+            .get("query", {})
+            .get("search", [])
+        )
+
+        if not resultados:
+            return None
+
+        melhor = resultados[0]
+
+        pageid = melhor.get("pageid")
+        titulo = melhor.get("title")
+
+        if not pageid or not titulo:
+            return None
+
+        page_response = SESSION.get(
+            wikipedia_api,
+            params={
+                "action": "query",
+                "prop": "extracts|info",
+                "explaintext": True,
+                "redirects": 1,
+                "inprop": "url",
+                "pageids": pageid,
+                "format": "json",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+
+        page_response.raise_for_status()
+
+        data = page_response.json()
+
+        pages = (
+            data
+            .get("query", {})
+            .get("pages", {})
+        )
+
+        page = pages.get(str(pageid), {})
+
+        extract = str(
+            page.get("extract", "")
+        ).strip()
+
+        url = page.get("fullurl")
+
+        if len(extract) < 100:
+            return None
+
+        return (
+            titulo,
+            extract[:25000],
+            url or (
+                "https://pt.wikipedia.org/wiki/"
+                + titulo.replace(" ", "_")
+            ),
+        )
+
+    except Exception as e:
+        print(f"  ⚠️ Wikipedia: {e}")
+        return None
 
 
-def resumir_texto_personagem_dbd(html, titulo):
-    """Extrai um resumo útil de perks, powers e abilities de páginas de personagens DBD."""
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "iframe"]):
-        tag.decompose()
-
-    blocos = [titulo]
-    for heading in soup.find_all(["h1", "h2", "h3"]):
-        txt = heading.get_text(" ", strip=True)
-        if len(txt) > 3:
-            blocos.append(txt)
-
-    for p in soup.find_all("p"):
-        txt = p.get_text(" ", strip=True)
-        if len(txt) > 35 and any(token in txt.lower() for token in ["perk", "power", "ability", "add-on", "advantage", "killer", "survivor", "effect", "item", "weapon"]):
-            blocos.append(txt)
-
-    for li in soup.find_all("li"):
-        txt = li.get_text(" ", strip=True)
-        if len(txt) > 25 and any(token in txt.lower() for token in ["perk", "power", "ability", "add-on", "advantage", "effect", "item", "weapon"]):
-            blocos.append(f"• {txt}")
-
-    resumo = "\n".join(blocos[:120])
-    return resumo if len(resumo) > 80 else None
-
-
-def minerar_personagens_dbd():
-    """Busca páginas de killers/survivors e aprende seus dados básicos no banco."""
-    urls = [
-        "https://deadbydaylight.fandom.com/wiki/Category:Killers",
-        "https://deadbydaylight.fandom.com/wiki/Category:Survivors"
-    ]
-
-    print("\n🧟 FASE 2.5 — Personagens DBD")
-    print("─" * 50)
-
-    ok = 0
-    for url in urls:
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=12)
-            r.raise_for_status()
-            links = extrair_links_personagens_dbd(r.text, url)
-            print(f"[{url}] {len(links)} páginas encontradas")
-            for personagem_url in links[:80]:
-                try:
-                    personagem_req = requests.get(personagem_url, headers=HEADERS, timeout=12)
-                    personagem_req.raise_for_status()
-                    personagem_soup = BeautifulSoup(personagem_req.text, "html.parser")
-                    titulo = personagem_soup.title.get_text(strip=True) if personagem_soup.title else personagem_url.split("/")[-1]
-                    texto = resumir_texto_personagem_dbd(personagem_req.text, titulo)
-                    if not texto or len(texto) < 80:
-                        continue
-                    status = learn(
-                        titulo=titulo,
-                        conteudo=f"Personagem DBD: {titulo}\n\n{texto}",
-                        categoria="dbd_personagem",
-                        id_documento="dbd_char_" + hashlib.md5(personagem_url.lower().encode('utf-8')).hexdigest(),
-                        url=personagem_url
-                    )
-                    if status in ["NOVO", "ATUALIZADO"]:
-                        ok += 1
-                except Exception as exc:
-                    print(f"  ⚠️ Falha ao processar {personagem_url}: {exc}")
-        except Exception as exc:
-            print(f"  ⚠️ Falha ao buscar categoria {url}: {exc}")
-        time.sleep(1)
-
-    print(f"\n  ✅ Personagens DBD aprendidos: {ok}")
-    return ok
-
-def minerar_perks_dbd():
-    """Aprende perks, poderes e vantagens diretamente das páginas de perks do DBD."""
-    urls = [
-        "https://deadbydaylight.fandom.com/wiki/Perks",
-        "https://deadbydaylight.fandom.com/wiki/Category:Perks"
-    ]
-
-    print("\n🧿 FASE 2.6 — Perks DBD")
-    print("─" * 50)
-
-    ok = 0
-    for url in urls:
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=12)
-            r.raise_for_status()
-            links = extrair_links_personagens_dbd(r.text, url)
-            print(f"[{url}] {len(links)} páginas encontradas")
-            for perk_url in links[:60]:
-                try:
-                    perk_req = requests.get(perk_url, headers=HEADERS, timeout=12)
-                    perk_req.raise_for_status()
-                    titulo = BeautifulSoup(perk_req.text, "html.parser").title.get_text(strip=True) if BeautifulSoup(perk_req.text, "html.parser").title else perk_url.split("/")[-1]
-                    texto = resumir_texto_personagem_dbd(perk_req.text, titulo)
-                    if not texto or len(texto) < 80:
-                        continue
-                    status = learn(
-                        titulo=titulo,
-                        conteudo=f"Perk / vantagem DBD: {titulo}\n\n{texto}",
-                        categoria="dbd_perk",
-                        id_documento="dbd_perk_" + hashlib.md5(perk_url.lower().encode('utf-8')).hexdigest(),
-                        url=perk_url
-                    )
-                    if status in ["NOVO", "ATUALIZADO"]:
-                        ok += 1
-                except Exception as exc:
-                    print(f"  ⚠️ Falha ao processar perk {perk_url}: {exc}")
-        except Exception as exc:
-            print(f"  ⚠️ Falha ao buscar perks em {url}: {exc}")
-        time.sleep(1)
-
-    print(f"\n  ✅ Perks DBD aprendidos: {ok}")
-    return ok
-
-# ── FASE 2: TÓPICOS ────────────────────────────────────────────────
 def minerar_topicos():
     if not ARQUIVO_TITULOS.exists():
-        print(f"⚠️  Arquivo não encontrado: {ARQUIVO_TITULOS}")
+        print(
+            "ℹ️ titulos_para_buscar.txt "
+            "não encontrado."
+        )
         return 0
 
-    topicos = [
-        linha.strip()
-        for linha in ARQUIVO_TITULOS.read_text(encoding='utf-8').splitlines()
-        if linha.strip() and not linha.startswith("#")
-    ]
+    linhas = ler_linhas(ARQUIVO_TITULOS)
+    topicos = []
 
-    print(f"\n📚 FASE 2 — Tópicos para aprender: {len(topicos)}")
-    print("─" * 50)
+    for linha in linhas:
+        linha = linha.strip()
 
-    ok = 0
+        if not linha:
+            continue
 
-    for i, topico in enumerate(topicos, 1):
-        print(f"[{i}/{len(topicos)}] {topico}")
+        if linha.startswith("#"):
+            continue
 
-        try:
-            conteudo = buscar_wikipedia(topico)
+        if linha.lower().startswith("http"):
+            continue
 
-            if not conteudo:
-                conteudo = gerar_conteudo_estruturado(topico)
+        topicos.append(linha)
 
-            status = learn(
-                titulo=topico,
-                conteudo=conteudo,
-                categoria="topico",
-                id_documento="topic_" + hashlib.md5(topico.lower().encode('utf-8')).hexdigest()
+    topicos = list(dict.fromkeys(topicos))
+
+    print(f"\n📖 FASE 4 — {len(topicos)} tópicos")
+
+    aprendidos = 0
+
+    for indice, topico in enumerate(topicos, 1):
+        print(f"\n[{indice}/{len(topicos)}]")
+        print(f"🔎 {topico}")
+
+        resultado = buscar_wikipedia(topico)
+
+        if not resultado:
+            print(
+                "⚠️ Não encontrei uma "
+                "fonte confiável na Wikipedia."
             )
+            continue
 
-            if status == "NOVO":
-                print("  ✅ Aprendido (Novo)")
-                ok += 1
-            elif status in ["EXISTE", "PARECIDO"]:
-                print("  ⏭️ Já conhecido (Pulado)")
-            else:
-                print("  ⚠️ Falha")
-        except KeyboardInterrupt:
-            raise
-        except Exception as e:
-            print(f"  ⚠️ Falha ao processar tópico: {e}")
+        # CORREÇÃO DO ERRO DO PYLANCE:
+        # título, conteúdo e URL são definidos aqui,
+        # dentro do mesmo escopo em que serão usados.
+        titulo, conteudo, url = resultado
+
+        if not titulo or not conteudo:
+            print(
+                "⚠️ Resultado sem título "
+                "ou conteúdo."
+            )
+            continue
+
+        status = learn(
+            titulo=titulo,
+            conteudo=conteudo,
+            categoria="topico",
+            id_documento=uid_texto(topico, "topic"),
+            url=url,
+        )
+
+        if status in ("NOVO", "ATUALIZADO"):
+            aprendidos += 1
+            print(f"✅ {status}: {titulo}")
+
+        elif status in ("EXISTE", "PARECIDO"):
+            print(f"⏭️ {status}")
+
+        else:
+            print(f"❌ {status}")
 
         time.sleep(0.3)
 
-    print(f"\n  ✅ Aprendidos: {ok}/{len(topicos)}")
-    return ok
-
-def buscar_wikipedia(topico):
-    """Busca resumo real do tópico na Wikipedia em português."""
-    try:
-        url = "https://pt.wikipedia.org/w/api.php"
-        params = {
-            "action": "query",
-            "prop": "extracts",
-            "exintro": True,
-            "explaintext": True,
-            "redirects": 1,
-            "titles": topico,
-            "format": "json"
-        }
-        r = requests.get(url, params=params, timeout=(3.0, 8.0), headers=HEADERS)
-        r.raise_for_status()
-        data = r.json()
-        pages = data.get("query", {}).get("pages", {})
-        for page in pages.values():
-            extract = page.get("extract", "")
-            if extract and len(extract) > 100:
-                return extract[:4000]
-    except Exception:
-        pass
-    return None
-
-def gerar_conteudo_estruturado(topico):
-    return (
-        f"Tópico de conhecimento: {topico}\n\n"
-        f"Este é um assunto relevante no universo gamer e de entretenimento. "
-        f"Contexto: {topico} é um termo/assunto que pode estar relacionado a "
-        f"jogos, conquistas, estratégias, personagens, mecânicas de gameplay, "
-        f"itens, localizações ou lore de jogos. "
-        f"Quando perguntada sobre {topico}, a Iana deve usar criatividade e "
-        f"conhecimento geral sobre games para dar uma resposta útil e envolvente."
+    print(
+        f"\n📊 Tópicos aprendidos: "
+        f"{aprendidos}/{len(topicos)}"
     )
 
+    return aprendidos
+
+
+def extrair_textos_reworks(
+    linhas: List[str],
+) -> List[str]:
+    itens = []
+    buffer = []
+
+    for linha in linhas:
+        texto = linha.strip()
+
+        if not texto:
+            continue
+
+        if texto.startswith("#"):
+            continue
+
+        buffer.append(texto)
+
+    if buffer:
+        itens.append("\n".join(buffer))
+
+    return itens
+
+
 def minerar_reworks():
-    if not ARQUIVOS_PARA_LER.exists():
-        print(f"⚠️  Arquivo de reworks não encontrado: {ARQUIVOS_PARA_LER}")
+    if not ARQUIVO_REWORKS.exists():
+        print(
+            "ℹ️ reworks_dbd.txt "
+            "não encontrado."
+        )
         return 0
 
-    linhas = ARQUIVOS_PARA_LER.read_text(encoding='utf-8').splitlines()
-    itens = extrair_textos_reworks(linhas)
+    texto = ler_arquivo(ARQUIVO_REWORKS)
 
-    if not itens:
-        print("⚠️  Nenhum item de rework encontrado para aprender.")
+    if not texto.strip():
+        print("⚠️ reworks_dbd.txt está vazio.")
         return 0
 
-    print(f"\n🧩 FASE 2.5 — Reworks para aprender: {len(itens)}")
-    print("─" * 50)
+    print("\n🧩 FASE 5 — reworks_dbd.txt")
 
-    ok = 0
-    for i, item in enumerate(itens, 1):
-        print(f"[{i}/{len(itens)}] {item}")
-        conteudo = (
-            f"Rework / item relevante do universo Dead by Daylight: {item}. "
-            f"Este termo deve ser tratado como conhecimento útil para responder sobre "
-            f"mecânicas, mudanças, itens, killers, perks, builds ou contexto do jogo."
+    urls = extrair_urls(texto)
+    aprendidos = 0
+
+    if urls:
+        print(
+            f"🌐 Encontradas "
+            f"{len(urls)} URLs no arquivo."
         )
 
-        status = learn(
-            titulo=item,
-            conteudo=conteudo,
-            categoria="rework",
-            id_documento="rework_" + hashlib.md5(item.lower().encode('utf-8')).hexdigest()
+        novos, pulados, erros = minerar_urls(
+            urls,
+            categoria="rework_source",
+            marcar_feitos=True,
         )
 
-        if status == "NOVO":
-            print("  ✅ Aprendido (Novo)")
-            ok += 1
-        elif status in ["EXISTE", "PARECIDO"]:
-            print("  ⏭️ Já conhecido (Pulado)")
-        else:
-            print("  ⚠️ Falha")
+        aprendidos += novos
 
-        time.sleep(0.2)
+    conteudo = texto.strip()
 
-    print(f"\n  ✅ Reworks aprendidos: {ok}/{len(itens)}")
-    return ok
+    status = learn(
+        titulo="Reworks Dead by Daylight",
+        conteudo=conteudo,
+        categoria="rework",
+        id_documento="reworks_dbd_file",
+        url=None,
+    )
 
-# ── FASE 3: RESUMO ─────────────────────────────────────────────────
-def mostrar_resumo(ok_links, err_links, ok_topicos, ok_updates, ok_reworks, ok_personagens, ok_perks):
-    print("\n" + "="*50)
+    if status in ("NOVO", "ATUALIZADO"):
+        aprendidos += 1
+        print(f"✅ Arquivo aprendido: {status}")
+
+    elif status == "EXISTE":
+        print("⏭️ Arquivo já está atualizado.")
+
+    else:
+        print(f"⚠️ Resultado: {status}")
+
+    return aprendidos
+
+
+def extrair_links_dbd(
+    html: str,
+    base_url: str,
+) -> List[str]:
+    soup = BeautifulSoup(html, "html.parser")
+
+    links = []
+    vistos = set()
+
+    for tag in soup.find_all("a", href=True):
+        href = str(
+            tag.get("href", "")
+        ).strip()
+
+        if not href:
+            continue
+
+        url = urljoin(base_url, href)
+
+        if "deadbydaylight.fandom.com/wiki/" not in url:
+            continue
+
+        lower = url.lower()
+
+        if any(
+            item in lower
+            for item in (
+                "category:",
+                "special:",
+                "file:",
+                "mediawiki",
+            )
+        ):
+            continue
+
+        if lower.endswith(
+            (
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".svg",
+            )
+        ):
+            continue
+
+        if url in vistos:
+            continue
+
+        vistos.add(url)
+        links.append(url)
+
+    return links
+
+
+def resumir_pagina_dbd(
+    html: str,
+    titulo: str,
+) -> Optional[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    limpar_soup(soup)
+
+    blocos = [
+        f"Personagem/perk DBD: {titulo}"
+    ]
+
+    for heading in soup.find_all(
+        ["h1", "h2", "h3"]
+    ):
+        texto = texto_limpo(heading)
+
+        if len(texto) > 3:
+            blocos.append(f"## {texto}")
+
+    palavras_importantes = (
+        "perk",
+        "power",
+        "ability",
+        "add-on",
+        "killer",
+        "survivor",
+        "effect",
+        "item",
+        "weapon",
+        "advantage",
+    )
+
+    for p in soup.find_all("p"):
+        texto = texto_limpo(p)
+
+        if (
+            len(texto) > 35
+            and any(
+                palavra in texto.lower()
+                for palavra in palavras_importantes
+            )
+        ):
+            blocos.append(texto)
+
+    for li in soup.find_all("li"):
+        texto = texto_limpo(li)
+
+        if (
+            len(texto) > 25
+            and any(
+                palavra in texto.lower()
+                for palavra in palavras_importantes
+            )
+        ):
+            blocos.append(f"• {texto}")
+
+    resultado = "\n\n".join(blocos)
+
+    if len(resultado) < 100:
+        return None
+
+    return resultado[:25000]
+
+
+def minerar_personagens_dbd():
+    urls = [
+        "https://deadbydaylight.fandom.com/wiki/Category:Killers",
+        "https://deadbydaylight.fandom.com/wiki/Category:Survivors",
+    ]
+
+    print("\n🧟 FASE 6 — Personagens DBD")
+
+    aprendidos = 0
+
+    for categoria_url in urls:
+        try:
+            response = SESSION.get(
+                categoria_url,
+                timeout=REQUEST_TIMEOUT,
+            )
+
+            response.raise_for_status()
+
+            links = extrair_links_dbd(
+                response.text,
+                categoria_url,
+            )
+
+            print(
+                f"🔎 {len(links)} páginas "
+                f"encontradas."
+            )
+
+            for personagem_url in links[:80]:
+                try:
+                    req = SESSION.get(
+                        personagem_url,
+                        timeout=REQUEST_TIMEOUT,
+                    )
+
+                    req.raise_for_status()
+
+                    soup = BeautifulSoup(
+                        req.text,
+                        "html.parser",
+                    )
+
+                    if soup.title:
+                        titulo = texto_limpo(soup.title)
+                    else:
+                        titulo = (
+                            personagem_url
+                            .split("/")[-1]
+                        )
+
+                    conteudo = resumir_pagina_dbd(
+                        req.text,
+                        titulo,
+                    )
+
+                    if not conteudo:
+                        continue
+
+                    status = learn(
+                        titulo=titulo,
+                        conteudo=conteudo,
+                        categoria="dbd_personagem",
+                        id_documento=uid_url(
+                            personagem_url
+                        ),
+                        url=personagem_url,
+                    )
+
+                    if status in (
+                        "NOVO",
+                        "ATUALIZADO",
+                    ):
+                        aprendidos += 1
+                        print(f"  ✅ {titulo}")
+
+                except Exception as e:
+                    print(
+                        f"  ⚠️ "
+                        f"{personagem_url}: "
+                        f"{e}"
+                    )
+
+                time.sleep(0.2)
+
+        except Exception as e:
+            print(
+                f"⚠️ Falha na categoria "
+                f"{categoria_url}: {e}"
+            )
+
+    return aprendidos
+
+
+def minerar_perks_dbd():
+    urls = [
+        "https://deadbydaylight.fandom.com/wiki/Perks",
+        "https://deadbydaylight.fandom.com/wiki/Category:Perks",
+    ]
+
+    print("\n🧿 FASE 7 — Perks DBD")
+
+    aprendidos = 0
+
+    for pagina in urls:
+        try:
+            response = SESSION.get(
+                pagina,
+                timeout=REQUEST_TIMEOUT,
+            )
+
+            response.raise_for_status()
+
+            links = extrair_links_dbd(
+                response.text,
+                pagina,
+            )
+
+            print(
+                f"🔎 {len(links)} páginas "
+                f"encontradas."
+            )
+
+            for perk_url in links[:80]:
+                try:
+                    req = SESSION.get(
+                        perk_url,
+                        timeout=REQUEST_TIMEOUT,
+                    )
+
+                    req.raise_for_status()
+
+                    soup = BeautifulSoup(
+                        req.text,
+                        "html.parser",
+                    )
+
+                    titulo = (
+                        texto_limpo(soup.title)
+                        if soup.title
+                        else perk_url.split("/")[-1]
+                    )
+
+                    conteudo = resumir_pagina_dbd(
+                        req.text,
+                        titulo,
+                    )
+
+                    if not conteudo:
+                        continue
+
+                    status = learn(
+                        titulo=titulo,
+                        conteudo=conteudo,
+                        categoria="dbd_perk",
+                        id_documento=uid_url(perk_url),
+                        url=perk_url,
+                    )
+
+                    if status in (
+                        "NOVO",
+                        "ATUALIZADO",
+                    ):
+                        aprendidos += 1
+                        print(f"  ✅ {titulo}")
+
+                except Exception as e:
+                    print(
+                        f"  ⚠️ "
+                        f"{perk_url}: "
+                        f"{e}"
+                    )
+
+                time.sleep(0.2)
+
+        except Exception as e:
+            print(
+                f"⚠️ Falha em {pagina}: {e}"
+            )
+
+    return aprendidos
+
+
+def mostrar_resumo(
+    links_novos: int,
+    links_pulados: int,
+    links_erros: int,
+    updates: int,
+    topicos: int,
+    reworks: int,
+    personagens: int,
+    perks: int,
+):
+    total = (
+        links_novos
+        + updates
+        + topicos
+        + reworks
+        + personagens
+        + perks
+    )
+
+    print("\n" + "=" * 60)
     print("📊 RESUMO DA MINERAÇÃO")
-    print("="*50)
-    print(f"  🔗 Links processados:  {ok_links} ✅  {err_links} ❌")
-    print(f"  🔔 Atualizações detectadas: {ok_updates} ✅")
-    print(f"  📚 Tópicos aprendidos: {ok_topicos} ✅")
-    print(f"  🧩 Reworks aprendidos: {ok_reworks} ✅")
-    print(f"  🧟 Personagens DBD aprendidos: {ok_personagens} ✅")
-    print(f"  � Perks DBD aprendidos: {ok_perks} ✅")
-    print(f"  🧠 Total integrado:    {ok_links + ok_topicos + ok_updates + ok_reworks + ok_personagens + ok_perks} itens")
-    print("="*50)
-    print("✨ A Iana agora sabe mais! Reinicie o servidor para")
-    print("   que as mudanças reflitam nas respostas do chat.")
+    print("=" * 60)
 
-# ── MAIN ───────────────────────────────────────────────────────────
+    print(
+        f"🔗 Links novos/atualizados: "
+        f"{links_novos}"
+    )
+    print(f"⏭️ Links pulados: {links_pulados}")
+    print(f"❌ Links com erro: {links_erros}")
+    print(f"🔄 Updates: {updates}")
+    print(f"📖 Tópicos: {topicos}")
+    print(f"🧩 Reworks: {reworks}")
+    print(f"🧟 Personagens DBD: {personagens}")
+    print(f"🧿 Perks DBD: {perks}")
+
+    print("-" * 60)
+    print(f"🧠 TOTAL INTEGRADO: {total}")
+    print("=" * 60)
+
+    print("✅ Mineração concluída.")
+    print(
+        "🧠 O conhecimento foi enviado "
+        "para ChromaDB e MySQL."
+    )
+
+
 def main():
-    print("="*50)
-    print("⚡ IANA — SISTEMA DE MINERAÇÃO E APRENDIZADO")
-    print("="*50)
+    inicio = time.time()
 
-    try:
-        ok_links, err_links = minerar_links()
-        ok_updates          = minerar_atualizacoes()
-        ok_topicos          = minerar_topicos()
-        ok_reworks          = minerar_reworks()
-        ok_personagens      = minerar_personagens_dbd()
-        ok_perks            = minerar_perks_dbd()
-        mostrar_resumo(ok_links, err_links, ok_updates, ok_topicos, ok_reworks, ok_personagens, ok_perks)
-    except KeyboardInterrupt:
-        print("\n⚠️ Mineração interrompida pelo usuário. O progresso parcial foi preservado.")
-    except Exception as e:
-        print(f"\n❌ Erro fatal na mineração: {e}")
-        raise
+    print("\n" + "=" * 60)
+    print(
+        "⚡ IANA — "
+        "SISTEMA DE MINERAÇÃO E APRENDIZADO"
+    )
+    print("=" * 60)
+
+    print(f"📁 Base: {BASE_DIR}")
+    print(f"📁 Dados: {DATA_DIR}")
+    print()
+
+    links_concluidos = minerar_links_concluidos()
+    links_extras = minerar_links()
+
+    links_novos = (
+        links_concluidos[0]
+        + links_extras[0]
+    )
+
+    links_pulados = (
+        links_concluidos[1]
+        + links_extras[1]
+    )
+
+    links_erros = (
+        links_concluidos[2]
+        + links_extras[2]
+    )
+
+    updates = minerar_atualizacoes()
+    topicos = minerar_topicos()
+    reworks = minerar_reworks()
+    personagens = minerar_personagens_dbd()
+    perks = minerar_perks_dbd()
+
+    mostrar_resumo(
+        links_novos,
+        links_pulados,
+        links_erros,
+        updates,
+        topicos,
+        reworks,
+        personagens,
+        perks,
+    )
+
+    tempo = time.time() - inicio
+
+    print(
+        f"\n⏱️ Tempo total: "
+        f"{tempo:.1f}s"
+    )
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+
+    except KeyboardInterrupt:
+        print("\n⚠️ Mineração interrompida.")
+        print(
+            "O que já foi aprendido "
+            "permanece salvo."
+        )
+
+    except Exception as e:
+        print(f"\n❌ ERRO FATAL: {e}")
+        raise

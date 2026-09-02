@@ -445,3 +445,534 @@ Fixed an issue where The Krasue could vault at locations being used by Survivors
 bar_red.png
 Known Issues
 The in-game trailer for Sinister Grace is louder than anticipated and the audio will be reduced in a future update.
+
+10.1.1 Bugfix Patch
+By
+ThatRyanB
+Last Updated:
+Sep 1, 2026
+
+Content
+Killer Updates
+The Judgment
+
+Increased the Divine Light curve window while Zealous to 0.6s (was 0.3s)
+Dev note: The decoupling of the curve window from the delay phase was good, but the duration of the window was much too short. As a result, we are doubling it to give players a longer window to curve Divine Light while Zealous. We will continue to monitor this value.
+The Knight
+
+Dropping a Pallet while being Hunted by a Guard now causes the Guard to path around the Pallet
+If the resulting Guard Path is greater than 48m the Guard will abandon the Hunt
+Dropping a Pallet on a Guard now causes the Guard to move through the Pallet
+image.png
+Perk Updates
+Survivor perks
+Repressed Alliance:
+After repairing Generators for 40/35/30s, while repairing a Generator alone, use the Active Ability button to block that generator for 15s. (was 55/50/45 seconds)
+Vigil
+All Survivors within 16m of you:
+Lose Exhausted 20/25/30% faster. (was 30/35/40%)
+After they leave your range, this ends after 15s.
+Dev note: We have heard concerns that the lower value may be too low. We will be monitoring this change carefully to see if further adjustments are required.
+
+
+image.png
+Bug Fixes
+Audio
+
+Fixed an issue where The Judgment voice line about Aurora plays in the store.
+Fixed an issue where the sound effect that indicates the Divine Light will hit and injures Survivor continues to play when The Judgment cancels the Power.
+Fixed an issue where some audio SFX throughout the application are muffled or missing when leaving any Tutorials.
+Fixed an issue where the SFX and Haptic Feedback from the Torment Trail are missing after falling during the action.
+Fixed an issue where missing SFX when the Pig knife extend after standing up.
+Fixed an issue where there is an inaccurate SFX audible range when The Xenomorph misses the Tail Attack or when the tail is obstructed by environment.
+Fixed an issue when using the MiNa Legendary outfit as Trickster, some Default Trickster voice lines could play after exiting "Main Event"
+
+
+Characters
+
+Fixed an issue where The Judgment's cooldown after cancelling or timing out Divine Light was shorter than intended
+Fixed an issue where The Krasue's body, while in Head Form, remains floating briefly during the falling animation when using a Vault that leads to a fall.
+Fixed an issue where Aurora's book floats when holding an item during the idle animation.
+Fixed an issue where The Xenomorph's inner mouth does not open during the Mori when using most cosmetics.
+Fixed an issue where the hair braid for Survivor Thalita Lyra's lacks physics when performing any action in a match.
+Fixed an issue where swapping the head cosmetic on the 'Splinter Rose' full body outfit on The Knight causes the killer's back to stretch forward unnaturally during the lobby animation.
+Fixed an issue where the auras of The Lich's flying entities appear even if the opaque original mesh is not obstructed by other geometry
+Fixed an issue where The Onryo could be seen more than 24 meters away while demanifested.
+Fixed an issue where yellow blood VFX was displayed when Liberating a Survivor from the Exile when playing against The Judgment.
+Fixed an issue where The Judgment's Crown of The Destroyer add-on failed to trigger the Terror Radius condition for multiple perks.
+Fixed an issue where Pallet debris VFX could appear sooner than expected when The Slasher was breaking Pallets.
+Fixed an issue where The Krasue's Head Form remained floating briefly in the falling animation when using a Vault that led to a fall.
+Fixed an issue where The Judgment could become unable to use its power after sending a Survivor to the Exile and charging the power right after.
+Fixed an issue where The Skull Merchant could not Deploy a Drone when standing on a floor above/below a Hooked Survivor.
+Fixed an issue where Legion's Arms are stretched in the Gameplay Showcase.
+Environment/Maps
+
+Fixed an issue in Autohave Wreckers Realm where the Nurse could blink inside the Hill
+Fixed an issue in Yamaoka Estate Realm where projectiles would be blocked around the Shrine Landmark tile
+Fixed an issue in Shelter Woods where a tree would clip through the interior of the Apartment container
+Fixed an issue in Midwich Elementary School where the Blight could not bounce of a couch when using his power
+Fixed an issue in Pale Rose where the camera of the Survivor would clip through the roof of the boat
+Fixed an issue in Dead Dawg Saloon where the Nurse could blink on top of the railing of the Gallow and navigate on top of invisible collisions
+Fixed an issue in Midwich Elementary School where the Nurse could not blink through the caged restroom stalls
+Fixed an issue in Blood Lodge where the debris of a broken pallet did not appear on the ground
+Fixed an issue in Midwich Elementary School where the Killers could not grab a survivor that was on the ground
+Fixed an issue in Temple of Purgation where the Killer would be able to hit a survivor through a wall
+Fixed an issue in Badham Preschool where the Mastermind could not dash on a driveway curb
+Fixed an issue in Coldwind Farm where the Nurse is able to blink inside a hay stack
+Fixed an issue in Dead Dawg Saloon where a crawling survivor gets stuck at the top of the stairs
+Fixed an issue in Badham Preschool where a bush is blocking the navigation of players
+Fixed an issue where on The Thompson House, a Shrine could appear 20 meters away from the closest Generator when starting a Custom Trial with less than 4 Survivors.
+Fixed an issue where, on Nostromo Wreckage, the Keycard's Aura remained visible after hacking the terminal.
+Perks
+
+TEXT ONLY: Fixed the description of No One Left Behind to say: "You heal other Survivors... faster" and not: "You heal faster".
+TEXT ONLY: Fixed the description of Deathbound to specify which effects affect which Survivor, and that it only applies to a single Survivor at a time.
+Fixed an issue to ensure Mettle of Man procured, only after the third protection hit.
+Fixed an issue where Still Sight could not be activated after a Survivor was rescued from the Exile.
+UX
+
+Fixed several incorrect statements in the Gameplay Showcase
+Play button sound fix
+UI
+
+Fixed some visual problems with the new matchmaking button not appearing everywhere it should. (and appearing where it shouldn't)
+Fixed an issue where, as The Judgment, the charging bar remained displayed when Divine Light was cancelled before the end of the charge.
+Fixed an issue where The Judgment's Zealous Icon appeared disabled when Divine Light was on Cooldown.
+Fixed an issue where The Judgment's mini-Mori indicator appeared when a Heretic Survivor in their second hook stage was hooked.
+Fixed an issue where The Judgment's Divine Light aiming reticule stayed visible after the control period expired while Zealous.
+Misc
+
+Fixed an issue where blessing a Hex totem did not trigger a score event.
+
+10.1.0 | Chorus of Sin
+Content
+New Killer: The Judgment
+POWER: WILL OF THE GODS
+
+DIVINE LIGHT
+
+Press and hold the Power Button to summon Divine Light for up to 3s.
+Divine Light moves away from The Judgment and is controlled with camera controls (left/right only).
+While in this state, Divine Light does not damage Survivors.
+If Divine Light passes through obstacles, it slows down.
+While controlling Divine Light, press the Attack Button to Cast it forward.
+When Cast, it enters a brief delay before it fully activates, damaging and applying Heresy to any Survivors hit. (Survivors inflicted with Heresy are known as Heretics)
+Dev note: Divine Light enters its lethal state when it becomes larger
+When cast Divine Light is lethal and if misses a Survivor by 0.5m, reveal them with Killer Instinct for 2s.
+The longer Divine Light is controlled:
+The shorter the Cast delay
+The longer the Cast duration
+Divine Light has a 6 second cooldown.
+Dev note: Divine Light's delay phase duration starts at 0.9s, after controlling Divine Light for 1s, the delay reaches its minimum of 0.3s
+ZEALOUS
+
+Press the Secondary Ability Button to Exile a Heretic in the Dying State, gaining Zealous. (If they have 2 Hook States, they are killed instead.)
+Exiling a Survivor gives them a Hook State.
+When Exiling a Heretic:
+The 2 closest Shrines of Judgment become Active
+Zealous lasts for 60 seconds.
+Gain Killer Instinct on all Heretics for 3s. (only applies to Survivors with full Heresy)
+While Zealous:
+Increase Divine Light's size by 10%
+Decrease Divine Light's cooldown by 20%
+Maintain control of Divine Light for up to 0.3s
+EXILE
+
+Exile acts like a Hook, but does not trigger Hook-related perks.
+Upon entering Exile, Survivors receive a Searcher's Pendant (Limited Item).
+Exile is filled with dangerous Seeds of Punishment that reduce a Survivor's Sacrifice timer by 3s when hit.
+Exile is also filled with helpful Exiled Souls. Hold the Use Item button to point the Searcher's Pendant at Exiled Souls to collect them.
+For each Exiled Soul collected (up to 10), Survivors gain an additional 0.5s to default Unhook Protections (10% Haste, Endurance, and Elusive).
+Exiled Souls no longer grant additional protections once all Generators are completed.
+Survivors who aren't in Exile can Pray at an active Shrine of Judgment (highlighted in red) to rescue Exiled Survivors.
+HERESY
+
+Heresy is gained when hit by Divine Light or by taunting The Judgment (crouching repeatedly, gesturing or lingering in the Exit Area... just leave)
+Heretics suffer from special Skill Checks while repairing Generators. Good Skill Check results cause the Generator to lose some progression.
+Heretics can Repent at a Shrine of Judgment to begin depleting their Heresy over time.
+THE JUDGMENT - CUSTOM SETTINGS
+
+The following settings can be found in the General settings tab under Beta, then The Judgment section
+Divine Light - Control Settings
+
+Sensitivity settings exclusive to The Judgment
+Divine Light - Near Miss Killer Instinct feedback
+
+Killer Instinct feedback setting exclusive to The Judgment
+This setting is ON by default
+Dev note: We understand that Killer Instinct can get overwhelming for some players. We've added this setting to allow you to disable this specific feedback from The Judgment while playing.
+New Killer Perks
+
+Celestial Witness
+Every 30s, if the Obsession is at least 40m away from you, you see their Aura for 2/2.5/3s. Otherwise, the farthest Survivor becomes the Obsession.
+Hex: Under Your Thumb
+The first time a Survivor gains a hook state, a Dull Totem ignites.
+Whenever a running Survivor gains Haste within 32m of you, you are alerted.
+Running survivors cannot gain more than 25/20/15% Haste at a time.
+Lay Waste
+Whenever you damage a Generator, for each Charge it has, it regresses 2% faster. Cooldown: 55/50/45s.
+image.png
+New Survivor: Aurora
+New Survivor Perks
+
+Fruits of your Labor
+Whenever a Generator is completed, you earn 1 Token.
+Whenever you finish repairing a Generator, for each Token:
+You gain 5% Haste for 2s.
+You gain 10/15/20% healing progress.
+Salvation's Cry
+Whenever the Killer starts chasing you:
+You see the Auras of other Survivors for 1/2/3s.
+Survivors not being chased see your Aura for 5s.
+Survivors not being chased see the Killer's Aura for 5s.
+Boon: Steadfast
+While next to a Totem, use "E" to bless it, creating a unique Boon Totem that combines all your Boons.
+Generators within the Boon's range:
+Regress 50% slower.
+Survivors repair them 8/9/10% faster.
+Survivors within the Boon's range see the Auras of affected Generators.
+image.png
+Base game updates
+Unhook Protections:
+Anytime a Survivor is unhooked, they gain Endurance and 10% Haste for 10 seconds. (was 15 seconds)
+Anytime a Survivor is unhooked, they gain Elusive for 10 seconds. (NEW - This does not apply once all generators are powered)
+image.png
+Killer perk updates
+A Nurse's Calling:
+Within 28/30/32m of Survivors who are healing or being healed, you see their Auras. (Reveals all Survivors in a healing interaction, regardless of their health state)
+Dev note: There has been some confusion about the expected behaviour with A Nurse's Calling, we felt it was a good opportunity to make it more consistent and clearer.
+Call of Brine:
+Whenever you damage a Generator, it regresses 30/40/50% faster for 90s. (was 70 seconds)
+For that time, whenever a Survivor hits a good basic Skill Check while repairing that Generator, you are alerted.
+Coulrophobia:
+Survivors within your Terror Radius:
+Heal 20/25/30% slower. (was 30/40/50%)
+While healing, basic Skill Checks spin 50% faster.
+Dev note: Because we're buffing A Nurse's Calling back to its pre-9.2.0 state while keeping the range buff, we felt it was safer to adjust Coulrophobia at the same time to decrease its synergy with certain builds.
+Hex: Thrill of the Hunt:
+When the trial starts, a Dull Totem ignites.
+For each Dull and Hex Totem remaining, you have 1 Token.
+For each Token, Survivors bless and cleanse Totems 8/9/10% slower. (was 8/10/12%)
+Dev note: Hex: Thrill of the Hunt has excelled at defending totem builds in the recent patches. We're slightly lowering its efficiency while reviewing the perk in the long term.
+Keep Them Waiting:
+Whenever you damage a Survivor who is not the Obsession with a basic-attack, you earn 1 Token, up to 6/7/8.
+For each Token, your basic-attack cooldown are 5% shorter. (was 4%)
+Whenever the Obsession takes damage, lose 2 Tokens.
+While the Obsession is dead, you cannot earn Tokens.
+Nowhere to Hide:
+Whenever you damage a Generator, for 3/4/5s, you see the Auras of Survivors within 24m of the Generator. (was revealing auras around the Killer position)
+image.png
+Survivor perk updates
+Sprint Burst:
+Whenever you start running:
+You gain 50% Haste for 2s. (was 3 seconds)
+You gain Exhausted for 60/50/40s.
+Apocalyptic Ingenuity:
+After you rummage or unlock 1 Chest, while next to a Broken Pallet, use Active Ability Button for 3s to create a Fragile Pallet. (was 2 chests, and 4 seconds)
+Within 24/28/32m, you see the Auras of Broken Pallets.
+Deliverance:
+Once per trial, when you safely unhook another Survivor, you can unhook yourself. When you unhook yourself this way, you gain Broken for 160/140/120s. (was 100/80/60 seconds)
+Vigil
+All Survivors within 16m of you:
+Lose Blindness 30/35/40% faster. (was 44/55/66%)
+Lose Broken 30/35/40% faster. (was 44/55/66%)
+Lose Exhausted 30/35/40% faster. (was 44/55/66%)
+Lose Exposed 30/35/40% faster. (was 44/55/66%)
+Lose Hemorrhage 30/35/40% faster. (was 44/55/66%)
+Lose Hindered 30/35/40% faster. (was 44/55/66%)
+Lose Mangled 30/35/40% faster. (was 44/55/66%)
+Lose Oblivious 30/35/40% faster. (was 44/55/66%)
+After they leave your range, this ends after 15s.
+Dev note: We heard the feedback that Vigil affects too many status effects. We will review the list of effects in an upcoming bugfix patch.
+Adrenaline:
+When all Generators are completed, if you are downed or injured, heal instantly. Then, ignoring Exhausted:
+You gain 50% Haste for 4s. (was 3 seconds)
+You gain Exhausted for 60/50/40s.
+Clean Break:
+Whenever you finish healing another Survivor, while being healed by another Survivor, use the Active Ability Button to gain Broken.
+After 75/60/45s, if you are not downed, you are instantly healed. (was 80/70/60 seconds)
+Moment of Glory:
+After you rummage or unlock 1 Chest, while not Broken, when you become injured, gain Broken.
+If you do not take damage, after 80/70/60s, you are instantly healed. (was previously 2 chests)
+Repressed Alliance:
+After repairing Generators for 55/50/45s, while repairing a Generator alone, use the Active Ability button to block that generator for 15s. (was 30 seconds)
+Dev note: We heard the feedback about the requirement to activate the perk being a little too high. We will reassess this for an upcoming patch.
+Technician:
+While repairing a Generator:
+The range of Generator repair noises is 16m shorter. (was 8 meters shorter)
+Whenever you miss a basic Skill Check, the Generator does not explode, but loses 4/3/2% more progress. (was 5/4/3%)
+bar_red.png
+Features
+New Gameplay Showcase Section
+Can be entered through Survivors and Killers lobbies
+Killer Power's icon is also a point of entry for the section
+Section includes detailed description of all Killers' Powers, separated by killer and Key Aspect
+Each Key Aspect is accompanied by an example video
+Section includes the list of Killers for players to be able to preview their power
+Only accessible outside matches
+Power Tooltip updated
+Old Power Tooltip used to describe a Killer Power entirely is updated
+Content has been removed, replaced by the same Action-based description used on the F1 section of Match Details
+Updated Matchmaking Button
+Updated visuals, and reduced its intensity, following PTB's feedback.
+Surfaces both estimated waiting time and current time on queue
+Bonuses and other complementary information is displayed through new tooltip
+Hook Timer Division
+The hook timer has been split into two bars, to better clarify the second hook state and death triggers.
+Updated for scenarios when a Survivor is on a hook, in a Cage of Corruption (Game Mode: 2V8) or Cage of Torment (The Executioner), and in Exile (The Judgment).
+MMR Update
+The way MMR is calculated has now changed, it will no longer count only Kills and Escapes. Similar to Emblems it will now consider more actions within a trial.
+bar_red.png
+Bug Fixes
+Audio
+Fixed an issue where subtitles might have disappeared before voice over finished.
+Fixed an issue where Aurora's hooked voice lines would not play.
+Fixed an issue where Aurora's failed skill check voice lines would not play.
+Characters
+Fixed an issue where The Slasher's Mini Mori wall-impale on Survivor had the Spike misaligned.
+Fixed an issue where William Birkin's skins were missing a few idle animations.
+Fixed an issue where The Clown's knife cleaning animation after a successful basic attack was not properly aligned with his hand.
+Fixed an issue where the Huntress's Axe was misaligned when she was about to throw her hatchet.
+Fixed an issue where The Artist's weapon briefly appears in the lobby when wearing the 'Miss Fuchi' outfit.
+Fixed an issue where Yui Kimura's upper left chest caved inward when wearing the 'Mikasa's Dark Uniform' outfit during the idle lobby animation.
+Fixed an issue where Ash J. Williams's ankles caved inward when wearing the 'Water Trash' outfit.
+Fixed an issue where Legion's 'Hunk' legendary outfit's hand would clip into the pouch in the main menu.
+Fixed an issue where The Unknown's Greenville Pep and Greenville Cheer cosmetics' teeth appeared to be stuck together, resulting in them stretching during the killer's Mori.
+Fixed an issue where the VFX for the Pride's flashlight was missing.
+Fixed an issue where The Blight's Lethal Rush Attack was unable to hit Survivors when the Survivor was inside the Killer's hitbox.
+Fixed an issue where The Blight's side movements were disabled after the second Rush.
+Fixed an issue where The Executioner's Punishment of the Damned failed to travel uphill.
+Fixed an issue where The Skull Merchant's prompt to Deploy a Drone appeared within the Anti-Camp radius when on a different height.
+Fixed an issue where Killers were unaffected by the movement penalty when a Survivor was wiggling.
+Fixed an issue where Survivors were able to escape while The Twins' Victor had them bound.
+Fixed an issue where idle Generators regressed when affected by Aurora Stardotter's Boon: Steadfast.
+Fixed an issue where addon status effects from The Pig's add-ons were not applied to Survivors when the Video Tape add-on was also used.
+Fixed an issue where the camera jittered a lot while The Wraith was invisible.
+Fixed an issue where The Demogorgon could become invisible while entering a portal with lag.
+Fixed an issue where The Nurse could remain stuck on top of a fence after a Blink on Autohaven Wreckers.
+Bots Improvements
+Fixed issues causing Survivor bots to not dodge special attacks toward the intended direction.
+Survivor Bots now have a chance to misdodge Special attacks based on how fast they reacted to the attack.
+Fixed issues causing Survivor bots to not heal other Survivors.
+Survivor Bots are now more brave against Killers that are not moving away from a location.
+Fixed an issue causing Survivor Bots to give up their goal too easily when entering the Terror Radius.
+Survivor Bots no longer try to remove an inactive Reverse Bear Trap after all generators have been completed.
+Fixed an issue causing Survivor Bots to prevent heals while in the Dying state.
+Environment/Maps
+Fixed an issue in Yamaoka's Family Residence where the Nurse could blink on top railings
+Fixed an issue in Nostromos where navigation is hindered by collisions
+Fixed an issue in Eyrie of Crows where the Nurse can blink inside of the stairs
+Fixed an issue in Treatment Theater where the Nightmare gets stuck in the main room
+Fixed an issue in Gideon Meat Plant where the Nurse could blink out of the environment
+Fixed an issue in Toba Landing where the Nurse can blink under the main structure
+Fixed an issue in Freddy Fazzbear's Pizza the Nurse could not blink through the wall
+Fixed an issue in Ironworks of Misery where the Nurse can blink through the stairs
+Fixed an issue in Autohaven Wreckers where the Nurse get stuck under the hill of the realm
+Fixed an issue in the Exile tile where the players would get stuck on rocks on the ground
+Fixed an issue in Toba Landing where a rock clips through the inside of the locker
+Fixed an issue in Balckwater Swamp Realm where the Nurse can get stuck under floor board
+Fixed an issue in Grim Pantry where the Nurse can get stuck inside a rock
+Fixed an issue in Trickster's Delusion where lockers are doubled in the alley near the night club
+Fixed an issue in Mother's Dwelling where the dark lord gets stuck against a meat hook in the smoke house when in bat form
+Fixed an issue where The Skull Merchant was unable to deploy a Drone on the stairs and on the 2nd floor of the Main Building on Dvarka Deepwood
+Fixed an issue on the Autohaven Wreckers - Blood Lodge's map where the Nurse can Blink on top of the fence and be stuck between the fence and chimney.
+Perks
+Fixed an issue where Plot Twist deactivated the Corrupt Intervention Perk early.
+Fixed an issue where Plot Twist could trigger Eruption
+Fixed an issue where Hex: Under Your Thumb's external icon was displayed to Survivors without the Haste Status Effect.
+Fixed an issue where Boon: Steadfast's repair speed effect did not apply upon blessing the Totem while a Survivor was repairing a Generator.
+Fixed an issue where Boon: Steadfast's effect stacked when a Generator was in range of two Boon Totems.
+UI
+The DBD game logo has been updated to the latest version across the game
+The Players Tab in Match Details now shows the Killer's Portrait instead of their Power Icon
+It is a known issue that a handful of Legendary cosmetics to not have a Killer Portrait icon. This will be fixed in an upcoming release.
+Fixed an issue where the game would freeze for a bit when hovering over the quest button.
+Fixed an issue where the faces on The Judgment's legs were missing from the Customization icons
+Fixed an issue where an incorrect image was displayed on the interrupt and grab 1 survivor(s) quest
+Polished visual issues on the Summertime Smash Banner
+Polished the Clawing Death Banner to ensure Sable was not cut off by the screen edge
+Polished Mikaela's dress on the Sunshine, or Whatever Banner
+Fixed an issue where the matchmaking button would display incorrect player counts and ready states
+Fixed an issue where the character name shown in a player's lobby tag would not update after switching to a legendary customization
+Fixed an issue where the unblock option was missing from the social dropdown in the lobby on some platforms
+Fixed an issue where the name in a player's lobby tag would not change color when hovered
+Fixed an issue where the ban countdown timer in the matchmaking button displayed an incorrect time after receiving DPP
+Fixed an issue where the queue timer in the matchmaking button would reset after navigating between screens
+Miscellaneous
+Fixed an issue where game would crash while leaving or joining a match
+Fixed an issue where some Female Survivors had distorted facial animations
+bar_red.png
+Changes from PTB
+New Killer: The Judgment
+Divine Light:
+Added visuals for when Divine Light has reached its maximum potential (i.e. when the delay duration reaches its shortest and the Cast duration its highest)
+Added Killer Instinct when Divine Light puts a Survivor in the Dying State
+Added Killer Instinct when Divine Light misses a Survivor by 0.5m
+Dev note: This is ON by default, but it can be disabled in the General Settings, under the Beta tab, in The Judgment's Custom Settings section. When equipping Heretic's Mark, the setting is automatically set to ON.
+Increase distance at which Cast Divine Light's Aura is revealed to Survivors to 48 m (was 32 m)
+Dev note: Improving accessibility is something we take very seriously. We've increased this range due to Divine Light's travel speed (and the fact that it goes through walls). In the event that more is needed, we will add a visual indicator in a future hotfix. These both have levers we can adjust to meet our goal while minimizing the impact it has on The Judgment.
+While Zealous, the curve window for Divine Light is set to 0.3s (was scaling based on controlled state duration)
+Dev note: This should help Killer players get more consistent results with Divine Light curves while Zealous. This value was chosen as a starting point to better assess what data we get from a consistent curve window.
+Exile:
+Adjusted Seeds of Punishment to be a little bit more aggressive
+Increase Hook Timer penalty from being hit by Seeds of Punishment to 3s (was 1s)
+Decrease Seeds of Punishment immunity when being hit to 0.5s (was 2s)
+Increase distance between Seeds of Punishment to 4m (was 3m)
+Addons:
+Holy Winged Icon
+Decreased min delay to 0.4s. (was 0.5s)
+Dev note: Holy Winged Icon can be a great mix-up option, but it's still a little difficult to land. This should help make it a bit more consistent to use
+Prayer Kneeler
+Removed Cast modifiers.
+Dev note: Prayer Kneeler has been a favorite by players as a means to make the power more accessible and decreasing the skill floor, made possible by the slowdown "stickiness". While we wish to keep this behavior, we're removing the additional upside of a faster Cast to reward higher skill expression without its use.
+Electric Torch
+Removed radius penalty.
+Swapped rarity to Rare.
+Undying Flame
+Decreased radius penalty to 20%. (was 50%)
+Dev note: We might've been a little too cautious with the downside making this too difficult to use at regular ranges, so we're trying a less dramatic size penalty
+Aurora's Telereceptor
+Whenever a Heretic sees your aura for a duration, they see it for 2s longer. (NEW)
+Dev note: Aurora's Telereceptor has been shown to be a very consistent source of aura reading with the power, which becomes especially powerful when extended by Lethal Pursuer. To help with this, we're giving survivors an extra heads up to match what the aura duration might be with Lethal Pursuer, while also making this a riskier choice compared to other aura addons.
+Order of Inquisition
+Decreased the min size penalty to 25%. (was 50%)
+Decreased the max size increase to 50%. (was 100%)
+Superheated Glass
+Decreased the Zealous penalty to 20%. (was 50%)
+Whenever you break an object this way, survivors within 12 meters of it gain Heresy and Scream. (NEW)
+Dev note: The previous penalty to Zealous made this a more unattractive addon to use, so we're dialing the penalty back while also giving it more value.
+Mark of the Adherent
+While not Zealous, increases the radius of Divine Light by 10%. (REWORK)
+Swapped rarity to Uncommon
+Dev note: The previous behavior of this addon was already pretty niche in use, admittedly difficult to understand, and was overshadowed by the base Zealous steering behavior. Instead, we've chosen to rework it to a basic option new players can gravitate to with no downsides. Keep in mind that while Zealous, your radius is increased by 20%, so this addon brings your non-Zealous state closer to that maximum value.
+Confessor's War Horn
+Fixed the duration to be 10s, as it is written. (was functionally 8s)
+Searcher's Skull
+Increased blind duration to 2.5s (was 1.5s)
+Dev note: Previously the addon's description did not show this value.
+Chains of the Heretic
+Decreased min delay to 0.35s. (was 0.5s)
+Dev note: This ends up being slightly more than the basekit 0.3s
+Eyes of Gerhardt
+Added an additional trigger condition of Heretics exiting a locker
+Obsidian Feather
+Swapped rarity to Visceral
+Additionally prevent manual casting, further boost controlled speed, and reducing time controlled. (NEW)
+Dev note: This addon was already very transformative to the power, so we've chosen to make it Visceral rarity to match its effect. To make its use more interesting and challenging to those who seek to master the power, we're adding the additional limitation of Casting it before it times out, while leaning more into the whacky higher speed payoff.
+Crown of the Destroyer
+Swapped rarity to Very Rare
+Decreased Terror Radius reduction from to 70%. (was 75%)
+Mirror of the Creators
+Decreased the pause duration to 0.4s (was 0.5s)
+Dev note: While we still intend to keep this a chaotic and fun choice rather than it become the meta option, it could serve to be a little harder to react to as survivor
+bar_red.png
+Known Issues
+The Judgment's Killer Instinct Feedback on Near Misses tooltip description shows a placeholder string
+The Judgment's Divine Light Control Settings disables horizontal movement when set to 0. Setting it to 1 prevents this.
+Still Sight cannot be activated after being rescued from the Exile
+Deathbound prematurely deactivates when another survivor completes a healing action
+The Onryo can be seen more than 24 meters away while demanifested in some cases
+Mettle of Man perk is activating one hit sooner than it should.
+
+10.0.3 | Bugfix Patch
+Content
+Killer Updates
+The Slasher
+
+Jump Scare anti-camp penalty no longer applies across multiple floors
+bar_white.png
+Perk Updates
+New Survivor Perks
+
+Cross-Examination
+While in the Killer's Terror Radius and not being chased by the Killer, they leave Light Marks that last for 10s that you can see. While on the Killer's Light Marks, you gain Elusive. This ends after 3/4/5s.
+bar_white.png
+Killer Add-on Updates
+The Slasher's add-ons
+
+Sauna Rock:
+After a Jump Scare, inflict all Survivors within Killer Instinct's detection range with Exhausted for 3 seconds. (was 13 seconds)
+Two Nails:
+Spikes that come within 1 meter of a Survivor reveal their Aura for 5 seconds. (was 6 seconds)
+Mirror Shards:
+Impaled Survivors become Broken for 40 seconds after extracting the Spike. (was 30 seconds)
+Toxic Waste:
+After a Jump Scare, Survivors within 10 meters of a hook or Scrap Pile gain Oblivious for 13 seconds. (was 8 meters)
+Sleeping Bag:
+After grabbing a Hook Spike while in Omnipresent Evil mode, see the locations of Survivors within 10 meters of hooks. (was 8 meters)
+Party Noisemaker:
+Breaking a Pallet or Breakable Wall with Jump Scare reveals the Auras of Survivors further than 28 meters for 6 seconds. (was 32 meters)
+bar_red.png
+Summer Screams Event
+The Summer Screams event will be live from July 28th 11:00EDT - August 18th 11:00EDT. Featuring Chaos Shuffle, Lights Out and 2v8, each event will be active for 1 week at a time starting with Chaos Shuffle. Check out the available quests in order to receive rewards!
+
+Week 1: Chaos Shuffle (July 28 - August 4)
+Week 2: Lights Out (August 4 - August 11)
+Week 3: 2v8 (August 11 - August 18)
+bar_white.png
+Game Mode Updates
+Lights Out
+
+Survivors holding the Lantern will now see the Auras of Pallets, Vaults, and Breakable Walls within 32m
+Gate interaction points will now remain lit once all objectives have been completed
+Deep wounds and Anti-camp bars are now visible again
+Added support for the Fog Vial
+Fixed an issue where the lighting is inconsistent and can appear overly dark or bright on Xbox Series X
+Chaos Shuffle
+
+All Perks and Add-ons now available to be assigned
+bar_red.png
+Bug Fixes
+2v8
+Fixed an issue where The Nemesis zombies could become stuck on Sanctum of Wrath.
+Fixed an issue where Killer chests did not have their Aura revealed when facing The Nemesis and The Mastermind together.
+Fixed an issue where Survivors could see the Aura of the Cage of Corruption while in a locker.
+Fixed an issue where trapped Survivors were missing the trapped animation after stepping in The Trapper's Bear Trap while also being contaminated by The Nemesis.
+Fixed an issue where a Survivor caught in a Bear Trap could be sent into a Cage of Corruption twice against The Trapper and The Mastermind.
+Fixed an issue where it was unable to Drop the Spray/Antidote after being used by a different Survivor.
+Fixed an issue where certain map specific achievements were not being awarded in correctly.
+Audio
+Fixed an issue where Walking Dead characters were not playing the right VO line during their interactions.
+Fixed an issue where Ice Nine Kills music wasn't playing when equipped with collection items.
+Fixed an issue where The Slasher 'Jump Scare' cause the Survivors in Lockers to Scream.
+Fixed an issue where Survivors ''Fully Healed'' Voice line triggers when partially healed.
+Fixed an issue where the bananas emit a metallic sound when hit by a projectile on Trickster Delusion map.
+Fixed an issue where the hook voice over played too late when transitioning from phase 1 to phase 2.
+Fixed an issue where Survivors exit gate dialog triggered at the same time the door opens, which was making it hard to hear.
+Fixed an issue where the incorrect voice lines played for Killers & Survivors regardless of their language setting.
+Fixed an issue where the lullaby for the Facemelter Eddie legendary cosmetic was lower than intended.
+Characters
+Reverted a fix that prevented The Skull Merchant from deploying Drones when above/below a Hooked Survivor.
+Dev Note: The issue that the fix attempted to solve will be back, which made Drones disappear after being deployed, regardless of being out of the vertical range for Drone anti-camp. This is unintended and is under investigation.
+Fixed an issue where as The Animatronic, the Blighted Springtrap's Mouth Animation was unable to be seen at the end of the Killer's Mori.
+Fixed an issue where as The Dark Lord using the wolf form, the Killer could perform an extra attack right before the Pounce cooldown.
+Fixed an issue where Survivors downed by The Mastermind's vault attack while working on a Generator kept repairing while downed.
+Environment/Maps
+Fixed an issue in Eyrie of Crows where the traps could not be placed properly on the second floor of the main building.
+Fixed an issue in Torment Creek where traps could be placed under the ground near the window.
+Fixed an issue in Toba Landing where The Nurse can blink through the ground.
+Fixed an issue in Treatment Theater where The Executioner's Punishment Of The Damned attack is blocked in the middle of the main room.
+Fixed an issue in Dead Dawg Saloon where The Nurse can blink on top of the small structures.
+Perks
+Fixed an issue where Hex Statuses were hidden from Survivors when a Hex was reactivated by the Perk 'Undying'.
+Fixed an issue where the perk Visionary would not reveal generator auras when exiting a Locker, after the cooldown was completed.
+Fixed an issue where the Perk 'Plot Twist' could be reused when picked up or dropped by a Killer.
+Fixed an issue where the aura of the Perk Hex: No One Escapes Death was missing for the Survivor POV.
+Fixed an issue where the Perk Deathbound caused Survivors that previously healed another Survivor to scream again.
+Fixed an issue where the Perk Deerstalker was unable to reveal a Survivor for an additional 2 sec when equipped with the Perk Eyes of Belmont.
+Fixed an issue where The perk Shadowborn failed to activate when Rampage had tokens.
+UI
+Fixed an issue where The Slasher's Dirty Money Add-On remained dimmed when active.
+Fixed an issue where Into the Fog Tooltips for Perk Related Quests did not show the associated Perk.
+Fixed an issue where The Oni's Blood Fury's prompt was missing an indication that it must be held to activate.
+Fixed an issue where Survivor Skills always appeared Unlocked in the Match Details screen.
+Fixed an issue where alternating from Chaos Shuffle to Normal Trial erased saved loadouts.
+Fixed an issue where there was no HUD or UI feedback indicating The Oni's Blood Fury prompt had to be held to activate.
+Misc
+Fixed an issue where Survivors were unable to wiggle when being grabbed while having a Skill Check.
+Fixed an issue causing the Entity to make an illegal purchase move in the Bloodweb.
+Fixed an issue where leaving the Survivor queue in Play While You Wait would reset the Killer priority queue.
+bar_red.png
+Known Issues
+Stake Out tokens are sometimes consumed by Snap Out of It skillchecks when facing The Doctor.
+Dev Note: This is unintended and will be fixed in a future release.

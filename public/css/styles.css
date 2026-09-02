@@ -640,8 +640,8 @@ button:disabled {
     max-width: 900px;
     margin: 0 auto;
     display: flex;
-    align-items: flex-end;
-    gap: 6px;
+    align-items: center;
+    gap: 8px;
     background: rgba(10, 11, 20, .9);
     border: 1px solid rgba(168, 85, 247, .5);
     border-radius: 24px;
@@ -656,23 +656,28 @@ button:disabled {
 }
 
 .pill-btn {
-    background: none !important;
-    border: none;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    background: rgba(34, 211, 238, .12) !important;
+    border: 1px solid rgba(103, 232, 249, .42);
     cursor: pointer;
-    padding: 6px 8px;
-    border-radius: 50%;
+    padding: 0;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: .2s;
-    opacity: .7;
-    flex-shrink: 0;
+    opacity: .88;
+    color: #a5f3fc;
 }
 
 .pill-btn:hover {
     opacity: 1;
-    background: rgba(255, 255, 255, .06);
-    transform: scale(1.08);
+    background: rgba(34, 211, 238, .25) !important;
+    border-color: #67e8f9;
+    transform: translateY(-1px);
+    box-shadow: 0 0 12px rgba(34, 211, 238, .25);
 }
 
 .pill-btn:active {
@@ -683,7 +688,8 @@ button:disabled {
    visualmente idêntico ao parado, sem feedback nenhum de "tá gravando". */
 .pill-btn.gravando {
     opacity: 1;
-    background: rgba(239, 68, 68, .18) !important;
+    background: rgba(239, 68, 68, .3) !important;
+    border-color: #f87171;
     animation: pulsarGravando 1.2s ease-in-out infinite;
 }
 
@@ -720,11 +726,12 @@ button:disabled {
 }
 
 .btn-send {
-    background: linear-gradient(135deg, #22d3ee, #a855f7) !important;
-    border: none;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    background: rgba(34, 211, 238, .12) !important;
+    border: 1px solid rgba(103, 232, 249, .42);
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -734,12 +741,22 @@ button:disabled {
 }
 
 .btn-send:hover {
-    transform: scale(1.06);
+    background: rgba(34, 211, 238, .25) !important;
+    border-color: #67e8f9;
+    transform: translateY(-1px);
     box-shadow: 0 0 14px rgba(34, 211, 238, .5);
 }
 
 .btn-send:active {
-    transform: scale(.96);
+    transform: translateY(1px);
+}
+
+.pill-btn img,
+.btn-send img {
+    width: 20px !important;
+    height: 20px;
+    object-fit: contain;
+    filter: brightness(1.35) saturate(.8) !important;
 }
 
 .disclaimer {

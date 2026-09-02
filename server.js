@@ -99,9 +99,13 @@ garantirColunaAtualizacaoConversas();
 
 /* ── SESSÃO (persistente no MySQL — sobrevive a restart/sleep do Render) ── */
 const sessionStore = new MySQLStore(dbConfig);
-sessionStore.onReady()
-    .then(() => console.log('✅ Session store (MySQL) pronto'))
-    .catch(e => console.error('❌ Session store erro:', e.message));
+if (typeof sessionStore.onReady === 'function') {
+    sessionStore.onReady()
+        .then(() => console.log('✅ Session store (MySQL) pronto'))
+        .catch(e => console.error('❌ Session store erro:', e.message));
+} else {
+    console.log('✅ Session store (MySQL) inicializado');
+}
 
 const sessionMiddleware = session({
     secret: process.env.SESSION_SECRET,
@@ -191,6 +195,7 @@ function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro }) {
         }));
         // Frases curtas precisam de flush para vencer o limite inicial do buffer.
         ws.send(JSON.stringify({ text: `${texto.trim()} `, flush: true }));
+        // Finaliza a entrada para a ElevenLabs emitir isFinal.
         ws.send(JSON.stringify({ text: '' }));
     });
 
@@ -318,7 +323,7 @@ io.on('connection', (socket) => {
                 onFim: () => socket.emit('voz:fala-finalizada'),
                 onErro: (e) => {
                     console.error('[ELEVENLABS]', e.message);
-                    socket.emit('voz:erro', { mensagem: 'Erro ao gerar a voz da Iana.' });
+                    socket.emit('voz:erro', { mensagem: `Erro ao gerar a voz da Iana: ${e.message}` });
                 }
             });
         } catch (e) {

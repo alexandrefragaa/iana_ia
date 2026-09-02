@@ -3,7 +3,7 @@ services:
     name: iana-ia
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install && python -m pip install -r requirements.txt
     startCommand: npm start
     envVars:
       - key: NODE_ENV

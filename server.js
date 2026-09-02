@@ -320,7 +320,8 @@ io.on('connection', (socket) => {
                 msg,
                 historico,
                 humor: emocao,
-                config: `${SYSTEM_PROMPT_VOZ}\n\n[ADAPTAÇÃO EMOCIONAL]: ${instrucaoEmocaoVoz(emocao)}`
+                config: `${SYSTEM_PROMPT_VOZ}\n\n[ADAPTAÇÃO EMOCIONAL]: ${instrucaoEmocaoVoz(emocao)}`,
+                modoVoz: true
             });
 
             historico.push({ remetente: 'user', mensagem: msg });
@@ -439,14 +440,24 @@ const MODELOS = [
     'gemini-3.1-flash-lite',
 ];
 
-async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
+async function chamarGemini(modelo, mensagem, historico, systemPrompt, modoVoz = false) {
     const m = genAI.getGenerativeModel({ model: modelo, systemInstruction: systemPrompt });
+    const historicoGemini = [];
+    for (const item of historico || []) {
+        const role = item.remetente === 'iana' ? 'model' : 'user';
+        const texto = String(item.mensagem || '').trim();
+        if (!texto) continue;
+        if (!historicoGemini.length && role !== 'user') continue;
+        const anterior = historicoGemini[historicoGemini.length - 1];
+        if (anterior?.role === role) {
+            anterior.parts[0].text += `\n${texto}`;
+            continue;
+        }
+        historicoGemini.push({ role, parts: [{ text: texto }] });
+    }
     const chat = m.startChat({
-        history: historico.map(h => ({
-            role: h.remetente === 'iana' ? 'model' : 'user',
-            parts: [{ text: h.mensagem }]
-        })),
-        generationConfig: { maxOutputTokens: 2048 }
+        history: historicoGemini,
+        generationConfig: { maxOutputTokens: modoVoz ? 180 : 2048 }
     });
     const result = await chat.sendMessage(mensagem);
     const txt = result.response.text();
@@ -454,25 +465,34 @@ async function chamarGemini(modelo, mensagem, historico, systemPrompt) {
     return txt;
 }
 
-async function askGemini(mensagem, historico = [], instrucaoEmocional = '', configPrompt = '') {
+async function askGemini(mensagem, historico = [], instrucaoEmocional = '', configPrompt = '', modoVoz = false) {
     if (LOCAL_ONLY) return null;
     if (!genAI) return null;
 
-    const system = (process.env.SYSTEM_PROMPT ||
+    const promptBaseVoz =
+        'Você é a Iana em uma conversa de voz ao vivo. Responda como uma pessoa natural, ' +
+        'espontânea e presente na conversa. Para cumprimentos simples, responda em uma frase ' +
+        'curta e casual, variando naturalmente entre “oi”, “olá”, “e aí” e “tudo bem?”. ' +
+        'Não faça discurso, não explique seu funcionamento, não dê textão e não transforme ' +
+        'cada fala em uma aula. Acompanhe o assunto e o ritmo da pessoa: desenvolva somente ' +
+        'quando ela pedir ou quando for necessário. Faça no máximo uma pergunta curta quando ' +
+        'isso fizer sentido e não repita perguntas. Use português brasileiro coloquial, sem ' +
+        'parecer roteirizada ou programada.';
+    const system = (modoVoz ? promptBaseVoz : (process.env.SYSTEM_PROMPT ||
         'Você é a Iana, uma assistente gamer animada, criativa, humanizada e solidária. ' +
         'Tem personalidade forte, fala naturalmente com gírias e emojis quando cabe. ' +
         'É especialista em platinas, troféus, conquistas, builds, itens, localização de ' +
         'objetos, rotas, itens, estratégias e chefões. Também adora falar sobre filmes, séries ' +
         'e cultura nerd, games. ' +
         'REGRA DE CONVERSA: Em cumprimentos, perguntas sobre como você está ou reflexões normais, seja super breve, natural, sem "textão" e apenas siga o fluxo da conversa. ' +
-        'Por outro lado, quando o usuário tiver uma dúvida de jogo e você tiver informações no contexto, usa TUDO para criar uma resposta completa, detalhada e útil, e mostra serviço. Nesse caso específico, sempre faz uma pergunta no final para continuar ajudando o usuário.')
+        'Por outro lado, quando o usuário tiver uma dúvida de jogo e você tiver informações no contexto, usa TUDO para criar uma resposta completa, detalhada e útil, e mostra serviço. Nesse caso específico, sempre faz uma pergunta no final para continuar ajudando o usuário.'))
         + (instrucaoEmocional ? `\n\n[TOM]: ${instrucaoEmocional}` : '')
         + (configPrompt ? `\n\n[PERSONALIZAÇÃO]:\n${configPrompt}` : '');
 
     for (const modelo of [...new Set(MODELOS)]) {
         for (let t = 0; t < 2; t++) {
             try {
-                return await chamarGemini(modelo, mensagem, historico, system);
+                return await chamarGemini(modelo, mensagem, historico, system, modoVoz);
             } catch (err) {
                 const status = err?.status || '';
                 console.error(`[GEMINI] modelo=${modelo} tentativa=${t+1}:`, err.message);
@@ -539,7 +559,7 @@ async function askPython(nome, conversa, mensagem, historico = [], configRaw = {
 
 /* Gera a resposta da IA reaproveitando a cadeia Python → Gemini → fixo.
    Usado por /chat (texto) e pela chamada de voz (voz:texto). */
-async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config, configRaw }) {
+async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config, configRaw, modoVoz = false }) {
     let resposta = null, origem = null;
 
     if (process.env.ENABLE_PYTHON !== 'false') {
@@ -549,7 +569,7 @@ async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config, co
         } catch (e) { console.error('[Python] falhou, caindo pro Gemini via Node:', e.message); }
     }
     if (!resposta) {
-        resposta = await askGemini(msg, historico, instrucaoHumor(humor), config);
+        resposta = await askGemini(msg, historico, instrucaoHumor(humor), config, modoVoz);
         origem = resposta ? 'gemini-node' : origem;
     }
     if (!resposta) {

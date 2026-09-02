@@ -585,7 +585,9 @@ function garantirSocketVoz() {
         await garantirAudioElevenAtivo();
 
         try {
-            vozSocket.emit('voz:iniciar');
+            vozSocket.emit('voz:iniciar', {
+                idConversa: idConversaAtiva
+            });
         } catch (erro) {
             console.error(
                 '[IANA VOZ] voz:iniciar:',
@@ -626,6 +628,12 @@ function garantirSocketVoz() {
         if (el) {
             el.textContent = texto;
         }
+
+        adicionarMensagemDOM('ia', texto);
+        if (dados.conversa_id) {
+            idConversaAtiva = dados.conversa_id;
+        }
+        if (usuarioAtual) carregarHistorico();
     });
 
 
@@ -1039,6 +1047,9 @@ async function abrirVoz() {
     }
 
     if (socket.connected) {
+        socket.emit('voz:iniciar', {
+            idConversa: idConversaAtiva
+        });
         iniciarReconhecimentoVoz();
     }
 }
@@ -1384,6 +1395,11 @@ function iniciarReconhecimentoVoz() {
         const texto =
             textoFinal.trim();
 
+        console.info('[IANA SPEECH] texto reconhecido:', texto);
+
+        removerWelcome();
+        adicionarMensagemDOM('usuario', texto);
+
         vozProcessando = true;
 
         if (interimEl) {
@@ -1417,6 +1433,7 @@ function iniciarReconhecimentoVoz() {
                 !window._vozMutado &&
                 socket.connected
             ) {
+                console.info('[IANA VOZ] enviando texto ao servidor');
                 socket.emit(
                     'voz:texto',
                     texto
@@ -1448,6 +1465,10 @@ function iniciarReconhecimentoVoz() {
         }
 
         window._recognitionVoz = null;
+
+        if (event.error === 'no-speech') {
+            return;
+        }
 
         if (
             event.error === 'not-allowed' ||

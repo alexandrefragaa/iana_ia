@@ -230,7 +230,7 @@ function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro }) {
 }
 
 /* ── SOCKET.IO: eventos de voz e visão ────────────────────────── */
-const historicoVozPorSocket = new Map(); // socket.id -> últimas falas da chamada (não persiste no MySQL)
+const historicoVozPorSocket = new Map(); // socket.id -> estado e últimas falas da chamada
 
 const SYSTEM_PROMPT_VOZ =
     'Você está numa CHAMADA DE VOZ em tempo real (não é chat de texto). ' +
@@ -247,8 +247,23 @@ io.on('connection', (socket) => {
        manda só o TEXTO final aqui via 'voz:texto'. O servidor gera a
        resposta em texto (Gemini) e já manda pra ElevenLabs virar
        áudio com a voz modelada, streamando os pedaços de volta. */
-    socket.on('voz:iniciar', () => {
-        historicoVozPorSocket.set(socket.id, []);
+    socket.on('voz:iniciar', async (dados = {}) => {
+        const idConversa = dados.idConversa || null;
+        let historico = [];
+
+        if (socket.request.user?.id && idConversa) {
+            try {
+                const [r] = await pool.query(
+                    'SELECT mensagem, remetente FROM mensagens WHERE conversa_id=? AND usuario_id=? ORDER BY id DESC LIMIT 8',
+                    [idConversa, socket.request.user.id]
+                );
+                historico = r.reverse();
+            } catch (e) {
+                console.error('[DB histórico voz]', e.message);
+            }
+        }
+
+        historicoVozPorSocket.set(socket.id, { idConversa, historico });
         socket.emit('voz:pronto');
     });
 
@@ -261,12 +276,19 @@ io.on('connection', (socket) => {
         }
 
         const nome = socket.request.user?.nome || 'Visitante';
-        const historico = historicoVozPorSocket.get(socket.id) || [];
+        const estado = historicoVozPorSocket.get(socket.id) || { idConversa: null, historico: [] };
+        const historico = estado.historico || [];
+        const idConversa = await garantirConversa(
+            socket.request.user?.id || null,
+            estado.idConversa,
+            msg
+        );
+        estado.idConversa = idConversa;
 
         try {
             const resposta = await gerarRespostaIA({
                 nome,
-                idConv: null,
+                idConv: idConversa,
                 msg,
                 historico,
                 humor: detectarHumor(msg),
@@ -275,9 +297,21 @@ io.on('connection', (socket) => {
 
             historico.push({ remetente: 'user', mensagem: msg });
             historico.push({ remetente: 'iana', mensagem: resposta });
-            historicoVozPorSocket.set(socket.id, historico.slice(-10));
+            estado.historico = historico.slice(-10);
+            historicoVozPorSocket.set(socket.id, estado);
 
-            socket.emit('voz:transcricao-iana', { texto: resposta });
+            if (socket.request.user?.id && idConversa) {
+                await pool.query(
+                    'INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)',
+                    [idConversa, socket.request.user.id, 'user', msg]
+                );
+                await pool.query(
+                    'INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)',
+                    [idConversa, socket.request.user.id, 'iana', resposta]
+                );
+            }
+
+            socket.emit('voz:transcricao-iana', { texto: resposta, conversa_id: idConversa });
 
             falarComElevenLabs(resposta, {
                 onAudioChunk: (base64) => socket.emit('voz:audio-resposta', { audio: base64 }),

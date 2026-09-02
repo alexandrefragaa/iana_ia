@@ -122,6 +122,36 @@ main {
     gap: 10px;
 }
 
+.btn-entrar,
+.btn-registrar {
+    border: 1px solid rgba(34, 211, 238, .35);
+    border-radius: 10px;
+    padding: 9px 16px;
+    color: #e0f2fe;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .2s ease, border-color .2s ease, transform .2s ease;
+}
+
+.btn-entrar {
+    background: rgba(255, 255, 255, .05);
+}
+
+.btn-registrar {
+    background: linear-gradient(135deg, #0891b2, #7c3aed);
+    border-color: transparent;
+}
+
+.btn-entrar:hover,
+.btn-registrar:hover {
+    border-color: #22d3ee;
+    transform: translateY(-1px);
+}
+
+#topbar-menu-toggle {
+    display: none;
+}
+
 
 /* ==========================================================================
    3.1 OVERLAY DA SIDEBAR
@@ -525,6 +555,12 @@ main {
 
 .user-dropdown.aberto {
     display: flex;
+}
+
+.user-dropdown.aberto {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
 }
 
 .dropdown-item {
@@ -1459,7 +1495,7 @@ select:focus-visible {
 
     /* ── Topbar ─────────────────────────────────────────────── */
 
-    .btn-menu-mobile {
+    #topbar-menu-toggle {
         display: flex;
         align-items: center;
         justify-content: center;

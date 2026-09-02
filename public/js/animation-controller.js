@@ -278,9 +278,14 @@ const IanaHUD = (() => {
 
     function montarMarkup() {
         return `
+            <div class="jarvis-scanlines"></div>
+            <div class="jarvis-grid"></div>
             <div class="jarvis-ring jarvis-ring-outer"></div>
             <div class="jarvis-ring jarvis-ring-mid"></div>
             <div class="jarvis-ring jarvis-ring-inner"></div>
+            <div class="jarvis-particles" aria-hidden="true">
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            </div>
             <div class="jarvis-core"></div>
             <div class="jarvis-bars">
                 <span></span><span></span><span></span><span></span><span></span>

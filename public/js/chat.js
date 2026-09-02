@@ -3513,6 +3513,12 @@ async function processarEnvioIA(
                 configPrompt,
             configuracao:
                 configPrompt,
+            // FIX: o iana.py (backend Python) espera o objeto de
+            // configuração cru — não o texto pronto (configPrompt) que
+            // o Gemini via Node usa. Sem isso, as configurações do
+            // usuário eram ignoradas sempre que o Python respondia.
+            configRaw:
+                obterConfigSalva(),
             // FIX: features.js expõe detectarEstadoEmocional() mas
             // ninguém chamava — o servidor tinha só o fallback dele
             // (detectarHumor), sem o estado "frustrado" que só o
@@ -4027,21 +4033,28 @@ function iniciarDropdownUsuario() {
         event => {
             event.stopPropagation();
 
-            dropdown.style.display =
-                dropdown.style.display ===
-                'block'
-                    ? 'none'
-                    : 'block';
+            const aberto = dropdown.classList.toggle('aberto');
+            dropdown.style.display = aberto ? 'flex' : 'none';
         }
     );
 
     document.addEventListener(
         'click',
         () => {
-            dropdown.style.display =
-                'none';
+            dropdown.classList.remove('aberto');
+            dropdown.style.display = 'none';
         }
     );
+
+    obterElemento('dd-config')?.addEventListener('click', () => {
+        window.location.href = '/configuracoes';
+    });
+
+    obterElemento('dd-feedback')?.addEventListener('click', () => {
+        dropdown.classList.remove('aberto');
+        dropdown.style.display = 'none';
+        mostrarTela('tela-feedback');
+    });
 }
 
 
@@ -4269,6 +4282,18 @@ function iniciarEventosHistorico() {
         'click',
         enviarFeedback
     );
+
+    ['login-email', 'login-senha'].forEach(id => {
+        obterElemento(id)?.addEventListener('keydown', event => {
+            if (event.key === 'Enter') realizarLogin();
+        });
+    });
+
+    ['cad-nome', 'cad-email', 'cad-senha'].forEach(id => {
+        obterElemento(id)?.addEventListener('keydown', event => {
+            if (event.key === 'Enter') realizarCadastro();
+        });
+    });
 }
 
 

@@ -69,6 +69,24 @@ const pool = mysql.createPool({
     connectionLimit: 10
 });
 
+async function garantirColunaAtualizacaoConversas() {
+    try {
+        const [colunas] = await pool.query(
+            'SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND COLUMN_NAME=?',
+            [dbConfig.database, 'conversas', 'atualizado_em']
+        );
+        if (!colunas.length) {
+            await pool.query(
+                'ALTER TABLE conversas ADD COLUMN atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'
+            );
+        }
+    } catch (e) {
+        console.error('❌ Migração da tabela conversas:', e.message);
+    }
+}
+
+garantirColunaAtualizacaoConversas();
+
 (async () => {
     try {
         const conn = await pool.getConnection();
@@ -170,7 +188,8 @@ function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro }) {
             voice_settings: { stability: 0.5, similarity_boost: 0.8, use_speaker_boost: true },
             generation_config: { chunk_length_schedule: [120, 160, 250, 290] }
         }));
-        ws.send(JSON.stringify({ text: texto }));
+        // Frases curtas precisam de flush para vencer o limite inicial do buffer.
+        ws.send(JSON.stringify({ text: `${texto.trim()} `, flush: true }));
         ws.send(JSON.stringify({ text: '' }));
     });
 
@@ -382,11 +401,19 @@ function respostaSistema(mensagem) {
     return `Opa, deu uma piscada rápida na minha conexão aqui. Me manda de novo rapidinho?`;
 }
 
-async function askPython(nome, conversa, mensagem, historico = []) {
+async function askPython(nome, conversa, mensagem, historico = [], configRaw = {}) {
     return new Promise((resolve, reject) => {
         const py = process.env.IANA_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
         const historicoJSON = JSON.stringify(historico);
-        const proc = spawn(py, [path.join(__dirname, 'iana.py'), nome, conversa, mensagem, historicoJSON]);
+        // FIX: iana.py lê argv[5] como o objeto de configuração
+        // (personalidade/foco/plataforma/voz/tamanho/emojis/instrucoes/
+        // sobreVoce/perguntas/humor/criatividade/contexto) via
+        // montar_config_prompt() — antes esse argumento nunca era
+        // mandado, então as configurações do usuário eram ignoradas
+        // sempre que o Python respondia com sucesso (o caminho
+        // principal, já que ele roda antes do fallback Gemini-node).
+        const configJSON = JSON.stringify(configRaw || {});
+        const proc = spawn(py, [path.join(__dirname, 'iana.py'), nome, conversa, mensagem, historicoJSON, configJSON]);
         let out = '', err = '';
         let finalizado = false;
 
@@ -417,12 +444,12 @@ async function askPython(nome, conversa, mensagem, historico = []) {
 
 /* Gera a resposta da IA reaproveitando a cadeia Python → Gemini → fixo.
    Usado por /chat (texto) e pela chamada de voz (voz:texto). */
-async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config }) {
+async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config, configRaw }) {
     let resposta = null, origem = null;
 
     if (process.env.ENABLE_PYTHON !== 'false') {
         try {
-            resposta = await askPython(nome, idConv || 'geral', msg, historico);
+            resposta = await askPython(nome, idConv || 'geral', msg, historico, configRaw);
             origem = 'python';
         } catch (e) { console.error('[Python] falhou, caindo pro Gemini via Node:', e.message); }
     }
@@ -593,7 +620,7 @@ const visionLimiter = rateLimit({
 /* ── PÁGINAS ──────────────────────────────────────────────────── */
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.get('/configuracoes', (req, res) => res.sendFile(path.join(__dirname, 'public', 'configuracoes.html')));
+app.get('/configuracoes', (req, res) => res.sendFile(path.join(__dirname, 'public', 'configuraçoes.html')));
 
 /* ── AUTH ─────────────────────────────────────────────────────── */
 app.post('/auth/registro', loginLimiter, async (req, res) => {
@@ -816,6 +843,10 @@ app.post('/chat', chatLimiter, async (req, res) => {
     const idUser = req.user?.id || null;
     const msg    = (req.body.mensagem || req.body.message || '').trim();
     const config = req.body.config || req.body.configuracao || '';
+    // FIX: objeto de configuração cru (o que chat.js vai passar a
+    // mandar em configRaw), usado só pelo iana.py — o texto acima
+    // (config/configuracao) continua sendo o que o Gemini via Node usa.
+    const configRaw = (req.body.configRaw && typeof req.body.configRaw === 'object') ? req.body.configRaw : {};
     const idConvBody = req.body.conversa_id || req.body.id_conversa || null;
 
     if (!msg) return res.status(400).json({ erro: 'Mensagem vazia.' });
@@ -830,7 +861,7 @@ app.post('/chat', chatLimiter, async (req, res) => {
     const idConv = await garantirConversa(idUser, idConvBody, msg);
 
     if (idUser && idConv) {
-        pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'user', msg]).catch(e => console.error('[DB msg user]', e.message));
+        await pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'user', msg]);
     }
 
     let historico = [];
@@ -849,10 +880,10 @@ app.post('/chat', chatLimiter, async (req, res) => {
         : msg;
 
     const humor = req.body.estadoEmocional || detectarHumor(msg);
-    const resposta = await gerarRespostaIA({ nome, idConv, msg: msgParaIA, historico, humor, config });
+    const resposta = await gerarRespostaIA({ nome, idConv, msg: msgParaIA, historico, humor, config, configRaw });
 
     if (idUser && idConv) {
-        pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'iana', resposta]).catch(e => console.error('[DB msg iana]', e.message));
+        await pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'iana', resposta]);
     }
 
     res.json({ resposta, conversa_id: idConv, id_conversa: idConv });

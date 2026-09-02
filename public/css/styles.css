@@ -201,6 +201,7 @@ button:disabled {
     overflow: hidden;
     flex-shrink: 0;
     z-index: 1000;
+    position: relative;
     transition:
         width .3s ease,
         min-width .3s ease,
@@ -545,6 +546,31 @@ button:disabled {
 
 .sidebar.collapsed .user-nome {
     display: none;
+}
+
+.sidebar.collapsed .brand {
+    visibility: hidden;
+}
+
+.sidebar.collapsed .sidebar-footer {
+    position: static;
+    padding-top: 16px;
+    border-top: 1px solid rgba(168, 85, 247, .3);
+}
+
+.sidebar.collapsed .user-row {
+    justify-content: flex-end;
+    padding: 8px 4px;
+}
+
+.sidebar.collapsed .btn-user-menu {
+    display: flex;
+}
+
+.sidebar.collapsed .user-avatar {
+    position: absolute;
+    top: 15px;
+    left: 15px;
 }
 
 .user-dropdown {

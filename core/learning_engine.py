@@ -984,35 +984,27 @@ def buscar_resultados(
     try:
 
         if not _inicializar_memoria():
-
             itens = _carregar_fallback()
-
+            termos = set(re.findall(r"\w+", pergunta_usuario.lower()))
+            candidatos = []
+            for item in itens:
+                texto = str(item.get("conteudo", ""))
+                palavras = set(re.findall(r"\w+", texto.lower()))
+                score = len(termos & palavras)
+                if score > 0:
+                    candidatos.append((score, item))
+            candidatos.sort(key=lambda x: x[0], reverse=True)
             return [
                 {
-                    "documento": item.get(
-                        "conteudo",
-                        ""
-                    ),
+                    "documento": item.get("conteudo", ""),
                     "metadata": {
-                        "titulo": item.get(
-                            "titulo",
-                            ""
-                        ),
-                        "tipo": item.get(
-                            "categoria",
-                            ""
-                        ),
-                        "url": item.get(
-                            "url",
-                            ""
-                        ),
+                        "titulo": item.get("titulo", ""),
+                        "tipo": item.get("categoria", ""),
+                        "url": item.get("url", ""),
                     },
                     "distancia": None,
                 }
-
-                for item in itens[
-                    -limite_resultados:
-                ]
+                for _, item in candidatos[:limite_resultados]
             ]
 
         vetor = modelo.encode(
@@ -1099,10 +1091,7 @@ def buscar_na_memoria_iana(
 
     if not resultados:
 
-        return (
-            "Não encontrei informações específicas "
-            "sobre isso na minha memória."
-        )
+        return ""
 
     partes = []
 
@@ -1178,10 +1167,7 @@ def buscar_na_memoria_iana(
 
     if not partes:
 
-        return (
-            "Não encontrei informações específicas "
-            "sobre isso na minha memória."
-        )
+        return ""
 
     return "\n\n---\n\n".join(
         partes[:limite_resultados]

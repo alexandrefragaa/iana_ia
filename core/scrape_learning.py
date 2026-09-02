@@ -58,6 +58,7 @@ def resolver_arquivo(nome_arquivo: str) -> Path:
 
 
 ARQUIVO_REWORKS = resolver_arquivo("reworks_dbd.txt")
+ARQUIVO_CONQUISTAS = resolver_arquivo("conquistas.txt")
 ARQUIVO_LINKS_CONCLUIDOS = resolver_arquivo("links_concluidos.txt")
 ARQUIVO_TITULOS = resolver_arquivo("titulos_para_buscar.txt")
 ARQUIVO_UPDATES = resolver_arquivo("update_sources.txt")
@@ -1183,6 +1184,33 @@ def minerar_perks_dbd():
     return aprendidos
 
 
+def minerar_conquistas():
+    """Aprende exclusivamente o conteúdo local de conquistas.txt."""
+    if not ARQUIVO_CONQUISTAS.exists():
+        print("ℹ️ conquistas.txt não encontrado. Ignorando.")
+        return 0
+    texto = ler_arquivo(ARQUIVO_CONQUISTAS).strip()
+    if not texto:
+        print("⚠️ conquistas.txt está vazio.")
+        return 0
+    print("\n🏆 FASE 8 — conquistas.txt")
+    status = learn(
+        titulo="Conquistas",
+        conteudo=texto,
+        categoria="conquistas",
+        id_documento="conquistas_file",
+        url=None,
+    )
+    if status in ("NOVO", "ATUALIZADO"):
+        print(f"✅ Arquivo de conquistas aprendido: {status}")
+        return 1
+    if status == "EXISTE":
+        print("⏭️ conquistas.txt já está atualizado.")
+        return 0
+    print(f"⚠️ Resultado conquistas: {status}")
+    return 0
+
+
 def mostrar_resumo(
     links_novos: int,
     links_pulados: int,
@@ -1192,6 +1220,7 @@ def mostrar_resumo(
     reworks: int,
     personagens: int,
     perks: int,
+    conquistas: int,
 ):
     total = (
         links_novos
@@ -1200,6 +1229,7 @@ def mostrar_resumo(
         + reworks
         + personagens
         + perks
+        + conquistas
     )
 
     print("\n" + "=" * 60)
@@ -1217,6 +1247,7 @@ def mostrar_resumo(
     print(f"🧩 Reworks: {reworks}")
     print(f"🧟 Personagens DBD: {personagens}")
     print(f"🧿 Perks DBD: {perks}")
+    print(f"🏆 Conquistas: {conquistas}")
 
     print("-" * 60)
     print(f"🧠 TOTAL INTEGRADO: {total}")
@@ -1266,6 +1297,7 @@ def main():
     reworks = minerar_reworks()
     personagens = minerar_personagens_dbd()
     perks = minerar_perks_dbd()
+    conquistas = minerar_conquistas()
 
     mostrar_resumo(
         links_novos,
@@ -1276,6 +1308,7 @@ def main():
         reworks,
         personagens,
         perks,
+        conquistas,
     )
 
     tempo = time.time() - inicio

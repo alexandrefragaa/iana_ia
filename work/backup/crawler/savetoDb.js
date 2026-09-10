@@ -1,6 +1,4 @@
-import mysql from 'mysql2/promise';
-import { env } from '../env.js';
-const db = mysql.createPool({ host: env.db.host || 'localhost', port: env.db.port || 3306, user: env.db.user, password: env.db.password, database: env.db.name, ssl: env.db.ssl ? {} : undefined });
+import { db } from "../backend-node/src/db/mysql.js";
 
 // Assumindo que `db` é um pool mysql2/promise (db.query retorna uma Promise).
 // Se seu `db` usar API por callback (mysql2 "clássico"), me avisa que ajusto.

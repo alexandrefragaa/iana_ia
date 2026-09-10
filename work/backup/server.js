@@ -13,16 +13,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import sgMail from '@sendgrid/mail';
-import { readPublicHTML } from './core/safe-links.js';
+import dns from 'dns';
 import * as cheerio from 'cheerio';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import crypto from 'crypto';
 import WebSocket from 'ws'; // npm install ws — cliente WS pra falar com a ElevenLabs
 
-import { pythonExecutable, ensureConversation, attachmentPart, escapeHTML } from './core/runtime.js';
-
-dotenv.config({ path: new URL('.env', import.meta.url) });
+dotenv.config();
 
 console.log('[DEBUG] ALLOWED_ORIGINS =', JSON.stringify(process.env.ALLOWED_ORIGINS));
 
@@ -30,7 +28,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const app        = express();
 const codigos    = new Map();
-
+const dnsLookup  = dns.promises.lookup;
 
 if (!process.env.SESSION_SECRET) {
     console.error('❌ SESSION_SECRET não definido no .env'); process.exit(1);
@@ -317,8 +315,6 @@ io.on('connection', (socket) => {
             return;
         }
 
-        const previous = historicoVozPorSocket.get(socket.id);
-        if (previous?.busy) return socket.emit('voz:erro', { mensagem: 'Aguarde a resposta atual.' });
         const nome = socket.request.user?.nome || 'Visitante';
         const emocao = detectarEmocaoVoz(msg);
         const estado = historicoVozPorSocket.get(socket.id) || { idConversa: null, historico: [], turno: 0 };
@@ -330,9 +326,6 @@ io.on('connection', (socket) => {
             ttsPorSocket.delete(socket.id);
         }
         const historico = estado.historico || [];
-        estado.busy = true;
-        historicoVozPorSocket.set(socket.id, estado);
-        try {
         const idConversa = await garantirConversa(
             socket.request.user?.id || null,
             estado.idConversa,
@@ -340,6 +333,7 @@ io.on('connection', (socket) => {
         );
         estado.idConversa = idConversa;
 
+        try {
             const resposta = await gerarRespostaIA({
                 nome,
                 idConv: idConversa,
@@ -350,7 +344,6 @@ io.on('connection', (socket) => {
                 modoVoz: true
             });
 
-            if (!socket.connected || historicoVozPorSocket.get(socket.id) !== estado || estado.turno !== turnoAtual) return;
             historico.push({ remetente: 'user', mensagem: msg });
             historico.push({ remetente: 'iana', mensagem: resposta });
             estado.historico = historico.slice(-10);
@@ -391,7 +384,7 @@ io.on('connection', (socket) => {
         } catch (e) {
             console.error('[VOZ TEXTO]', e.message);
             socket.emit('voz:erro', { mensagem: 'Erro ao processar sua fala.' });
-        } finally { estado.busy = false; }
+        }
     });
 
     // Você começou a falar em cima da fala dela — o navegador já
@@ -557,7 +550,7 @@ async function askGemini(mensagem, historico = [], instrucaoEmocional = '', conf
 
 function respostaSistema(mensagem) {
     const msg = mensagem.toLowerCase();
-    if (/^(oi|olá|ola|hey|bom dia|boa tarde|boa noite)[!?.\s]*$/.test(msg.trim()))
+    if (/oi|olá|ola|hey|bom dia|boa tarde|boa noite/.test(msg))
         return `Opa, e aí! 👋 Tudo tranquilo por aí?`;
     if (/como.*vai|tudo bem|tudo bom/.test(msg))
         return `Tudo 100% por aqui! E com você, jogando algo legal hoje?`;
@@ -566,7 +559,7 @@ function respostaSistema(mensagem) {
 
 async function askPython(nome, conversa, mensagem, historico = [], configRaw = {}) {
     return new Promise((resolve, reject) => {
-        const py = pythonExecutable(__dirname);
+        const py = process.env.IANA_PYTHON_PATH || (process.platform === 'win32' ? 'python' : 'python3');
         const historicoJSON = JSON.stringify(historico);
         // FIX: iana.py lê argv[5] como o objeto de configuração
         // (personalidade/foco/plataforma/voz/tamanho/emojis/instrucoes/
@@ -576,10 +569,8 @@ async function askPython(nome, conversa, mensagem, historico = [], configRaw = {
         // sempre que o Python respondia com sucesso (o caminho
         // principal, já que ele roda antes do fallback Gemini-node).
         const configJSON = JSON.stringify(configRaw || {});
-        const proc = spawn(py, [path.join(__dirname, 'core', 'iana.py'), nome, conversa, mensagem, historicoJSON, configJSON], { cwd: __dirname, env: { ...process.env, PYTHONIOENCODING: 'utf-8', IANA_USER_ID: String(configRaw?._userId || ''), IANA_DB_PATH: process.env.IANA_DB_PATH || path.join(__dirname, 'database', 'chromadb') } });
+        const proc = spawn(py, [path.join(__dirname, 'iana.py'), nome, conversa, mensagem, historicoJSON, configJSON]);
         let out = '', err = '';
-        proc.stdout.setEncoding('utf8');
-        proc.stderr.setEncoding('utf8');
         let finalizado = false;
 
         const timeout = setTimeout(() => {
@@ -609,16 +600,10 @@ async function askPython(nome, conversa, mensagem, historico = [], configRaw = {
 
 /* Gera a resposta da IA reaproveitando a cadeia Python → Gemini → fixo.
    Usado por /chat (texto) e pela chamada de voz (voz:texto). */
-async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config, configRaw, modoVoz = false, anexo = null }) {
-    if (anexo) {
-        if (LOCAL_ONLY || !genAI) throw Object.assign(new Error('Análise de anexos indisponível: configure Gemini e desative o modo somente local.'), { status: 503 });
-        const model = genAI.getGenerativeModel({ model: MODELOS[0] });
-        const result = await model.generateContent([{ text: `${config || ''}\n${msg}` }, anexo]);
-        return result.response.text();
-    }
+async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config, configRaw, modoVoz = false }) {
     let resposta = null, origem = null;
 
-    if (!modoVoz && process.env.ENABLE_PYTHON !== 'false') {
+    if (process.env.ENABLE_PYTHON !== 'false') {
         try {
             resposta = await askPython(nome, idConv || 'geral', msg, historico, configRaw);
             origem = 'python';
@@ -648,15 +633,80 @@ function extrairLinks(texto) {
     return [...new Set(found.map(u => u.replace(/[.,;:)\]}]+$/, '')))].slice(0, 3);
 }
 
+function ipEhPrivado(ip) {
+    if (ip.includes(':')) {
+        const ipLower = ip.toLowerCase();
+        return ipLower === '::1' || ipLower.startsWith('fe80:') ||
+               ipLower.startsWith('fc') || ipLower.startsWith('fd');
+    }
+    const partes = ip.split('.').map(Number);
+    if (partes.length !== 4 || partes.some(isNaN)) return true;
+    const [a, b] = partes;
+    if (a === 127) return true;
+    if (a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 0) return true;
+    if (a >= 224) return true;
+    return false;
+}
+
 async function buscarConteudoLink(url) {
+    let parsed;
+    try { parsed = new URL(url); } catch { return null; }
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+
     try {
-        const html = await readPublicHTML(url);
-        if (!html) return null;
-        const page = cheerio.load(html);
-        page('script,style,nav,footer,noscript,svg,iframe').remove();
-        const texto = page('body').text().replace(/\s+/g, ' ').trim();
-        return texto ? { url, titulo: page('title').first().text().trim(), texto: texto.slice(0,4000) } : null;
-    } catch (e) { console.warn('[LINK]', e.message); return null; }
+        const { address } = await dnsLookup(parsed.hostname);
+        if (ipEhPrivado(address)) {
+            console.warn(`[LINK] Bloqueado (IP privado): ${url} → ${address}`);
+            return null;
+        }
+    } catch (e) {
+        console.warn(`[LINK] DNS falhou para ${url}:`, e.message);
+        return null;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+        const res = await fetch(parsed.toString(), {
+            signal: controller.signal,
+            redirect: 'follow',
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; IanaBot/1.0)' }
+        });
+        clearTimeout(timeout);
+
+        const tipo = res.headers.get('content-type') || '';
+        if (!res.ok || !tipo.includes('text/html')) return null;
+
+        const reader = res.body.getReader();
+        let recebido = '';
+        let bytes = 0;
+        const LIMITE = 1_500_000;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            bytes += value.length;
+            if (bytes > LIMITE) { controller.abort(); break; }
+            recebido += Buffer.from(value).toString('utf-8');
+        }
+
+        const $ = cheerio.load(recebido);
+        $('script, style, nav, footer, noscript, svg, iframe').remove();
+        const titulo = $('title').first().text().trim();
+        const texto = $('body').text().replace(/\s+/g, ' ').trim();
+
+        if (!texto) return null;
+
+        return { url: parsed.toString(), titulo: titulo || parsed.hostname, texto: texto.slice(0, 4000) };
+    } catch (e) {
+        clearTimeout(timeout);
+        console.warn(`[LINK] Falha ao ler ${url}:`, e.message);
+        return null;
+    }
 }
 
 async function montarContextoLinks(mensagem) {
@@ -727,13 +777,6 @@ const visionLimiter = rateLimit({
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/configuracoes', (req, res) => res.sendFile(path.join(__dirname, 'public', 'configuraçoes.html')));
-
-app.use((req, res, next) => {
-    if (!req.body) req.body = {};
-    const fields = ['nome','email','senha','senhaAtual','novaSenha','nova_senha','codigo','feedback','titulo','resumo','conversa_id','id_conversa','idConversa'];
-    if (fields.some(key => req.body[key] != null && typeof req.body[key] !== 'string')) return res.status(400).json({ erro: 'Campos de texto inválidos.' });
-    next();
-});
 
 /* ── AUTH ─────────────────────────────────────────────────────── */
 app.post('/auth/registro', loginLimiter, async (req, res) => {
@@ -807,8 +850,8 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
     try {
         const [r] = await pool.query('SELECT id FROM usuarios WHERE email=?', [email]);
         if (r.length) {
-            const codigo = crypto.randomInt(100000, 1000000).toString();
-            codigos.set(email, { codigo, exp: Date.now() + 15 * 60 * 1000, tentativas: 0 });
+            const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+            codigos.set(email, { codigo, exp: Date.now() + 15 * 60 * 1000 });
 
             if (sendgridPronto) {
                 try {
@@ -840,17 +883,12 @@ app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
     }
 });
 
-app.post('/auth/mudar-senha', loginLimiter, async (req, res) => {
+app.post('/auth/mudar-senha', async (req, res) => {
     const { codigo, nova_senha } = req.body;
     const email = req.body.email?.trim().toLowerCase();
     if (!email || !codigo || !nova_senha) return res.status(400).json({ erro: 'Dados incompletos.' });
     const token = codigos.get(email);
-    if (!token || Date.now() > token.exp || token.tentativas >= 5) {
-        codigos.delete(email);
-        return res.status(400).json({ erro: 'Código inválido ou expirado.' });
-    }
-    token.tentativas++;
-    if (typeof codigo !== 'string' || token.codigo !== codigo.trim())
+    if (!token || token.codigo !== codigo.trim() || Date.now() > token.exp)
         return res.status(400).json({ erro: 'Código inválido ou expirado.' });
     if (nova_senha.trim().length < 8) return res.status(400).json({ erro: 'Senha mínima: 8 caracteres.' });
     try {
@@ -878,9 +916,9 @@ app.post('/feedback', chatLimiter, async (req, res) => {
             replyTo: req.user?.email || undefined,
             subject: '[Iana Feedback]',
             html: `<div style="font-family:sans-serif;padding:20px">
-                <p><strong>De:</strong> ${escapeHTML(req.user?.nome || 'Visitante')} (${escapeHTML(req.user?.email || 'sem login')})</p>
+                <p><strong>De:</strong> ${req.user?.nome || 'Visitante'} (${req.user?.email || 'sem login'})</p>
                 <p><strong>Mensagem:</strong></p>
-                <p>${escapeHTML(texto).replace(/\n/g, '<br>')}</p>
+                <p>${texto.replace(/\n/g, '<br>')}</p>
             </div>`
         });
         res.json({ ok: true });
@@ -893,7 +931,16 @@ app.post('/feedback', chatLimiter, async (req, res) => {
 
 /* ── CONVERSAS ────────────────────────────────────────────────── */
 async function garantirConversa(idUsuario, idConversa, mensagem) {
-    return ensureConversation(pool, idUsuario, idConversa, mensagem);
+    if (!idUsuario) return idConversa || null;
+    const id = idConversa || `conv_${idUsuario}_${Date.now()}`;
+    const titulo = mensagem.replace(/\[.*?\]/g, '').trim().slice(0, 40) || 'Nova Conversa';
+    try {
+        await pool.query(
+            'INSERT INTO conversas (id,usuario_id,titulo,atualizado_em) VALUES (?,?,?,NOW()) ON DUPLICATE KEY UPDATE atualizado_em=NOW()',
+            [id, idUsuario, titulo + (titulo.length >= 40 ? '...' : '')]
+        );
+    } catch (e) { console.error('[DB garantirConversa]', e.message); }
+    return id;
 }
 
 app.get('/conversas', auth, async (req, res) => {
@@ -950,54 +997,51 @@ app.delete('/conversas/:id', auth, async (req, res) => {
 app.post('/chat', chatLimiter, async (req, res) => {
     const nome   = req.user?.nome || 'Visitante';
     const idUser = req.user?.id || null;
-    const input = req.body.mensagem ?? req.body.message ?? '';
-    if (typeof input !== 'string') return res.status(400).json({ erro: 'Mensagem deve ser texto.' });
-    const msg = input.trim();
+    const msg    = (req.body.mensagem || req.body.message || '').trim();
     const config = req.body.config || req.body.configuracao || '';
     // FIX: objeto de configuração cru (o que chat.js vai passar a
     // mandar em configRaw), usado só pelo iana.py — o texto acima
     // (config/configuracao) continua sendo o que o Gemini via Node usa.
-    const configRaw = (req.body.configRaw && typeof req.body.configRaw === 'object') ? { ...req.body.configRaw, _userId: idUser } : { _userId: idUser };
+    const configRaw = (req.body.configRaw && typeof req.body.configRaw === 'object') ? req.body.configRaw : {};
     const idConvBody = req.body.conversa_id || req.body.id_conversa || null;
 
     if (!msg) return res.status(400).json({ erro: 'Mensagem vazia.' });
-    if (msg.length > 16000) return res.status(400).json({ erro: 'Mensagem muito longa.' });
+    if (msg.length > 8000) return res.status(400).json({ erro: 'Mensagem muito longa.' });
 
-    const anexo = attachmentPart(req.body);
-    if (['imagem', 'audio'].includes(req.body.tipo) && !anexo) return res.status(400).json({ erro: 'Conteúdo do anexo ausente.' });
+    // NOTA: anexos (imagem/áudio/arquivo) vêm no payload mas ainda não
+    // são analisados pelo Gemini aqui — só o texto placeholder que o
+    // chat.js já manda junto (ex: "[Usuário enviou uma imagem: x.png]")
+    // é usado. Analisar o conteúdo de verdade (visão) é um passo à parte.
 
     const contextoLinks = await montarContextoLinks(msg);
     const idConv = await garantirConversa(idUser, idConvBody, msg);
-
-    let historico = [];
-    if (idUser && idConv) {
-        try {
-            const [r] = await pool.query(
-                'SELECT mensagem, remetente FROM mensagens WHERE conversa_id=? AND usuario_id=? ORDER BY id DESC LIMIT 8',
-                [idConv, idUser]
-            );
-            historico = r.reverse();
-        } catch (e) { console.error('[DB historico]', e.message); }
-    }
 
     if (idUser && idConv) {
         await pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'user', msg]);
     }
 
-    if (!idUser && Array.isArray(req.session.chatHistory)) historico = req.session.chatHistory;
+    let historico = [];
+    if (idUser && idConv) {
+        try {
+            const [r] = await pool.query(
+                'SELECT mensagem, remetente FROM mensagens WHERE conversa_id=? ORDER BY id DESC LIMIT 8',
+                [idConv]
+            );
+            historico = r.reverse();
+        } catch (e) { console.error('[DB historico]', e.message); }
+    }
 
     const msgParaIA = contextoLinks
         ? `${msg}\n\n[CONTEXTO — conteúdo extraído do(s) link(s) enviado(s) pelo usuário, use isso pra responder]:\n${contextoLinks}`
         : msg;
 
     const humor = req.body.estadoEmocional || detectarHumor(msg);
-    const resposta = await gerarRespostaIA({ nome, idConv, msg: msgParaIA, historico, humor, config, configRaw, anexo });
+    const resposta = await gerarRespostaIA({ nome, idConv, msg: msgParaIA, historico, humor, config, configRaw });
 
     if (idUser && idConv) {
         await pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'iana', resposta]);
     }
 
-    if (!idUser) req.session.chatHistory = [...historico, { remetente: 'user', mensagem: msg }, { remetente: 'iana', mensagem: resposta }].slice(-8);
     res.json({ resposta, conversa_id: idConv, id_conversa: idConv });
 });
 
@@ -1015,8 +1059,8 @@ app.post('/chat/visao', visionLimiter, authToken, async (req, res) => {
     let historico = [];
     try {
         const [r] = await pool.query(
-            'SELECT mensagem, remetente FROM mensagens WHERE conversa_id=? AND usuario_id=? ORDER BY id DESC LIMIT 6',
-            [idConv, idUser]
+            'SELECT mensagem, remetente FROM mensagens WHERE conversa_id=? ORDER BY id DESC LIMIT 6',
+            [idConv]
         );
         historico = r.reverse();
     } catch (e) { console.error('[DB historico visao]', e.message); }
@@ -1041,10 +1085,9 @@ app.use((err, req, res, next) => {
     if (err.message === 'Origem não permitida por CORS') {
         return res.status(403).json({ erro: 'Origem não permitida.' });
     }
-    const status = err.status >= 400 && err.status < 500 ? err.status : (err.status === 503 ? 503 : 500);
-    res.status(status).json({ erro: status === 500 ? 'Erro interno no servidor.' : err.message });
+    res.status(500).json({ erro: 'Erro interno no servidor.' });
 });
 
 /* ── START ────────────────────────────────────────────────────── */
 const PORT = process.env.PORT || 3333;
-server.listen(PORT, process.env.HOST || '0.0.0.0', () => console.log(`🚀 Iana rodando na porta ${PORT}`));
+server.listen(PORT, '0.0.0.0', () => console.log(`🚀 Iana rodando na porta ${PORT}`));

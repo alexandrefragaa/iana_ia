@@ -27,7 +27,7 @@ except ImportError:
 BASE_DIR = Path(
     os.getenv(
         "IANA_BASE_DIR",
-        str(Path(__file__).resolve().parent.parent)
+        str(Path(__file__).resolve().parent)
     )
 ).resolve()
 

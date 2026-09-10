@@ -46,7 +46,7 @@ except AttributeError:
     pass
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent
 
 load_dotenv(
     dotenv_path=BASE_DIR / ".env"
@@ -59,12 +59,24 @@ load_dotenv(
 
 # memory.py
 try:
-    from memory import save_memory, get_memory
+    from memory import (
+        salvar_memoria,
+        get_memory,
+        buscar_memorias,
+    )
+
     MEMORY_OK = True
+
 except Exception as e:
     MEMORY_OK = False
-    save_memory = get_memory = None
-    sys.stderr.write(f"[Memory] módulo indisponível: {e}\n")
+
+    salvar_memoria = None
+    get_memory = None
+    buscar_memorias = None
+
+    sys.stderr.write(
+        f"[Memory] módulo indisponível: {e}\n"
+    )
 
 
 # learning_engine.py
@@ -204,12 +216,222 @@ def texto_seguro(valor):
 # MEMÓRIA — MEMORY.PY
 # ================================================================
 
-def consultar_memoria_usuario(pergunta, usuario_id, limite=6):
+def consultar_memoria_usuario(
+    pergunta,
+    usuario_id,
+    limite=6
+):
+    """
+    Consulta a memória pessoal/conversacional através do memory.py.
+
+    Essa memória é diferente da base de conhecimento do
+    learning_engine.py.
+    """
+
     if not MEMORY_OK:
         return ""
-    resultados = get_memory(pergunta, id_usuario_numerico=os.getenv("IANA_USER_ID") or None, limit=limite)
-    return "\n\n".join(resultados)
 
+    pergunta = texto_seguro(pergunta)
+
+    if not pergunta:
+        return ""
+
+    resultados = []
+
+    # ------------------------------------------------------------
+    # Busca semântica/por termo, caso exista no memory.py
+    # ------------------------------------------------------------
+
+    if callable(buscar_memorias):
+
+        try:
+            encontrados = buscar_memorias(
+                usuario_id,
+                pergunta,
+                limit=limite
+            )
+
+            if isinstance(encontrados, list):
+
+                for item in encontrados:
+
+                    if isinstance(item, dict):
+
+                        conteudo = (
+                            item.get("conteudo")
+                            or item.get("texto")
+                            or item.get("memoria")
+                            or ""
+                        )
+
+                        tipo = (
+                            item.get("tipo")
+                            or "memória"
+                        )
+
+                    else:
+                        conteudo = str(item)
+                        tipo = "memória"
+
+                    conteudo = texto_seguro(conteudo)
+
+                    if conteudo:
+                        resultados.append(
+                            f"[MEMÓRIA — {tipo}]\n"
+                            f"{limitar_texto(conteudo, 1200)}"
+                        )
+
+        except TypeError:
+            # Compatibilidade caso a implementação use
+            # outra ordem/assinatura.
+            try:
+                encontrados = buscar_memorias(
+                    usuario_id,
+                    pergunta,
+                    limite
+                )
+
+                if isinstance(encontrados, list):
+
+                    for item in encontrados:
+
+                        if isinstance(item, dict):
+                            conteudo = (
+                                item.get("conteudo")
+                                or item.get("texto")
+                                or ""
+                            )
+                        else:
+                            conteudo = str(item)
+
+                        conteudo = texto_seguro(conteudo)
+
+                        if conteudo:
+                            resultados.append(
+                                "[MEMÓRIA]\n"
+                                + limitar_texto(
+                                    conteudo,
+                                    1200
+                                )
+                            )
+
+            except Exception as e:
+                sys.stderr.write(
+                    f"[Memory] busca por termo: {e}\n"
+                )
+
+        except Exception as e:
+            sys.stderr.write(
+                f"[Memory] busca: {e}\n"
+            )
+
+    # ------------------------------------------------------------
+    # Memórias recentes como complemento
+    # ------------------------------------------------------------
+
+    if callable(get_memory):
+
+        try:
+            recentes = get_memory(
+                usuario_id,
+                limit=limite
+            )
+
+            if isinstance(recentes, list):
+
+                for item in recentes:
+
+                    if isinstance(item, dict):
+
+                        conteudo = (
+                            item.get("conteudo")
+                            or item.get("texto")
+                            or item.get("memoria")
+                            or ""
+                        )
+
+                        tipo = (
+                            item.get("tipo")
+                            or "memória"
+                        )
+
+                    else:
+                        conteudo = str(item)
+                        tipo = "memória"
+
+                    conteudo = texto_seguro(conteudo)
+
+                    if not conteudo:
+                        continue
+
+                    entrada = (
+                        f"[MEMÓRIA RECENTE — {tipo}]\n"
+                        f"{limitar_texto(conteudo, 1000)}"
+                    )
+
+                    if entrada not in resultados:
+                        resultados.append(entrada)
+
+        except TypeError:
+
+            try:
+                recentes = get_memory(
+                    usuario_id,
+                    limite
+                )
+
+                if isinstance(recentes, list):
+
+                    for item in recentes:
+
+                        if isinstance(item, dict):
+                            conteudo = (
+                                item.get("conteudo")
+                                or item.get("texto")
+                                or ""
+                            )
+                        else:
+                            conteudo = str(item)
+
+                        conteudo = texto_seguro(conteudo)
+
+                        if conteudo:
+                            resultados.append(
+                                "[MEMÓRIA RECENTE]\n"
+                                + limitar_texto(
+                                    conteudo,
+                                    1000
+                                )
+                            )
+
+            except Exception as e:
+                sys.stderr.write(
+                    f"[Memory] memória recente: {e}\n"
+                )
+
+        except Exception as e:
+            sys.stderr.write(
+                f"[Memory] memória recente: {e}\n"
+            )
+
+    if not resultados:
+        return ""
+
+    # Remove duplicatas preservando ordem.
+    finais = []
+
+    for item in resultados:
+        if item not in finais:
+            finais.append(item)
+
+    return "\n\n---\n\n".join(
+        finais[:limite]
+    )
+
+
+# ================================================================
+# CONHECIMENTO — LEARNING_ENGINE.PY
+# ================================================================
 
 def consultar_conhecimento(pergunta, limite=5):
     """
@@ -870,7 +1092,7 @@ def chamar_gemini():
 
             },
 
-            timeout=18
+            timeout=45
 
         )
 
@@ -973,12 +1195,83 @@ def chamar_gemini():
 # SALVAR INTERAÇÃO — MEMORY.PY
 # ================================================================
 
-def salvar_interacao(pergunta, resposta):
-    user_id = os.getenv("IANA_USER_ID", "").strip()
-    if not MEMORY_OK or not user_id or not pergunta or not resposta:
-        return
-    save_memory(f"Usuário: {pergunta}\nIana: {resposta}", categoria="conversa", user_id=user_id)
+def salvar_interacao(
+    pergunta,
+    resposta
+):
+    """
+    Salva a conversa no memory.py.
 
+    A base de conhecimento não é usada para guardar
+    conversas pessoais.
+    """
+
+    if not MEMORY_OK:
+        return
+
+    if not callable(salvar_memoria):
+        return
+
+    pergunta = texto_seguro(
+        pergunta
+    )
+
+    resposta = texto_seguro(
+        resposta
+    )
+
+    if not pergunta or not resposta:
+        return
+
+    try:
+
+        texto = (
+            f"Usuário ({nome_usuario}): "
+            f"{pergunta}\n"
+            f"Iana: "
+            f"{resposta}"
+        )
+
+        # Tenta a assinatura principal.
+        try:
+
+            salvar_memoria(
+                usuario_id=nome_usuario,
+                conteudo=texto,
+                tipo="conversa",
+                importancia=1
+            )
+
+        except TypeError:
+
+            # Compatibilidade com versões mais simples
+            # do memory.py.
+            try:
+
+                salvar_memoria(
+                    nome_usuario,
+                    texto,
+                    "conversa",
+                    1
+                )
+
+            except TypeError:
+
+                salvar_memoria(
+                    nome_usuario,
+                    texto
+                )
+
+    except Exception as e:
+
+        sys.stderr.write(
+            f"[Memory] erro ao salvar conversa: {e}\n"
+        )
+
+
+# ================================================================
+# FALLBACKS
+# ================================================================
 
 def resposta_do_contexto():
 

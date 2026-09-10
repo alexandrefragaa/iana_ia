@@ -5,9 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "scrape-learning": "python core/scrape_learning.py",
-    "test": "node --test tests/*.test.js",
-    "pipeline": "node run.pipeline.js"
+    "scrape-learning": "python core/scrape_learning.py"
   },
   "dependencies": {
     "@google/genai": "^2.16.0",

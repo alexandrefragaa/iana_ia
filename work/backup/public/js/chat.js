@@ -1799,7 +1799,6 @@ function iniciarUpload() {
             }
 
             try {
-                if (file.size > 10 * 1024 * 1024) throw new Error('Limite de 10 MB por arquivo.');
                 if (
                     file.type.startsWith(
                         'image/'
@@ -1838,7 +1837,6 @@ function iniciarUpload() {
                         `[Usuário enviou um áudio: ${file.name}]`,
                         {
                             tipo: 'audio',
-                            audio: await arquivoParaDataURL(file),
                             nome: file.name,
                             mimeType: file.type
                         }
@@ -1874,12 +1872,10 @@ function iniciarUpload() {
                 }
 
 
-                if (file.type !== 'application/pdf') throw new Error('Use imagem PNG/JPEG/WebP, áudio, PDF ou TXT.');
                 await processarEnvioIA(
                     `[Usuário enviou um arquivo: ${file.name}]`,
                     {
                         tipo: 'arquivo',
-                        arquivo: await arquivoParaDataURL(file),
                         nome: file.name,
                         mimeType: file.type
                     }
@@ -1892,7 +1888,7 @@ function iniciarUpload() {
                 );
 
                 alert(
-                    erro.message || 'Não foi possível processar o arquivo.'
+                    'Não foi possível processar o arquivo.'
                 );
 
             } finally {
@@ -1941,18 +1937,17 @@ async function compartilharTela() {
 
         window._telaCompartilhada = true;
 
-        const video = document.createElement('video');
-        video.srcObject = stream;
-        video.muted = true;
-        await video.play();
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        canvas.getContext('2d').drawImage(video, 0, 0);
-        await processarEnvioIA('Descreva esta captura de tela e ajude com o que aparece nela.', {
-            tipo: 'imagem', imagem: canvas.toDataURL('image/jpeg', 0.8), nome: 'captura-tela.jpg'
-        });
-        video.srcObject = null;
+        /*
+           Atualmente enviamos somente a informação
+           de que a tela foi compartilhada.
+
+           Para enviar uma captura real ao backend,
+           seria necessário capturar um frame do stream.
+        */
+
+        await processarEnvioIA(
+            '[Usuário compartilhou a tela.]'
+        );
 
     } catch (erro) {
         if (

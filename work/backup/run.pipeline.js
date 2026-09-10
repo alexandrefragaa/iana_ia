@@ -1,12 +1,12 @@
-import { scrape }              from "./crawler/scraper.js";
+import { scrape }              from "./scraper.js";
 import { isDuplicate, saveLink } from "./dedup.js";
 import { isValidGameContent }  from "./filter.js";
-import { saveDiscovery }       from "./crawler/savetoTxT.js";
+import { saveDiscovery }       from "./savetoTxT.js";
 import fs from "fs";
 
 function loadLinksFromFile(filepath) {
     try {
-        const content = fs.readFileSync(new URL(filepath, import.meta.url), "utf-8");
+        const content = fs.readFileSync(filepath, "utf-8");
         return content
             .split("\n")
             .map(line => line.trim())
@@ -25,7 +25,6 @@ async function run() {
     let learned   = 0;
 
     for (const url of urls.slice(0, 20)) {
-        processed++;
         try {
             const data = await scrape(url);
             if (!data) continue;
@@ -41,10 +40,13 @@ async function run() {
             }
 
             console.log("✅ Novo link:", url);
-            if (await saveDiscovery(data.title, url)) learned++;
+            saveLink(url);
+            saveDiscovery(data.title, url);
+            learned++;
         } catch (err) {
             console.log("❌ Erro:", err.message);
         }
+        processed++;
     }
 
     console.log(`\n✅ Pipeline Completo!`);

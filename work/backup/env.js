@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-dotenv.config({ path: new URL('.env', import.meta.url) });
+dotenv.config();
 
 export const env = {
   // Banco de dados (Aiven MySQL) — campos separados, é o que o server.js realmente usa

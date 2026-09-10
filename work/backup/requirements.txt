@@ -4,4 +4,3 @@ chromadb
 sentence-transformers
 beautifulsoup4
 google-generativeai
-pymysql

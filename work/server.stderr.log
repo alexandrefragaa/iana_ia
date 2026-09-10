@@ -1,0 +1,4 @@
+⚠️ SENDGRID_API_KEY ausente — envio de e-mail desativado
+❌ MySQL erro: connect EACCES 137.184.120.170:12788
+❌ Migração da tabela conversas: connect EACCES 137.184.120.170:12788
+❌ Session store erro: connect EACCES 137.184.120.170:12788

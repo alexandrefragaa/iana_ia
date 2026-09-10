@@ -1,11 +1,7 @@
-import fs from "fs";
-
+import fs from 'node:fs';
+const file = new URL('./crawler/discovered_links.txt', import.meta.url);
 export function isDuplicate(link) {
-    const data = fs.readFileSync("./crawler/discovered_links.txt", "utf-8");
-    return data.includes(link);
+    if (!fs.existsSync(file)) return false;
+    return fs.readFileSync(file, 'utf8').split(/\r?\n/).some(line => line.trim().split(' | ').at(-1) === link);
 }
-
-export function saveLink(link) {
-    fs.appendFileSync("./crawler/discovered_links.txt", link + "\n");
-
-}
+export function saveLink(link) { fs.appendFileSync(file, link + '\n'); }

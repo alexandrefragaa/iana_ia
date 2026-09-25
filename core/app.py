@@ -11,7 +11,7 @@ def responder_ia():
     mensagem_usuario = dados.get("mensagem", "")
     
     # Lógica e personalidade da sua IA
-    resposta_ia = f"Olá! Sou a sua IA personalizada. Você disse: '{mensagem_usuario}'"
+    resposta_ia = f"Olá! Sou a IANA. Você me disse: '{mensagem_usuario}'"
     
     # Retorna o resultado formatado em JSON [8, 9]
     return jsonify({

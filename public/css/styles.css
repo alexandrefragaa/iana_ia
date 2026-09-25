@@ -1578,13 +1578,13 @@ select:focus-visible {
         width: 280px !important;
         min-width: 280px !important;
         z-index: 9999 !important;
-        transform: translateX(0);
+        transform: translateX(-100%);
         transition: transform .3s ease;
         box-shadow: 10px 0 30px rgba(0, 0, 0, .8);
     }
 
-    .sidebar.collapsed {
-        transform: translateX(-100%) !important;
+    .sidebar.mobile-open {
+        transform: translateX(0);
     }
 
     .sidebar .brand-name,

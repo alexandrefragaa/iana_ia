@@ -1,0 +1,9 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Iana | Visão local</title><link rel="stylesheet" href="style.css"></head><body>
+<header><a href="http://localhost:3333">Iana</a><span>VISÃO LOCAL · YOLO26</span></header>
+<main><h1>Acompanhe o jogo na sua máquina</h1><p class="intro">Escolha a janela do jogo. A detecção roda localmente, sem enviar imagens para serviços de IA na nuvem.</p>
+<section class="controls"><label>Jogo instalado<select id="game"><option value="">Selecionar jogo</option></select></label><label>Ou informe o jogo<input id="manual-game" placeholder="Nome do jogo"></label><button id="prepare">Preparar detector</button><button id="start" disabled>Compartilhar janela do jogo</button><button id="stop" disabled>Parar</button></section>
+<p id="status" role="status">Detector ainda não iniciado.</p><div class="metrics"><span id="latency">Atraso: —</span><span id="device">Dispositivo: —</span><span id="count">Objetos: —</span></div>
+<section class="viewer"><video id="video" muted playsinline></video><canvas id="overlay"></canvas><p id="empty">A prévia aparece depois que você escolher uma janela.</p></section>
+<p class="notice">Modelo genérico: as caixas indicam objetos visíveis, não rotas ou itens de missão confirmados. Um caminho fora da tela não pode ser deduzido apenas pela detecção. Compatibilidade offline de cada jogo ainda precisa ser verificada.</p>
+<section class="goals"><h2>Objetivos da sessão</h2><p>Marque o progresso manualmente. Troféus não são confirmados automaticamente.</p><form id="goal-form"><input id="goal" maxlength="200" placeholder="Ex.: encontrar o próximo ponto de descanso" required><button>Adicionar objetivo</button></form><ul id="goals"></ul></section>
+</main><script src="app.js"></script></body></html>

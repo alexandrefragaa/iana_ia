@@ -7,7 +7,9 @@
     "start": "node server.js",
     "scrape-learning": "python core/scrape_learning.py",
     "test": "node --test tests/*.test.js",
-    "pipeline": "node run.pipeline.js"
+    "pipeline": "node run.pipeline.js",
+    "vision": "node vision-server.js",
+    "vision:setup": "node setup-vision.js"
   },
   "dependencies": {
     "@google/genai": "^2.16.0",

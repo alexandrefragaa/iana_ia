@@ -305,6 +305,7 @@
    ========================================================================== */
 
 #sidebar-toggle {
+    flex-shrink: 0;
     position: relative;
     display: flex;
     align-items: center;
@@ -347,7 +348,7 @@
 }
 
 .sidebar.collapsed .brand {
-    justify-content: center;
+    display: none;
 }
 
 .sidebar.collapsed .btn-novo-chat,
@@ -369,7 +370,7 @@
    ========================================================================== */
 
 #topbar-menu-toggle {
-    display: none;
+    display: flex;
     width: 38px;
     height: 38px;
     border: none;
@@ -449,19 +450,6 @@
         height: 20px;
     }
 
-    .sidebar {
-        position: fixed;
-        z-index: 1000;
-        left: 0;
-        top: 0;
-        bottom: 0;
-        transform: translateX(-100%);
-        transition: transform .3s ease;
-    }
-
-    .sidebar.mobile-open {
-        transform: translateX(0);
-    }
 }
 
 /* ==========================================================================

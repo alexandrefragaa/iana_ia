@@ -1,0 +1,19 @@
+{
+  "settings_version": "0.0.8",
+  "datasets_dir": "C:\\datasets",
+  "weights_dir": "C:\\ia_platina\\weights",
+  "runs_dir": "C:\\ia_platina\\runs",
+  "uuid": "8350c03a4c6634d06b7f217e70f5fe497f19f316cdaba04e3158e1618f397e86",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "mlflow": true,
+  "raytune": true,
+  "tensorboard": false,
+  "wandb": false,
+  "vscode_msg": true,
+  "openvino_msg": true
+}

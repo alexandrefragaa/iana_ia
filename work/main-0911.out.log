@@ -1,0 +1,7 @@
+◇ injected env (19) from  // tip: ⌘ override existing { override: true }
+[DEBUG] ALLOWED_ORIGINS = undefined
+✅ Gemini inicializado
+🚀 Iana rodando na porta 3333
+✅ MySQL conectado: defaultdb
+✅ Session store (MySQL) pronto
+[CHAT] origem=gemini-node

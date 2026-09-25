@@ -2852,6 +2852,7 @@ function renderizarHistorico(conversas) {
                 type="button"
                 class="historico-menu-btn"
                 aria-label="Opções"
+                aria-expanded="false"
                 data-menu-id="${escaparHTML(id)}"
             >
                 ⋮
@@ -2900,6 +2901,7 @@ function renderizarHistorico(conversas) {
             btn.addEventListener(
                 'click',
                 () => {
+                    fecharMenusHistorico();
                     abrirConversa(
                         btn.dataset.id
                     );
@@ -2920,6 +2922,9 @@ function renderizarHistorico(conversas) {
 
                     const id =
                         btn.dataset.menuId;
+                    const abrir = btn.getAttribute('aria-expanded') !== 'true';
+                    fecharMenusHistorico();
+                    btn.setAttribute('aria-expanded', String(abrir));
 
                     document
                         .querySelectorAll(
@@ -2930,11 +2935,7 @@ function renderizarHistorico(conversas) {
                                 menu.dataset.acoesId ===
                                 id
                             ) {
-                                menu.style.display =
-                                    menu.style.display ===
-                                    'block'
-                                        ? 'none'
-                                        : 'block';
+                                menu.style.display = abrir ? 'block' : 'none';
                             } else {
                                 menu.style.display =
                                     'none';
@@ -2955,6 +2956,7 @@ function renderizarHistorico(conversas) {
                 () => {
                     const acao =
                         btn.dataset.acao;
+                    fecharMenusHistorico();
 
                     const id =
                         btn.dataset.id;
@@ -2975,6 +2977,15 @@ function renderizarHistorico(conversas) {
         });
 }
 
+
+function fecharMenusHistorico() {
+    document.querySelectorAll('.historico-acoes').forEach(menu => {
+        menu.style.display = 'none';
+    });
+    document.querySelectorAll('.historico-menu-btn').forEach(btn => {
+        btn.setAttribute('aria-expanded', 'false');
+    });
+}
 
 async function abrirConversa(id) {
     if (!id) {
@@ -4006,27 +4017,59 @@ function iniciarSidebar() {
         return;
     }
 
-    const alternarSidebar =
-        () => {
-            const fechado =
-                sidebar.classList.toggle(
-                    'collapsed'
-                );
+    const mobile = window.matchMedia('(max-width: 768px)');
+    const backdrop = document.createElement('div');
+    backdrop.className = 'sidebar-overlay';
+    backdrop.setAttribute('aria-hidden', 'true');
+    sidebar.before(backdrop);
+    let desktopCollapsed = sidebar.classList.contains('collapsed');
 
-            if (topbarMenu) {
-                topbarMenu.title =
-                    fechado
-                        ? 'Abrir menu'
-                        : 'Fechar menu';
-
-                topbarMenu.setAttribute(
-                    'aria-label',
-                    fechado
-                        ? 'Abrir menu'
-                        : 'Fechar menu'
-                );
-            }
-        };
+    const atualizarSidebar = () => {
+        const aberto = mobile.matches
+            ? sidebar.classList.contains('mobile-open')
+            : !sidebar.classList.contains('collapsed');
+        sidebar.inert = mobile.matches && !aberto;
+        backdrop.classList.toggle('ativo', mobile.matches && aberto);
+        for (const button of [topbarMenu, sidebarToggle]) {
+            if (!button) continue;
+            button.title = aberto ? 'Fechar menu' : 'Abrir menu';
+            button.setAttribute('aria-label', button.title);
+            button.setAttribute('aria-controls', 'sidebar');
+            button.setAttribute('aria-expanded', String(aberto));
+        }
+    };
+    const fecharMobile = () => {
+        if (!mobile.matches || !sidebar.classList.contains('mobile-open')) return;
+        sidebar.classList.remove('mobile-open');
+        fecharMenusHistorico();
+        topbarMenu?.focus();
+        atualizarSidebar();
+    };
+    const ajustarTela = () => {
+        sidebar.classList.remove('mobile-open');
+        sidebar.classList.toggle('collapsed', !mobile.matches && desktopCollapsed);
+        if (mobile.matches && sidebar.contains(document.activeElement)) topbarMenu?.focus();
+        atualizarSidebar();
+    };
+    const alternarSidebar = () => {
+        if (mobile.matches) {
+            if (sidebar.classList.contains('mobile-open')) return fecharMobile();
+            sidebar.classList.add('mobile-open');
+        } else {
+            desktopCollapsed = sidebar.classList.toggle('collapsed');
+        }
+        atualizarSidebar();
+        if (mobile.matches) sidebarToggle?.focus();
+    };
+    backdrop.addEventListener('click', fecharMobile);
+    sidebar.addEventListener('click', event => {
+        if (event.target.closest('.historico-conversa, #btn-novo-chat, a')) fecharMobile();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') fecharMobile();
+    });
+    mobile.addEventListener('change', ajustarTela);
+    ajustarTela();
 
     sidebarToggle?.addEventListener(
         'click',
@@ -4346,6 +4389,11 @@ function iniciarEventosHistorico() {
 ================================================================ */
 
 function iniciarEventosGlobais() {
+    document.addEventListener('click', event => {
+        if (!event.target.closest('.historico-acoes, .historico-menu-btn')) {
+            fecharMenusHistorico();
+        }
+    });
     document.addEventListener(
         'keydown',
         event => {
@@ -4353,6 +4401,9 @@ function iniciarEventosGlobais() {
                 event.key ===
                 'Escape'
             ) {
+                const menuAberto = document.querySelector('.historico-menu-btn[aria-expanded="true"]');
+                fecharMenusHistorico();
+                menuAberto?.focus();
                 const auth =
                     obterElemento(
                         'overlay-auth'

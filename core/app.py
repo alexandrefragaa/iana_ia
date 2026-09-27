@@ -58,9 +58,9 @@ app = Flask(__name__)
 API_VERSION = "1.0.0"
 
 IANA_API_KEY = os.getenv("IANA_API_KEY", "iana-v1-secret").strip()
-if not IANA_API_KEY:
-    logger.error("❌ IANA_API_KEY não definida no .env — a API não pode iniciar sem ela.")
-    sys.exit(1)
+
+if not IANA_API_KEY: logger.error("❌ IANA\_API\_KEY não definida no .env — a API não pode iniciar sem ela.")
+sys.exit(1)
 
 # System Prompt Base
 SYSTEM_PROMPT_GAMER = """

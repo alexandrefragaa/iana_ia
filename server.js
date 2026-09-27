@@ -8,1043 +8,348 @@ import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import sgMail from '@sendgrid/mail';
-import { readPublicHTML } from './core/safe-links.js';
-import * as cheerio from 'cheerio';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import crypto from 'crypto';
-import WebSocket from 'ws'; // npm install ws — cliente WS pra falar com a ElevenLabs
 
-import { pythonExecutable, ensureConversation, attachmentPart, escapeHTML } from './core/runtime.js';
-
-dotenv.config({ path: new URL('.env', import.meta.url) });
-
-console.log('[DEBUG] ALLOWED_ORIGINS =', JSON.stringify(process.env.ALLOWED_ORIGINS));
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
-const app        = express();
-const codigos    = new Map();
+const __dirname = path.dirname(__filename);
 
+const app = express();
+const server = http.createServer(app);
 
-if (!process.env.SESSION_SECRET) {
-    console.error('❌ SESSION_SECRET não definido no .env'); process.exit(1);
-}
+/* ================================================================
+   1. CONFIGURAÇÃO DE SEGURANÇA E AMBIENTE
+   ================================================================ */
+const PORT = process.env.PORT || 3333;
+const PYTHON_API_URL = process.env.PYTHON_API_URL || 'http://localhost:5000/api/v1/chat';
+const IANA_API_KEY = process.env.IANA_API_KEY || 'iana-v1-secret';
+const SESSION_SECRET = process.env.SESSION_SECRET || 'iana-super-secret-key';
 
-const MySQLStore = MySQLStoreFactory(session);
-
-/* ── MIDDLEWARES BÁSICOS ──────────────────────────────────────── */
+/* ================================================================
+   2. MIDDLEWARES BÁSICOS E CORS
+   ================================================================ */
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 app.set('trust proxy', 1);
 
-const origensPermitidas = (process.env.ALLOWED_ORIGINS || 'http://localhost:3333').split(',').map(o => o.trim());
+const origensPermitidas = (process.env.ALLOWED_ORIGINS || 'http://localhost:3333,http://localhost:3000')
+  .split(',')
+  .map(o => o.trim());
+
 app.use(cors({
-    origin: (origin, cb) => {
-        if (!origin || origensPermitidas.includes(origin)) return cb(null, true);
-        console.warn(`[CORS] Origem bloqueada: ${origin}`);
-        return cb(new Error('Origem não permitida por CORS'));
-    },
-    credentials: true
+  origin: (origin, callback) => {
+    if (!origin || origensPermitidas.includes(origin)) {
+      return callback(null, true);
+    }
+    console.warn(`[CORS] Origem bloqueada: ${origin}`);
+    return callback(new Error('Origem não permitida por CORS'));
+  },
+  credentials: true
 }));
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-/* ── MYSQL ────────────────────────────────────────────────────── */
+/* ================================================================
+   3. BANCO DE DADOS MYSQL & SESSÃO PERSISTENTE
+   ================================================================ */
 const dbConfig = {
-    host:     process.env.DB_HOST || 'mysql-7ddcebe.aivencloud.com',
-    port:     process.env.DB_PORT ? Number(process.env.DB_PORT) : 12788,
-    user:     process.env.DB_USER || 'avnadmin',
-    password: process.env.DB_PASS || '',
-    database: process.env.DB_NAME || 'defaultdb',
-    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined
+  host: process.env.DB_HOST || '127.0.0.1',
+  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || process.env.DB_PASS || '',
+  database: process.env.DB_NAME || 'iana_db',
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : undefined
 };
 
 const pool = mysql.createPool({
-    ...dbConfig,
-    waitForConnections: true,
-    connectionLimit: 10
+  ...dbConfig,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-async function garantirColunaAtualizacaoConversas() {
-    try {
-        const [colunas] = await pool.query(
-            'SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND COLUMN_NAME=?',
-            [dbConfig.database, 'conversas', 'atualizado_em']
-        );
-        if (!colunas.length) {
-            await pool.query(
-                'ALTER TABLE conversas ADD COLUMN atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'
-            );
-        }
-    } catch (e) {
-        console.error('❌ Migração da tabela conversas:', e.message);
-    }
-}
-
-garantirColunaAtualizacaoConversas();
-
+// Teste inicial de conexão MySQL
 (async () => {
-    try {
-        const conn = await pool.getConnection();
-        console.log(`✅ MySQL conectado: ${process.env.DB_NAME}`);
-        conn.release();
-    } catch (e) {
-        console.error('❌ MySQL erro:', e.message);
-    }
+  try {
+    const conn = await pool.getConnection();
+    console.log(`✅ MySQL conectado com sucesso: ${dbConfig.database}`);
+    conn.release();
+  } catch (err) {
+    console.error(`⚠️ Alerta MySQL: Não foi possível conectar ao banco (${err.message}). Operando com fallback.`);
+  }
 })();
 
-/* ── SESSÃO (persistente no MySQL — sobrevive a restart/sleep do Render) ── */
+const MySQLStore = MySQLStoreFactory(session);
 const sessionStore = new MySQLStore(dbConfig);
-if (typeof sessionStore.onReady === 'function') {
-    sessionStore.onReady()
-        .then(() => console.log('✅ Session store (MySQL) pronto'))
-        .catch(e => console.error('❌ Session store erro:', e.message));
-} else {
-    console.log('✅ Session store (MySQL) inicializado');
-}
 
 const sessionMiddleware = session({
-    secret: process.env.SESSION_SECRET,
-    store: sessionStore,
-    resave: false,
-    saveUninitialized: false,
-    rolling: true,
-    name: 'iana.sid',
-    cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        httpOnly: true,
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000
-    }
+  secret: SESSION_SECRET,
+  store: sessionStore,
+  resave: false,
+  saveUninitialized: false,
+  rolling: true,
+  name: 'iana.sid',
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 dias
+  }
 });
 
 app.use(sessionMiddleware);
 app.use(passport.initialize());
 app.use(passport.session());
 
-/* ── SOCKET.IO (voz em tempo real + sessão de visão) ─────────────── */
-const server = http.createServer(app);
-const io = new SocketIOServer(server, {
-    cors: { origin: origensPermitidas, credentials: true }
-});
+/* ================================================================
+   4. AUTENTICAÇÃO (PASSPORT LOCAL STRATEGY)
+   ================================================================ */
+passport.use(new LocalStrategy({ usernameField: 'email' }, async (email, senha, done) => {
+  try {
+    const emailT = email.trim().toLowerCase();
+    const [rows] = await pool.query('SELECT * FROM usuarios WHERE email = ?', [emailT]);
+    if (!rows.length) return done(null, false, { message: 'E-mail ou senha incorretos.' });
 
-io.engine.use((req, res, next) => sessionMiddleware(req, res, next));
-io.use((socket, next) => {
-    passport.initialize()(socket.request, {}, () => {
-        passport.session()(socket.request, {}, () => {
-            // Voz também funciona para visitantes; apenas o histórico
-            // persistente continua restrito a usuários autenticados.
-            next();
-        });
-    });
-});
+    const usuario = rows[0];
+    const senhaValida = await bcrypt.compare(senha.trim(), usuario.senha);
+    if (!senhaValida) return done(null, false, { message: 'E-mail ou senha incorretos.' });
 
-/* ── GEMINI (texto) ───────────────────────────────────────────── */
-let genAI = null;
-try {
-    if (process.env.GEMINI_API_KEY) {
-        genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        console.log('✅ Gemini inicializado');
-    } else {
-        console.warn('⚠️ GEMINI_API_KEY ausente — usando fallback');
-    }
-} catch (e) { console.error('❌ Gemini erro:', e.message); }
+    return done(null, { id: usuario.id, nome: usuario.nome, email: usuario.email });
+  } catch (err) {
+    return done(err);
+  }
+}));
 
-/* ── ELEVENLABS (voz da chamada) ──────────────────────────────────
-   A voz de verdade da Iana (a que você modelou) só existe aqui, no
-   backend. O Gemini só gera o TEXTO da resposta (rápido, modo
-   normal); esse texto é mandado pra ElevenLabs, que devolve áudio
-   PCM 16-bit 24kHz em pedacinhos via WebSocket — cada pedaço já sai
-   pro navegador assim que chega, sem esperar a fala inteira ficar
-   pronta. */
-const ELEVEN_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || '42swcOVaxVM4TNSGUmkc';
-const ELEVEN_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2';
-const ELEVEN_API_KEY = (process.env.ELEVENLABS_API_KEY_SECRET || process.env.ELEVENLABS_API_KEY || '')
-    .trim()
-    .replace(/^['"]|['"]$/g, '');
+passport.serializeUser((user, done) => done(null, user.id));
 
-if (ELEVEN_API_KEY && !ELEVEN_API_KEY.startsWith('sk_')) {
-    console.error('❌ ELEVENLABS_API_KEY inválida: use a API key secreta que começa com sk_.');
-}
-
-function falarComElevenLabs(texto, { onAudioChunk, onFim, onErro, emocao = 'normal' }) {
-    if (!ELEVEN_API_KEY) {
-        onErro(new Error('ELEVENLABS_API_KEY não configurada no servidor.'));
-        return;
-    }
-    if (!ELEVEN_API_KEY.startsWith('sk_')) {
-        onErro(new Error('A credencial ElevenLabs configurada é um Key ID, não uma API key secreta.'));
-        return;
-    }
-    if (!texto?.trim()) { onFim(); return; }
-
-    const url = `wss://api.elevenlabs.io/v1/text-to-speech/${ELEVEN_VOICE_ID}/stream-input`
-        + `?model_id=${encodeURIComponent(ELEVEN_MODEL_ID)}&output_format=pcm_24000`;
-
-    let finalizado = false;
-    const ws = new WebSocket(url, { headers: { 'xi-api-key': ELEVEN_API_KEY } });
-
-    const timeout = setTimeout(() => {
-        if (finalizado) return;
-        finalizado = true;
-        try { ws.close(); } catch (e) { }
-        onErro(new Error('Timeout esperando áudio da ElevenLabs.'));
-    }, 20000);
-
-    ws.on('open', () => {
-        // 1ª mensagem: configura a voz. 2ª: o texto de verdade.
-        // 3ª (texto vazio): sinaliza pro servidor deles que acabou —
-        // sem isso a conexão fica esperando mais texto pra sempre.
-        const ajustesVoz = {
-            triste: { stability: 0.72, similarity_boost: 0.8, style: 0.2, speed: 0.9, use_speaker_boost: true },
-            raiva: { stability: 0.34, similarity_boost: 0.8, style: 0.55, speed: 1.05, use_speaker_boost: true },
-            alegre: { stability: 0.42, similarity_boost: 0.8, style: 0.65, speed: 1.08, use_speaker_boost: true },
-            entediada: { stability: 0.78, similarity_boost: 0.8, style: 0.12, speed: 0.9, use_speaker_boost: true },
-            normal: { stability: 0.5, similarity_boost: 0.8, style: 0.35, speed: 1, use_speaker_boost: true }
-        }[emocao] || { stability: 0.5, similarity_boost: 0.8, style: 0.35, speed: 1, use_speaker_boost: true };
-
-        ws.send(JSON.stringify({
-            text: ' ',
-            voice_settings: ajustesVoz,
-            generation_config: { chunk_length_schedule: [50, 80, 120, 160] }
-        }));
-        // Frases curtas precisam de flush para vencer o limite inicial do buffer.
-        ws.send(JSON.stringify({ text: `${texto.trim()} `, flush: true }));
-        // Finaliza a entrada para a ElevenLabs emitir isFinal.
-        ws.send(JSON.stringify({ text: '' }));
-    });
-
-    ws.on('message', (data) => {
-        try {
-            const msg = JSON.parse(data.toString());
-            if (msg.audio) onAudioChunk(msg.audio); // já vem em base64, PCM cru
-            if (msg.error) {
-                if (finalizado) return;
-                finalizado = true;
-                clearTimeout(timeout);
-                onErro(new Error(msg.message || 'A ElevenLabs recusou a geração de áudio.'));
-                try { ws.close(); } catch (e) { }
-                return;
-            }
-            if (msg.isFinal) {
-                if (finalizado) return;
-                finalizado = true;
-                clearTimeout(timeout);
-                onFim();
-                try { ws.close(); } catch (e) { }
-            }
-        } catch (e) {
-            if (finalizado) return;
-            finalizado = true;
-            clearTimeout(timeout);
-            onErro(e);
-        }
-    });
-
-    ws.on('error', (e) => {
-        if (finalizado) return;
-        finalizado = true;
-        clearTimeout(timeout);
-        onErro(e);
-    });
-
-    return ws;
-}
-
-function prepararTextoFalado(texto) {
-    return String(texto || '')
-        .replace(/```[\s\S]*?```/g, '')
-        .replace(/[#*_>`~-]+/g, '')
-        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-        .replace(/https?:\/\/\S+/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-/* ── SOCKET.IO: eventos de voz e visão ────────────────────────── */
-const historicoVozPorSocket = new Map(); // socket.id -> estado e últimas falas da chamada
-const ttsPorSocket = new Map();
-
-const SYSTEM_PROMPT_VOZ =
-    'Você está numa CHAMADA DE VOZ em tempo real (não é chat de texto). ' +
-    'Converse de forma espontânea, humana e contextual, como numa ligação ' +
-    'real. Escute a intenção, use o histórico da conversa e responda ao que ' +
-    'foi dito, sem frases prontas, saudações repetidas ou respostas genéricas. ' +
-    'Se a pessoa mudar de assunto, acompanhe naturalmente. Seja breve quando ' +
-    'a fala for simples e desenvolva quando necessário. RESPONDA SEMPRE EM ' +
-    'PORTUGUÊS DO BRASIL.';
-
-io.on('connection', (socket) => {
-    const idUser = socket.request.user?.id;
-    if (idUser) socket.join(`user_${idUser}`);
-
-    /* ── CHAMADA DE VOZ ──────────────────────────────────────────
-       Fluxo: o navegador transcreve sua fala (SpeechRecognition) e
-       manda só o TEXTO final aqui via 'voz:texto'. O servidor gera a
-       resposta em texto (Gemini) e já manda pra ElevenLabs virar
-       áudio com a voz modelada, streamando os pedaços de volta. */
-    socket.on('voz:iniciar', async (dados = {}) => {
-        const idConversa = dados.idConversa || null;
-        let historico = [];
-
-        if (socket.request.user?.id && idConversa) {
-            try {
-                const [r] = await pool.query(
-                    'SELECT mensagem, remetente FROM mensagens WHERE conversa_id=? AND usuario_id=? ORDER BY id DESC LIMIT 8',
-                    [idConversa, socket.request.user.id]
-                );
-                historico = r.reverse();
-            } catch (e) {
-                console.error('[DB histórico voz]', e.message);
-            }
-        }
-
-        historicoVozPorSocket.set(socket.id, { idConversa, historico });
-        socket.emit('voz:pronto');
-    });
-
-    socket.on('voz:texto', async (textoRecebido) => {
-        const msg = String(textoRecebido || '').trim();
-        if (!msg) return;
-        if (msg.length > 2000) {
-            socket.emit('voz:erro', { mensagem: 'Fala muito longa.' });
-            return;
-        }
-
-        const previous = historicoVozPorSocket.get(socket.id);
-        if (previous?.busy) return socket.emit('voz:erro', { mensagem: 'Aguarde a resposta atual.' });
-        const nome = socket.request.user?.nome || 'Visitante';
-        const emocao = detectarEmocaoVoz(msg);
-        const estado = historicoVozPorSocket.get(socket.id) || { idConversa: null, historico: [], turno: 0 };
-        estado.turno = (estado.turno || 0) + 1;
-        const turnoAtual = estado.turno;
-        const ttsAnterior = ttsPorSocket.get(socket.id);
-        if (ttsAnterior) {
-            ttsAnterior.close();
-            ttsPorSocket.delete(socket.id);
-        }
-        const historico = estado.historico || [];
-        estado.busy = true;
-        historicoVozPorSocket.set(socket.id, estado);
-        try {
-        const idConversa = await garantirConversa(
-            socket.request.user?.id || null,
-            estado.idConversa,
-            msg
-        );
-        estado.idConversa = idConversa;
-
-            const resposta = await gerarRespostaIA({
-                nome,
-                idConv: idConversa,
-                msg,
-                historico,
-                humor: emocao,
-                config: `${SYSTEM_PROMPT_VOZ}\n\n[ADAPTAÇÃO EMOCIONAL]: ${instrucaoEmocaoVoz(emocao)}`,
-                modoVoz: true
-            });
-
-            if (!socket.connected || historicoVozPorSocket.get(socket.id) !== estado || estado.turno !== turnoAtual) return;
-            historico.push({ remetente: 'user', mensagem: msg });
-            historico.push({ remetente: 'iana', mensagem: resposta });
-            estado.historico = historico.slice(-10);
-            historicoVozPorSocket.set(socket.id, estado);
-
-            if (socket.request.user?.id && idConversa) {
-                await pool.query(
-                    'INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)',
-                    [idConversa, socket.request.user.id, 'user', msg]
-                );
-                await pool.query(
-                    'INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)',
-                    [idConversa, socket.request.user.id, 'iana', resposta]
-                );
-            }
-
-            const textoFalado = prepararTextoFalado(resposta);
-            socket.emit('voz:transcricao-iana', { texto: textoFalado, conversa_id: idConversa });
-
-            const ttsAtual = falarComElevenLabs(textoFalado, {
-                emocao,
-                onAudioChunk: (base64) => {
-                    if (estado.turno === turnoAtual) socket.emit('voz:audio-resposta', { audio: base64 });
-                },
-                onFim: () => {
-                    if (estado.turno === turnoAtual) {
-                        ttsPorSocket.delete(socket.id);
-                        socket.emit('voz:fala-finalizada');
-                    }
-                },
-                onErro: (e) => {
-                    ttsPorSocket.delete(socket.id);
-                    console.error('[ELEVENLABS]', e.message);
-                    socket.emit('voz:erro', { mensagem: `Erro ao gerar a voz da Iana: ${e.message}` });
-                }
-            });
-            ttsPorSocket.set(socket.id, ttsAtual);
-        } catch (e) {
-            console.error('[VOZ TEXTO]', e.message);
-            socket.emit('voz:erro', { mensagem: 'Erro ao processar sua fala.' });
-        } finally { estado.busy = false; }
-    });
-
-    // Você começou a falar em cima da fala dela — o navegador já
-    // detecta e para de tocar sozinho; esse evento só existe pra
-    // avisar o servidor caso ele precise abortar algo em andamento.
-    socket.on('voz:interromper', () => {
-        const ttsAtual = ttsPorSocket.get(socket.id);
-        if (ttsAtual) {
-            ttsAtual.close();
-            ttsPorSocket.delete(socket.id);
-        }
-        const estado = historicoVozPorSocket.get(socket.id);
-        if (estado) estado.turno = (estado.turno || 0) + 1;
-        socket.emit('voz:interrompido');
-    });
-
-    socket.on('voz:encerrar', () => {
-        ttsPorSocket.get(socket.id)?.close();
-        ttsPorSocket.delete(socket.id);
-        historicoVozPorSocket.delete(socket.id);
-    });
-
-    socket.on('disconnect', () => {
-        ttsPorSocket.get(socket.id)?.close();
-        ttsPorSocket.delete(socket.id);
-        historicoVozPorSocket.delete(socket.id);
-    });
-});
-
-/* ── SENDGRID ─────────────────────────────────────────────────── */
-let sendgridPronto = false;
-if (process.env.SENDGRID_API_KEY) {
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    sendgridPronto = true;
-    console.log('✅ SendGrid inicializado');
-} else {
-    console.warn('⚠️ SENDGRID_API_KEY ausente — envio de e-mail desativado');
-}
-
-const LOCAL_ONLY = process.env.IANA_LOCAL_ONLY === 'true';
-if (LOCAL_ONLY) {
-    console.log('⚠️ IANA_LOCAL_ONLY ativado — respostas sem Gemini / Google / ChatGPT');
-}
-
-function detectarHumor(texto) {
-    if (!texto) return 'normal';
-    const letras = (texto.match(/[A-Za-z]/g) || []).length;
-    const caps   = (texto.match(/[A-Z]/g) || []).length;
-    const pct    = letras > 0 ? (caps / letras) * 100 : 0;
-    if (pct > 70 || /\*{4,}/.test(texto)) return 'raiva';
-    if (/!{2,}|\?{2,}/.test(texto)) return 'estressado';
-    return 'normal';
-}
-
-function detectarEmocaoVoz(texto) {
-    const msg = String(texto || '').toLowerCase();
-    const letras = (msg.match(/[a-záàâãéêíóôõúç]/gi) || []).length;
-    const caps = (texto.match(/[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]/g) || []).length;
-    const intensidade = letras ? caps / letras : 0;
-
-    if (/\b(odeio|raiva|irritad|absurdo|merda|droga|porra|caramba|inacreditável)\b/.test(msg) || intensidade > 0.55 || /!{2,}/.test(msg)) return 'raiva';
-    if (/\b(triste|tristesa|chorando|chorei|sozinho|solidão|mal hoje|desanimad|deprimid|perdi)\b/.test(msg)) return 'triste';
-    if (/\b(entediad|tédio|sem graça|cansad|não aguento mais|que saco)\b/.test(msg)) return 'entediada';
-    if (/\b(feliz|felicidade|animad|alegre|adorei|incrível|perfeito|boa notícia|haha|kkkk|rsrs)\b/.test(msg) || /!/.test(msg)) return 'alegre';
-    return 'normal';
-}
-
-function instrucaoEmocaoVoz(emocao) {
-    return {
-        triste: 'A pessoa parece triste. Acolha com calma e calor humano, sem dramatizar nem usar frases prontas.',
-        raiva: 'A pessoa parece irritada. Mantenha serenidade, reconheça a frustração e seja útil sem confrontar.',
-        alegre: 'A pessoa está alegre. Acompanhe a energia com naturalidade, sem exagerar nem parecer artificial.',
-        entediada: 'A pessoa parece entediada ou cansada. Seja mais dinâmica e interessante, sem forçar entusiasmo.',
-        normal: 'Converse normalmente, acompanhando o ritmo e o estilo da pessoa sem imitar de forma caricata.'
-    }[emocao] || 'Converse normalmente, com naturalidade e contexto.';
-}
-
-function instrucaoHumor(humor) {
-    return {
-        raiva:      'O usuário está irritado. Responda com empatia, calma, sem ser seco.',
-        estressado: 'O usuário está estressado. Responda com leveza e tranquilidade.',
-        // FIX: 'frustrado' vem do detectarEstadoEmocional() do
-        // features.js (agora enviado pelo chat.js em estadoEmocional),
-        // mas essa função não reconhecia esse valor — caía no ||''
-        // e a instrução era ignorada silenciosamente.
-        frustrado:  'O usuário parece frustrado. Responda com paciência, sem soar impaciente ou repetitivo.',
-        normal:     ''
-    }[humor] || '';
-}
-
-const MODELOS = [
-    process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
-    'gemini-2.5-flash-lite',
-    'gemini-3.1-flash-lite',
-];
-
-async function chamarGemini(modelo, mensagem, historico, systemPrompt, modoVoz = false) {
-    const m = genAI.getGenerativeModel({ model: modelo, systemInstruction: systemPrompt });
-    const historicoGemini = [];
-    for (const item of historico || []) {
-        const role = item.remetente === 'iana' ? 'model' : 'user';
-        const texto = String(item.mensagem || '').trim();
-        if (!texto) continue;
-        if (!historicoGemini.length && role !== 'user') continue;
-        const anterior = historicoGemini[historicoGemini.length - 1];
-        if (anterior?.role === role) {
-            anterior.parts[0].text += `\n${texto}`;
-            continue;
-        }
-        historicoGemini.push({ role, parts: [{ text: texto }] });
-    }
-    const chat = m.startChat({
-        history: historicoGemini,
-        generationConfig: { maxOutputTokens: modoVoz ? 180 : 2048 }
-    });
-    const result = await chat.sendMessage(mensagem);
-    const txt = result.response.text();
-    if (!txt?.trim()) throw new Error('Resposta vazia');
-    return txt;
-}
-
-async function askGemini(mensagem, historico = [], instrucaoEmocional = '', configPrompt = '', modoVoz = false) {
-    if (LOCAL_ONLY) return null;
-    if (!genAI) return null;
-
-    const promptBaseVoz =
-        'Você é a Iana em uma conversa de voz ao vivo. Responda como uma pessoa natural, ' +
-        'espontânea e presente na conversa. Para cumprimentos simples, responda em uma frase ' +
-        'curta e casual, variando naturalmente entre “oi”, “olá”, “e aí” e “tudo bem?”. ' +
-        'Não faça discurso, não explique seu funcionamento, não dê textão e não transforme ' +
-        'cada fala em uma aula. Acompanhe o assunto e o ritmo da pessoa: desenvolva somente ' +
-        'quando ela pedir ou quando for necessário. Faça no máximo uma pergunta curta quando ' +
-        'isso fizer sentido e não repita perguntas. Use português brasileiro coloquial, sem ' +
-        'parecer roteirizada ou programada.';
-    const system = (modoVoz ? promptBaseVoz : (process.env.SYSTEM_PROMPT ||
-        'Você é a Iana, uma assistente gamer animada, criativa, humanizada e solidária. ' +
-        'Tem personalidade forte, fala naturalmente com gírias e emojis quando cabe. ' +
-        'É especialista em platinas, troféus, conquistas, builds, itens, localização de ' +
-        'objetos, rotas, itens, estratégias e chefões. Também adora falar sobre filmes, séries ' +
-        'e cultura nerd, games. ' +
-        'REGRA DE CONVERSA: Em cumprimentos, perguntas sobre como você está ou reflexões normais, seja super breve, natural, sem "textão" e apenas siga o fluxo da conversa. ' +
-        'Por outro lado, quando o usuário tiver uma dúvida de jogo e você tiver informações no contexto, usa TUDO para criar uma resposta completa, detalhada e útil, e mostra serviço. Nesse caso específico, sempre faz uma pergunta no final para continuar ajudando o usuário.'))
-        + (instrucaoEmocional ? `\n\n[TOM]: ${instrucaoEmocional}` : '')
-        + (configPrompt ? `\n\n[PERSONALIZAÇÃO]:\n${configPrompt}` : '');
-
-    for (const modelo of [...new Set(MODELOS)]) {
-        for (let t = 0; t < 2; t++) {
-            try {
-                return await chamarGemini(modelo, mensagem, historico, system, modoVoz);
-            } catch (err) {
-                const status = err?.status || '';
-                console.error(`[GEMINI] modelo=${modelo} tentativa=${t+1}:`, err.message);
-                if ([429, 503].includes(status) || /overloaded|unavailable/i.test(err.message)) {
-                    await new Promise(r => setTimeout(r, 800));
-                    continue;
-                }
-                break;
-            }
-        }
-    }
-    return null;
-}
-
-function respostaSistema(mensagem) {
-    const msg = mensagem.toLowerCase();
-    if (/^(oi|olá|ola|hey|bom dia|boa tarde|boa noite)[!?.\s]*$/.test(msg.trim()))
-        return `Opa, e aí! 👋 Tudo tranquilo por aí?`;
-    if (/como.*vai|tudo bem|tudo bom/.test(msg))
-        return `Tudo 100% por aqui! E com você, jogando algo legal hoje?`;
-    return `Opa, deu uma piscada rápida na minha conexão aqui. Me manda de novo rapidinho?`;
-}
-
-async function askPython(nome, conversa, mensagem, historico = [], configRaw = {}) {
-    return new Promise((resolve, reject) => {
-        const py = pythonExecutable(__dirname);
-        const historicoJSON = JSON.stringify(historico);
-        // FIX: iana.py lê argv[5] como o objeto de configuração
-        // (personalidade/foco/plataforma/voz/tamanho/emojis/instrucoes/
-        // sobreVoce/perguntas/humor/criatividade/contexto) via
-        // montar_config_prompt() — antes esse argumento nunca era
-        // mandado, então as configurações do usuário eram ignoradas
-        // sempre que o Python respondia com sucesso (o caminho
-        // principal, já que ele roda antes do fallback Gemini-node).
-        const configJSON = JSON.stringify(configRaw || {});
-        const proc = spawn(py, [path.join(__dirname, 'core', 'iana.py'), nome, conversa, mensagem, historicoJSON, configJSON], { cwd: __dirname, env: { ...process.env, PYTHONIOENCODING: 'utf-8', IANA_USER_ID: String(configRaw?._userId || ''), IANA_DB_PATH: process.env.IANA_DB_PATH || path.join(__dirname, 'database', 'chromadb') } });
-        let out = '', err = '';
-        proc.stdout.setEncoding('utf8');
-        proc.stderr.setEncoding('utf8');
-        let finalizado = false;
-
-        const timeout = setTimeout(() => {
-            if (finalizado) return;
-            finalizado = true;
-            proc.kill();
-            reject(new Error('Timeout: processo Python demorou demais (25s)'));
-        }, 25000);
-
-        proc.stdout.on('data', d => out += d.toString());
-        proc.stderr.on('data', d => err += d.toString());
-        proc.on('close', code => {
-            if (finalizado) return;
-            finalizado = true;
-            clearTimeout(timeout);
-            if (code !== 0 || !out.trim()) return reject(new Error(err || `exit ${code}`));
-            resolve(out.trim());
-        });
-        proc.on('error', e => {
-            if (finalizado) return;
-            finalizado = true;
-            clearTimeout(timeout);
-            reject(e);
-        });
-    });
-}
-
-/* Gera a resposta da IA reaproveitando a cadeia Python → Gemini → fixo.
-   Usado por /chat (texto) e pela chamada de voz (voz:texto). */
-async function gerarRespostaIA({ nome, idConv, msg, historico, humor, config, configRaw, modoVoz = false, anexo = null }) {
-    if (anexo) {
-        if (LOCAL_ONLY || !genAI) throw Object.assign(new Error('Análise de anexos indisponível: configure Gemini e desative o modo somente local.'), { status: 503 });
-        const model = genAI.getGenerativeModel({ model: MODELOS[0] });
-        const result = await model.generateContent([{ text: `${config || ''}\n${msg}` }, anexo]);
-        return result.response.text();
-    }
-    let resposta = null, origem = null;
-
-    if (!modoVoz && process.env.ENABLE_PYTHON !== 'false') {
-        try {
-            resposta = await askPython(nome, idConv || 'geral', msg, historico, configRaw);
-            origem = 'python';
-        } catch (e) { console.error('[Python] falhou, caindo pro Gemini via Node:', e.message); }
-    }
-    if (!resposta) {
-        resposta = await askGemini(msg, historico, instrucaoHumor(humor), config, modoVoz);
-        origem = resposta ? 'gemini-node' : origem;
-    }
-    if (!resposta) {
-        resposta = respostaSistema(msg);
-        origem = 'sistema-fixo';
-        if (LOCAL_ONLY) {
-            console.warn('[AVISO] Modo local ativo: usando resposta interna sem Gemini.');
-        } else {
-            console.warn('[AVISO] Python e Gemini falharam. Usando resposta do sistema.');
-        }
-    }
-    console.log(`[CHAT] origem=${origem}`);
-    return resposta;
-}
-
-/* ── LEITURA DE LINKS ─────────────────────────────────────────── */
-function extrairLinks(texto) {
-    const regex = /https?:\/\/[^\s<>"']+/gi;
-    const found = texto.match(regex) || [];
-    return [...new Set(found.map(u => u.replace(/[.,;:)\]}]+$/, '')))].slice(0, 3);
-}
-
-async function buscarConteudoLink(url) {
-    try {
-        const html = await readPublicHTML(url);
-        if (!html) return null;
-        const page = cheerio.load(html);
-        page('script,style,nav,footer,noscript,svg,iframe').remove();
-        const texto = page('body').text().replace(/\s+/g, ' ').trim();
-        return texto ? { url, titulo: page('title').first().text().trim(), texto: texto.slice(0,4000) } : null;
-    } catch (e) { console.warn('[LINK]', e.message); return null; }
-}
-
-async function montarContextoLinks(mensagem) {
-    const links = extrairLinks(mensagem);
-    if (!links.length) return '';
-    const resultados = await Promise.all(links.map(buscarConteudoLink));
-    const validos = resultados.filter(Boolean);
-    if (!validos.length) return '';
-    return validos.map(r => `[Conteúdo do link ${r.url} — "${r.titulo}"]:\n${r.texto}`).join('\n\n');
-}
-
-/* ── PASSPORT ─────────────────────────────────────────────────── */
-passport.use(new LocalStrategy(
-    { usernameField: 'email', passwordField: 'senha' },
-    async (email, senha, done) => {
-        try {
-            const [rows] = await pool.query('SELECT * FROM usuarios WHERE email=?', [email.trim().toLowerCase()]);
-            if (!rows.length) return done(null, false, { message: 'Credenciais inválidas.' });
-            const ok = await bcrypt.compare(senha.trim(), rows[0].senha || '');
-            if (!ok) return done(null, false, { message: 'Credenciais inválidas.' });
-            return done(null, rows[0]);
-        } catch (e) { return done(e); }
-    }
-));
-
-passport.serializeUser((u, done) => done(null, u.id));
 passport.deserializeUser(async (id, done) => {
-    try {
-        const [r] = await pool.query('SELECT id,nome,email FROM usuarios WHERE id=?', [id]);
-        done(null, r[0] || null);
-    } catch (e) { done(e); }
+  try {
+    const [rows] = await pool.query('SELECT id, nome, email FROM usuarios WHERE id = ?', [id]);
+    done(null, rows[0] || null);
+  } catch (err) {
+    done(err);
+  }
 });
 
-const auth = (req, res, next) => req.isAuthenticated() ? next() : res.status(401).json({ erro: 'Login necessário.' });
-
-function gerarToken() { return crypto.randomBytes(32).toString('hex'); }
-function hashToken(token) { return crypto.createHash('sha256').update(token).digest('hex'); }
-
-const authToken = async (req, res, next) => {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-    if (!token) return res.status(401).json({ erro: 'Token ausente.' });
-    try {
-        const [r] = await pool.query('SELECT id,nome,email FROM usuarios WHERE api_token_hash=?', [hashToken(token)]);
-        if (!r.length) return res.status(401).json({ erro: 'Token inválido.' });
-        req.user = r[0];
-        next();
-    } catch (e) { res.status(500).json({ erro: 'Erro de autenticação.' }); }
+// Middleware de verificação de autenticação
+const authRequired = (req, res, next) => {
+  if (req.isAuthenticated()) return next();
+  return res.status(401).json({ status: 'erro', mensagem: 'Login necessário para acessar este recurso.' });
 };
 
-/* ── RATE LIMIT ───────────────────────────────────────────────── */
-const chatLimiter = rateLimit({
-    windowMs: 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false,
-    message: { erro: 'Muitas mensagens em pouco tempo. Aguarde um instante.' }
-});
-
+// Rate Limiters para proteção contra força bruta
 const loginLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false,
-    message: { erro: 'Muitas tentativas de login. Tente novamente mais tarde.' }
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { status: 'erro', mensagem: 'Muitas tentativas. Tente novamente em 15 minutos.' }
 });
 
-const visionLimiter = rateLimit({
-    windowMs: 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false,
-    message: { erro: 'Muitas análises de tela em pouco tempo.' }
+const chatLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 30,
+  message: { status: 'erro', mensagem: 'Limite de mensagens atingido. Aguarde um momento.' }
 });
 
-/* ── PÁGINAS ──────────────────────────────────────────────────── */
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.get('/configuracoes', (req, res) => res.sendFile(path.join(__dirname, 'public', 'configuraçoes.html')));
+/* ================================================================
+   5. ROTAS DE AUTENTICAÇÃO E CONTA
+   ================================================================ */
+app.get('/health', (req, res) => res.json({ status: 'online', servico: 'Iana Node Server', timestamp: Date.now() }));
 
-app.use((req, res, next) => {
-    if (!req.body) req.body = {};
-    const fields = ['nome','email','senha','senhaAtual','novaSenha','nova_senha','codigo','feedback','titulo','resumo','conversa_id','id_conversa','idConversa'];
-    if (fields.some(key => req.body[key] != null && typeof req.body[key] !== 'string')) return res.status(400).json({ erro: 'Campos de texto inválidos.' });
-    next();
-});
-
-/* ── AUTH ─────────────────────────────────────────────────────── */
 app.post('/auth/registro', loginLimiter, async (req, res) => {
-    const { nome, email, senha } = req.body;
-    if (!nome || !email || !senha) return res.status(400).json({ erro: 'Preencha todos os campos.' });
-    if (senha.length < 8) return res.status(400).json({ erro: 'Senha mínima: 8 caracteres.' });
-    const emailT = email.trim().toLowerCase();
-    try {
-        const [ex] = await pool.query('SELECT id FROM usuarios WHERE email=?', [emailT]);
-        if (ex.length) return res.status(409).json({ erro: 'E-mail já cadastrado.' });
-        const hash = await bcrypt.hash(senha.trim(), 12);
-        const [r] = await pool.query('INSERT INTO usuarios (nome,email,senha) VALUES (?,?,?)', [nome.trim(), emailT, hash]);
-        const [u] = await pool.query('SELECT id,nome,email FROM usuarios WHERE id=?', [r.insertId]);
-        req.login(u[0], err => {
-            if (err) return res.status(500).json({ erro: 'Erro de sessão.' });
-            res.status(201).json({ usuario: u[0] });
-        });
-    } catch (e) { console.error('[REGISTRO]', e.message); res.status(500).json({ erro: 'Erro interno.' }); }
+  const { nome, email, senha } = req.body;
+  if (!nome || !email || !senha) return res.status(400).json({ status: 'erro', mensagem: 'Preencha todos os campos.' });
+  if (senha.length < 8) return res.status(400).json({ status: 'erro', mensagem: 'A senha deve ter no mínimo 8 caracteres.' });
+
+  const emailT = email.trim().toLowerCase();
+  try {
+    const [existentes] = await pool.query('SELECT id FROM usuarios WHERE email = ?', [emailT]);
+    if (existentes.length) return res.status(409).json({ status: 'erro', mensagem: 'E-mail já cadastrado.' });
+
+    const hash = await bcrypt.hash(senha.trim(), 12);
+    const [resultado] = await pool.query('INSERT INTO usuarios (nome, email, senha) VALUES (?, ?, ?)', [nome.trim(), emailT, hash]);
+    
+    const novoUsuario = { id: resultado.insertId, nome: nome.trim(), email: emailT };
+    req.login(novoUsuario, (err) => {
+      if (err) return res.status(500).json({ status: 'erro', mensagem: 'Erro de sessão.' });
+      return res.status(201).json({ status: 'sucesso', usuario: novoUsuario });
+    });
+  } catch (err) {
+    console.error('[AUTH REGISTRO]', err);
+    return res.status(500).json({ status: 'erro', mensagem: 'Erro interno ao registrar usuário.' });
+  }
 });
 
 app.post('/auth/login', loginLimiter, (req, res, next) => {
-    passport.authenticate('local', (err, usuario, info) => {
-        if (err) return res.status(500).json({ erro: 'Erro interno.' });
-        if (!usuario) return res.status(401).json({ erro: info?.message || 'Falha no login.' });
-        req.login(usuario, err => {
-            if (err) return res.status(500).json({ erro: 'Erro de sessão.' });
-            res.json({ usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email } });
-        });
-    })(req, res, next);
+  passport.authenticate('local', (err, usuario, info) => {
+    if (err) return res.status(500).json({ status: 'erro', mensagem: 'Erro interno.' });
+    if (!usuario) return res.status(401).json({ status: 'erro', mensagem: info?.message || 'Falha no login.' });
+
+    req.login(usuario, (err) => {
+      if (err) return res.status(500).json({ status: 'erro', mensagem: 'Erro de sessão.' });
+      return res.json({ status: 'sucesso', usuario });
+    });
+  })(req, res, next);
 });
 
 app.post('/auth/logout', (req, res) => {
-    req.logout(() => req.session.destroy(() => { res.clearCookie('iana.sid'); res.json({ ok: true }); }));
-});
-
-app.post('/auth/trocar-senha', auth, async (req, res) => {
-    const senhaAtual = req.body.senhaAtual?.trim();
-    const novaSenha = req.body.novaSenha?.trim();
-    if (!senhaAtual || !novaSenha) return res.status(400).json({ erro: 'Preencha senha atual e nova senha.' });
-    if (novaSenha.length < 8) return res.status(400).json({ erro: 'Senha mínima: 8 caracteres.' });
-    try {
-        const [rows] = await pool.query('SELECT senha FROM usuarios WHERE id=?', [req.user.id]);
-        if (!rows.length) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-        const ok = await bcrypt.compare(senhaAtual, rows[0].senha || '');
-        if (!ok) return res.status(400).json({ erro: 'Senha atual incorreta.' });
-        const hash = await bcrypt.hash(novaSenha, 12);
-        await pool.query('UPDATE usuarios SET senha=? WHERE id=?', [hash, req.user.id]);
-        res.json({ ok: true });
-    } catch (e) {
-        console.error('[TROCAR SENHA]', e.message);
-        res.status(500).json({ erro: 'Erro interno.' });
-    }
+  req.logout(() => {
+    req.session.destroy(() => {
+      res.clearCookie('iana.sid');
+      return res.json({ status: 'sucesso', mensagem: 'Sessão encerrada.' });
+    });
+  });
 });
 
 app.get('/auth/me', (req, res) => {
-    if (!req.isAuthenticated()) return res.json({ logado: false });
-    res.json({ logado: true, usuario: { id: req.user.id, nome: req.user.nome, email: req.user.email } });
+  if (!req.isAuthenticated()) return res.json({ logado: false });
+  return res.json({ logado: true, usuario: req.user });
 });
 
-app.post('/auth/gerar-token', auth, async (req, res) => {
-    const token = gerarToken();
-    try {
-        await pool.query('UPDATE usuarios SET api_token_hash=? WHERE id=?', [hashToken(token), req.user.id]);
-        res.json({ token });
-    } catch (e) { res.status(500).json({ erro: e.message }); }
+/* ================================================================
+   6. ROTAS DE GERENCIAMENTO DE CONVERSAS (HISTÓRICO MYSQL)
+   ================================================================ */
+app.get('/conversas', authRequired, async (req, res) => {
+  try {
+    const [conversas] = await pool.query(
+      'SELECT id, titulo, fixada, atualizado_em FROM conversas WHERE usuario_id = ? ORDER BY fixada DESC, atualizado_em DESC',
+      [req.user.id]
+    );
+    return res.json({ status: 'sucesso', conversas });
+  } catch (err) {
+    return res.status(500).json({ status: 'erro', mensagem: err.message });
+  }
 });
 
-app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
-    const email = req.body.email?.trim().toLowerCase();
-    if (!email) return res.status(400).json({ erro: 'E-mail obrigatório.' });
-    try {
-        const [r] = await pool.query('SELECT id FROM usuarios WHERE email=?', [email]);
-        if (r.length) {
-            const codigo = crypto.randomInt(100000, 1000000).toString();
-            codigos.set(email, { codigo, exp: Date.now() + 15 * 60 * 1000, tentativas: 0 });
-
-            if (sendgridPronto) {
-                try {
-                    await sgMail.send({
-                        from: process.env.EMAIL_FROM || 'iana@example.com',
-                        to: email,
-                        subject: 'Código de recuperação — Iana',
-                        html: `<div style="font-family:sans-serif;background:#111;color:#fff;padding:30px;border-radius:12px;max-width:400px;margin:auto">
-                            <h2 style="color:#a855f7">🎮 Iana</h2>
-                            <p>Seu código:</p>
-                            <div style="background:#1e1f20;border-radius:8px;padding:20px;text-align:center;margin:20px 0">
-                                <span style="font-size:32px;font-weight:bold;letter-spacing:8px;color:#a855f7">${codigo}</span>
-                            </div>
-                            <p style="color:#aaa;font-size:13px">Expira em 15 minutos.</p>
-                        </div>`
-                    });
-                } catch (sgErro) {
-                    const detalhe = sgErro.response?.body?.errors?.map(e => e.message).join('; ') || sgErro.message;
-                    console.error(`[ESQUECI] SendGrid recusou o envio para ${email}:`, detalhe);
-                }
-            } else {
-                console.warn(`[ESQUECI] Código gerado para ${email}, mas SENDGRID_API_KEY não está configurada.`);
-            }
-        }
-        res.json({ ok: true, msg: 'Se o e-mail existir, um código foi enviado.' });
-    } catch (e) {
-        console.error('[ESQUECI] Falha ao enviar e-mail:', e.message);
-        res.status(500).json({ erro: 'Erro ao enviar.' });
-    }
+app.get('/conversas/:id', authRequired, async (req, res) => {
+  try {
+    const [mensagens] = await pool.query(
+      'SELECT id, mensagem, remetente, criado_em FROM mensagens WHERE conversa_id = ? AND usuario_id = ? ORDER BY id ASC',
+      [req.params.id, req.user.id]
+    );
+    return res.json({ status: 'sucesso', conversa_id: req.params.id, mensagens });
+  } catch (err) {
+    return res.status(500).json({ status: 'erro', mensagem: err.message });
+  }
 });
 
-app.post('/auth/mudar-senha', loginLimiter, async (req, res) => {
-    const { codigo, nova_senha } = req.body;
-    const email = req.body.email?.trim().toLowerCase();
-    if (!email || !codigo || !nova_senha) return res.status(400).json({ erro: 'Dados incompletos.' });
-    const token = codigos.get(email);
-    if (!token || Date.now() > token.exp || token.tentativas >= 5) {
-        codigos.delete(email);
-        return res.status(400).json({ erro: 'Código inválido ou expirado.' });
-    }
-    token.tentativas++;
-    if (typeof codigo !== 'string' || token.codigo !== codigo.trim())
-        return res.status(400).json({ erro: 'Código inválido ou expirado.' });
-    if (nova_senha.trim().length < 8) return res.status(400).json({ erro: 'Senha mínima: 8 caracteres.' });
-    try {
-        const hash = await bcrypt.hash(nova_senha.trim(), 12);
-        await pool.query('UPDATE usuarios SET senha=? WHERE email=?', [hash, email]);
-        codigos.delete(email);
-        res.json({ ok: true });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar.' }); }
+app.delete('/conversas/:id', authRequired, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM mensagens WHERE conversa_id = ? AND usuario_id = ?', [req.params.id, req.user.id]);
+    await pool.query('DELETE FROM conversas WHERE id = ? AND usuario_id = ?', [req.params.id, req.user.id]);
+    return res.json({ status: 'sucesso', mensagem: 'Conversa excluída.' });
+  } catch (err) {
+    return res.status(500).json({ status: 'erro', mensagem: err.message });
+  }
 });
 
-/* ── FEEDBACK ─────────────────────────────────────────────────── */
-app.post('/feedback', chatLimiter, async (req, res) => {
-    const texto = req.body.feedback?.trim();
-    if (!texto) return res.status(400).json({ erro: 'Descreva seu feedback.' });
-
-    if (!sendgridPronto) {
-        console.warn('[FEEDBACK] Recebido mas SENDGRID_API_KEY não configurada:', texto);
-        return res.status(503).json({ erro: 'Envio de feedback temporariamente indisponível.' });
-    }
-
-    try {
-        await sgMail.send({
-            from: process.env.EMAIL_FROM || 'iana@example.com',
-            to: process.env.FEEDBACK_TO_EMAIL || process.env.EMAIL_FROM,
-            replyTo: req.user?.email || undefined,
-            subject: '[Iana Feedback]',
-            html: `<div style="font-family:sans-serif;padding:20px">
-                <p><strong>De:</strong> ${escapeHTML(req.user?.nome || 'Visitante')} (${escapeHTML(req.user?.email || 'sem login')})</p>
-                <p><strong>Mensagem:</strong></p>
-                <p>${escapeHTML(texto).replace(/\n/g, '<br>')}</p>
-            </div>`
-        });
-        res.json({ ok: true });
-    } catch (e) {
-        const detalhe = e.response?.body?.errors?.map(er => er.message).join('; ') || e.message;
-        console.error('[FEEDBACK] SendGrid recusou o envio:', detalhe);
-        res.status(500).json({ erro: 'Erro ao enviar feedback.' });
-    }
-});
-
-/* ── CONVERSAS ────────────────────────────────────────────────── */
-async function garantirConversa(idUsuario, idConversa, mensagem) {
-    return ensureConversation(pool, idUsuario, idConversa, mensagem);
-}
-
-app.get('/conversas', auth, async (req, res) => {
-    try {
-        const [r] = await pool.query(
-            'SELECT id, titulo, fixada, atualizado_em FROM conversas WHERE usuario_id=? ORDER BY fixada DESC, atualizado_em DESC, id DESC',
-            [req.user.id]
-        );
-        res.json(r.map(c => ({ id: c.id, titulo: c.titulo, fixada: !!c.fixada, updatedAt: c.atualizado_em })));
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-app.get('/conversas/:id', auth, async (req, res) => {
-    try {
-        const [r] = await pool.query(
-            'SELECT mensagem, remetente, criado_em FROM mensagens WHERE conversa_id=? AND usuario_id=? ORDER BY id ASC',
-            [req.params.id, req.user.id]
-        );
-        res.json({
-            id: req.params.id,
-            mensagens: r.map(m => ({ role: m.remetente === 'user' ? 'user' : 'assistant', content: m.mensagem, criado_em: m.criado_em }))
-        });
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-app.patch('/conversas/:id', auth, async (req, res) => {
-    const titulo = req.body.titulo?.trim();
-    if (!titulo) return res.status(400).json({ erro: 'Título obrigatório.' });
-    try {
-        await pool.query('UPDATE conversas SET titulo=? WHERE id=? AND usuario_id=?', [titulo, req.params.id, req.user.id]);
-        res.json({ ok: true });
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-app.post('/conversas/:id/fixar', auth, async (req, res) => {
-    try {
-        const [r] = await pool.query('SELECT fixada FROM conversas WHERE id=? AND usuario_id=?', [req.params.id, req.user.id]);
-        if (!r.length) return res.status(404).json({ erro: 'Conversa não encontrada.' });
-        const novoValor = r[0].fixada ? 0 : 1;
-        await pool.query('UPDATE conversas SET fixada=? WHERE id=? AND usuario_id=?', [novoValor, req.params.id, req.user.id]);
-        res.json({ ok: true, fixada: !!novoValor });
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-app.delete('/conversas/:id', auth, async (req, res) => {
-    try {
-        await pool.query('DELETE FROM mensagens WHERE conversa_id=? AND usuario_id=?', [req.params.id, req.user.id]);
-        await pool.query('DELETE FROM conversas WHERE id=? AND usuario_id=?', [req.params.id, req.user.id]);
-        res.json({ ok: true });
-    } catch (e) { res.status(500).json({ erro: e.message }); }
-});
-
-/* ── CHAT (texto) ─────────────────────────────────────────────── */
+/* ================================================================
+   7. ROTA PRINCIPAL DE CHAT (INTEGRAÇÃO NODE -> PYTHON FLASK API)
+   ================================================================ */
 app.post('/chat', chatLimiter, async (req, res) => {
-    const nome   = req.user?.nome || 'Visitante';
-    const idUser = req.user?.id || null;
-    const input = req.body.mensagem ?? req.body.message ?? '';
-    if (typeof input !== 'string') return res.status(400).json({ erro: 'Mensagem deve ser texto.' });
-    const msg = input.trim();
-    const config = req.body.config || req.body.configuracao || '';
-    // FIX: objeto de configuração cru (o que chat.js vai passar a
-    // mandar em configRaw), usado só pelo iana.py — o texto acima
-    // (config/configuracao) continua sendo o que o Gemini via Node usa.
-    const configRaw = (req.body.configRaw && typeof req.body.configRaw === 'object') ? { ...req.body.configRaw, _userId: idUser } : { _userId: idUser };
-    const idConvBody = req.body.conversa_id || req.body.id_conversa || null;
+  const nomeUsuario = req.user?.nome || req.body.nome_usuario || 'Jogador';
+  const idUsuario = req.user?.id || null;
+  const mensagem = (req.body.mensagem || req.body.message || '').trim();
+  const conversaId = req.body.conversa_id || req.body.sessao_id || `sessao_${Date.now()}`;
 
-    if (!msg) return res.status(400).json({ erro: 'Mensagem vazia.' });
-    if (msg.length > 16000) return res.status(400).json({ erro: 'Mensagem muito longa.' });
+  if (!mensagem) {
+    return res.status(400).json({ status: 'erro', mensagem: 'O campo mensagem é obrigatório.' });
+  }
 
-    const anexo = attachmentPart(req.body);
-    if (['imagem', 'audio'].includes(req.body.tipo) && !anexo) return res.status(400).json({ erro: 'Conteúdo do anexo ausente.' });
-
-    const contextoLinks = await montarContextoLinks(msg);
-    const idConv = await garantirConversa(idUser, idConvBody, msg);
-
-    let historico = [];
-    if (idUser && idConv) {
-        try {
-            const [r] = await pool.query(
-                'SELECT mensagem, remetente FROM mensagens WHERE conversa_id=? AND usuario_id=? ORDER BY id DESC LIMIT 8',
-                [idConv, idUser]
-            );
-            historico = r.reverse();
-        } catch (e) { console.error('[DB historico]', e.message); }
-    }
-
-    if (idUser && idConv) {
-        await pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'user', msg]);
-    }
-
-    if (!idUser && Array.isArray(req.session.chatHistory)) historico = req.session.chatHistory;
-
-    const msgParaIA = contextoLinks
-        ? `${msg}\n\n[CONTEXTO — conteúdo extraído do(s) link(s) enviado(s) pelo usuário, use isso pra responder]:\n${contextoLinks}`
-        : msg;
-
-    const humor = req.body.estadoEmocional || detectarHumor(msg);
-    const resposta = await gerarRespostaIA({ nome, idConv, msg: msgParaIA, historico, humor, config, configRaw, anexo });
-
-    if (idUser && idConv) {
-        await pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)', [idConv, idUser, 'iana', resposta]);
-    }
-
-    if (!idUser) req.session.chatHistory = [...historico, { remetente: 'user', mensagem: msg }, { remetente: 'iana', mensagem: resposta }].slice(-8);
-    res.json({ resposta, conversa_id: idConv, id_conversa: idConv });
-});
-
-/* ── VISÃO EM TEMPO REAL (app local → backend) ──────────────────── */
-app.post('/chat/visao', visionLimiter, authToken, async (req, res) => {
-    const nome    = req.user.nome;
-    const idUser  = req.user.id;
-    const resumo  = req.body.resumo?.trim();
-
-    if (!resumo) return res.status(400).json({ erro: 'Resumo vazio.' });
-    if (resumo.length > 3000) return res.status(400).json({ erro: 'Resumo muito longo.' });
-
-    const idConv = await garantirConversa(idUser, req.body.idConversa, 'Sessão de visão em tempo real');
-
-    let historico = [];
+  // 1. Salva a mensagem do usuário no MySQL (se autenticado)
+  if (idUsuario) {
     try {
-        const [r] = await pool.query(
-            'SELECT mensagem, remetente FROM mensagens WHERE conversa_id=? AND usuario_id=? ORDER BY id DESC LIMIT 6',
-            [idConv, idUser]
-        );
-        historico = r.reverse();
-    } catch (e) { console.error('[DB historico visao]', e.message); }
-
-    const msg = `[LEITURA AUTOMÁTICA DE TELA em tempo real — comente de forma breve e útil, como se estivesse acompanhando o jogo ao vivo]:\n${resumo}`;
-    const resposta = await gerarRespostaIA({ nome, idConv, msg, historico, humor: 'normal', config: '' });
-
-    pool.query('INSERT INTO mensagens (conversa_id,usuario_id,remetente,mensagem) VALUES (?,?,?,?)',
-        [idConv, idUser, 'iana', resposta]).catch(e => console.error('[DB msg visao]', e.message));
-
-    io.to(`user_${idUser}`).emit('nova_mensagem', { idConversa: idConv, resposta });
-
-    res.json({ resposta, idConversa: idConv });
-});
-
-/* ── 404 ──────────────────────────────────────────────────────── */
-app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada.' }));
-
-/* ── ERROR HANDLER GLOBAL ──────────────────────────────────────── */
-app.use((err, req, res, next) => {
-    console.error('[ERRO NÃO TRATADO]', err.message);
-    if (err.message === 'Origem não permitida por CORS') {
-        return res.status(403).json({ erro: 'Origem não permitida.' });
+      const [existe] = await pool.query('SELECT id FROM conversas WHERE id = ? AND usuario_id = ?', [conversaId, idUsuario]);
+      if (!existe.length) {
+        const tituloAuto = mensagem.length > 30 ? mensagem.substring(0, 30) + '...' : mensagem;
+        await pool.query('INSERT INTO conversas (id, usuario_id, titulo) VALUES (?, ?, ?)', [conversaId, idUsuario, tituloAuto]);
+      }
+      await pool.query('INSERT INTO mensagens (conversa_id, usuario_id, remetente, mensagem) VALUES (?, ?, ?, ?)', [conversaId, idUsuario, 'user', mensagem]);
+    } catch (dbErr) {
+      console.warn(`[CHAT DB] Não foi possível registrar mensagem no MySQL: ${dbErr.message}`);
     }
-    const status = err.status >= 400 && err.status < 500 ? err.status : (err.status === 503 ? 503 : 500);
-    res.status(status).json({ erro: status === 500 ? 'Erro interno no servidor.' : err.message });
+  }
+
+  // 2. Faz a chamada HTTP para o Servidor Python da Iana (app.py na porta 5000)
+  let respostaIana = '';
+  try {
+    const pythonResp = await fetch(PYTHON_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': IANA_API_KEY
+      },
+      body: JSON.stringify({
+        mensagem: mensagem,
+        sessao_id: conversaId,
+        nome_usuario: nomeUsuario
+      })
+    });
+
+    if (pythonResp.ok) {
+      const data = await pythonResp.json();
+      respostaIana = data.resposta || data.message || 'GG! Recebi sua mensagem, jogador!';
+    } else {
+      console.error(`[PYTHON API] Erro HTTP ${pythonResp.status}`);
+      respostaIana = `E aí, ${nomeUsuario}! 🎮 Tive um pequeno lag de conexão com o cérebro principal, mas estou pronta para o próximo round!`;
+    }
+  } catch (err) {
+    console.error(`[PYTHON API CONEXÃO] Falha ao conectar em ${PYTHON_API_URL}:`, err.message);
+    respostaIana = `E aí, ${nomeUsuario}! 🎮 Meu servidor de IA está inicializando. Vamos trocar uma ideia sobre o seu jogo favorito enquanto isso!`;
+  }
+
+  // 3. Salva a resposta da Iana no MySQL (se autenticado)
+  if (idUsuario) {
+    try {
+      await pool.query('INSERT INTO mensagens (conversa_id, usuario_id, remetente, mensagem) VALUES (?, ?, ?, ?)', [conversaId, idUsuario, 'assistant', respostaIana]);
+      await pool.query('UPDATE conversas SET atualizado_em = NOW() WHERE id = ?', [conversaId]);
+    } catch (dbErr) {
+      console.warn(`[CHAT DB] Erro ao salvar resposta da Iana: ${dbErr.message}`);
+    }
+  }
+
+  // 4. Retorna a resposta JSON para o Frontend
+  return res.json({
+    status: 'sucesso',
+    conversa_id: conversaId,
+    resposta: respostaIana,
+    timestamp: Date.now()
+  });
 });
 
-/* ── START ────────────────────────────────────────────────────── */
-const PORT = process.env.PORT || 3333;
-server.listen(PORT, process.env.HOST || '0.0.0.0', () => console.log(`🚀 Iana rodando na porta ${PORT}`));
+/* ================================================================
+   8. SOCKET.IO (COMUNICAÇÃO EM TEMPO REAL E VOZ)
+   ================================================================ */
+const io = new SocketIOServer(server, {
+  cors: { origin: origensPermitidas, credentials: true }
+});
+
+io.engine.use((req, res, next) => sessionMiddleware(req, res, next));
+
+io.on('connection', (socket) => {
+  const user = socket.request?.session?.passport?.user;
+  console.log(`🔌 Cliente conectado via Socket.IO (ID: ${socket.id}, User: ${user || 'Visitante'})`);
+
+  socket.on('disconnect', () => {
+    console.log(`🔌 Cliente desconectado (ID: ${socket.id})`);
+  });
+});
+
+/* ================================================================
+   9. HANDLER GLOBAL DE ERROS E INICIALIZAÇÃO
+   ================================================================ */
+app.use((req, res) => res.status(404).json({ status: 'erro', mensagem: 'Rota não encontrada.' }));
+
+app.use((err, req, res, next) => {
+  console.error('[ERRO NÃO TRATADO]', err);
+  return res.status(500).json({ status: 'erro', mensagem: 'Erro interno no servidor Node.js.' });
+});
+
+server.listen(PORT, () => {
+  console.log(`🚀 Servidor Node.js (server.js) rodando na porta ${PORT}`);
+  console.log(`🔗 Conectado à API Python da Iana em: ${PYTHON_API_URL}`);
+});

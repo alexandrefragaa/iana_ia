@@ -37,8 +37,21 @@ try:
 except Exception:
     pass
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(dotenv_path=BASE_DIR / ".env")
+BASE_DIR = Path(__file__).resolve().parent
+_env_local = BASE_DIR / ".env"
+_env_acima = BASE_DIR.parent / ".env"
+ 
+if _env_local.exists():
+    load_dotenv(dotenv_path=_env_local)
+elif _env_acima.exists():
+    load_dotenv(dotenv_path=_env_acima)
+else:
+    # Não achou em nenhum dos dois — não é erro fatal (pode estar usando
+    # env vars do sistema/Render direto), mas avisa no log pra você saber.
+    sys.stderr.write(
+        f"[Iana] AVISO: nenhum .env encontrado em {_env_local} nem em {_env_acima}. "
+        f"Usando apenas variáveis de ambiente do sistema, se houver.\n"
+    )
 
 
 # ================================================================
@@ -83,9 +96,9 @@ bloco_contexto = ""
 instrucao_humor = ""
 
 # Credenciais da API Customizada
-MINHA_API_URL = os.getenv("MINHA_API_URL", "http://localhost:8000/v1/chat/completions").strip()
+MINHA_API_URL = os.getenv("MINHA_API_URL", "http://localhost:11434/v1/chat/completions").strip()
 MINHA_API_KEY = os.getenv("MINHA_API_KEY", "").strip().replace('"', "").replace("'", "")
-MINHA_API_MODEL = os.getenv("MINHA_API_MODEL", "iana-model-v1").strip()
+MINHA_API_MODEL = os.getenv("MINHA_API_MODEL", "llama-3.3-70b-versatile").strip()
 MINHA_API_TIMEOUT = int(os.getenv("MINHA_API_TIMEOUT", "25"))
 
 

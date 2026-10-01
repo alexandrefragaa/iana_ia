@@ -11,8 +11,10 @@ import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import http from 'http';
+import { spawn } from 'node:child_process';
 import { Server as SocketIOServer } from 'socket.io';
 import crypto from 'crypto';
+import { pythonExecutable } from './core/runtime.js';
 
 dotenv.config();
 
@@ -26,9 +28,15 @@ const server = http.createServer(app);
    1. CONFIGURAÇÃO DE SEGURANÇA E AMBIENTE
    ================================================================ */
 const PORT = process.env.PORT || 3333;
-const PYTHON_API_URL = process.env.PYTHON_API_URL || 'http://localhost:5000/api/v1/chat';
-const IANA_API_KEY = process.env.IANA_API_KEY || 'iana-v1-secret';
-const SESSION_SECRET = process.env.SESSION_SECRET || 'iana-super-secret-key';
+const PYTHON_API_PORT = process.env.PYTHON_API_PORT || '5000';
+const PYTHON_API_URL = process.env.PYTHON_API_URL || `http://127.0.0.1:${PYTHON_API_PORT}/api/v1/chat`;
+const START_PYTHON_API = process.env.START_PYTHON_API === 'true' ||
+  (process.env.START_PYTHON_API !== 'false' && !process.env.PYTHON_API_URL);
+const IANA_API_KEY = (process.env.IANA_API_KEY || '').trim();
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
+
+if (!IANA_API_KEY) throw new Error('IANA_API_KEY precisa estar configurada.');
+if (!SESSION_SECRET) throw new Error('SESSION_SECRET precisa estar configurada.');
 
 /* ================================================================
    2. MIDDLEWARES BÁSICOS E CORS
@@ -342,6 +350,34 @@ io.on('connection', (socket) => {
 /* ================================================================
    9. HANDLER GLOBAL DE ERROS E INICIALIZAÇÃO
    ================================================================ */
+const pythonApi = START_PYTHON_API ? spawn(
+  pythonExecutable(__dirname),
+  [path.join(__dirname, 'core', 'app.py')],
+  {
+    cwd: __dirname,
+    env: { ...process.env, PORT: String(PYTHON_API_PORT), FLASK_DEBUG: 'false' },
+    stdio: 'inherit',
+    windowsHide: true
+  }
+) : null;
+
+let pythonApiError = null;
+pythonApi?.on('error', error => {
+  pythonApiError = error;
+  console.error('[PYTHON API] Não foi possível iniciar o processo:', error);
+});
+pythonApi?.on('exit', (code, signal) => {
+  if (code !== 0 && code !== null) console.error(`[PYTHON API] Processo encerrado com código ${code}.`);
+  if (signal) console.warn(`[PYTHON API] Processo encerrado pelo sinal ${signal}.`);
+});
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => {
+    pythonApi?.kill();
+    server.close(() => process.exit(0));
+  });
+}
+
 app.use((req, res) => res.status(404).json({ status: 'erro', mensagem: 'Rota não encontrada.' }));
 
 app.use((err, req, res, next) => {
@@ -349,7 +385,46 @@ app.use((err, req, res, next) => {
   return res.status(500).json({ status: 'erro', mensagem: 'Erro interno no servidor Node.js.' });
 });
 
-server.listen(PORT, () => {
-  console.log(`🚀 Servidor Node.js (server.js) rodando na porta ${PORT}`);
-  console.log(`🔗 Conectado à API Python da Iana em: ${PYTHON_API_URL}`);
+async function waitForPythonApi() {
+  const urlHealth = new URL('/health', PYTHON_API_URL);
+  const deadline = Date.now() + 120_000;
+
+  while (Date.now() < deadline) {
+    if (pythonApiError) throw pythonApiError;
+    if (pythonApi && (pythonApi.exitCode !== null || pythonApi.signalCode !== null)) {
+      throw new Error('O processo da API Python encerrou antes de ficar pronto.');
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2_000);
+    try {
+      const response = await fetch(urlHealth, { signal: controller.signal });
+      if (response.ok) {
+        const health = await response.json();
+        if (health.status === 'online') return;
+      }
+    } catch {
+      // A API pode ainda estar importando dependências.
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+
+  throw new Error(`A API Python não ficou pronta em tempo hábil: ${urlHealth}`);
+}
+
+async function iniciarServidor() {
+  if (pythonApi) await waitForPythonApi();
+  server.listen(PORT, () => {
+    console.log(`🚀 Servidor Node.js (server.js) rodando na porta ${PORT}`);
+    console.log(`🔗 Conectado à API Python da Iana em: ${PYTHON_API_URL}`);
+  });
+}
+
+iniciarServidor().catch(error => {
+  console.error('[STARTUP] Falha ao iniciar os serviços:', error.message);
+  pythonApi?.kill();
+  process.exitCode = 1;
 });

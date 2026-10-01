@@ -2,6 +2,13 @@
 const $=id=>document.getElementById(id);
 let token='',stream=null,running=false,poll=null,aborter=null;
 const video=$('video'),overlay=$('overlay'),frame=document.createElement('canvas');
+function renderSummary(summary){
+  if(!summary){$('scene-status').textContent='Aguardando análise.';$('scene-route').textContent='Rota: —';$('scene-items').textContent='Itens: —';$('scene-decision').textContent='Decisão: —';return;}
+  $('scene-status').textContent=`Status: ${summary.status || 'indefinido'} · risco ${summary.risk || 'baixa'}`;
+  $('scene-route').textContent=`Rota: ${summary.route || '—'}`;
+  $('scene-items').textContent=`Itens: ${(summary.items && summary.items.length) ? summary.items.join(', ') : 'nenhum relevante'}`;
+  $('scene-decision').textContent=`Decisão: ${summary.decision || '—'}`;
+}
 async function api(url,body){const r=await fetch(url,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json','X-Iana-Vision':token}:{},body:body?JSON.stringify(body):undefined,signal:aborter?.signal});const data=await r.json();if(!r.ok)throw Error(data.error);return data;}
 async function status(){const s=await api('/api/status');token=s.token;$('start').disabled=!s.ready||running;$('device').textContent=`Dispositivo: ${s.device==='cpu'?'CPU':s.device?'GPU '+s.device:'—'}`;$('status').textContent=s.ready?'Detector pronto. Escolha a janela do jogo.':s.error|| (s.loading?'Carregando o modelo local…':'Detector ainda não iniciado.');return s;}
 $('prepare').onclick=async()=>{try{await status();await api('/api/start',{});clearInterval(poll);poll=setInterval(async()=>{try{const s=await status();if(s.ready||s.error){clearInterval(poll);poll=null;}}catch(e){clearInterval(poll);$('status').textContent=e.message;}},1000);}catch(e){$('status').textContent=e.message;}};
@@ -19,7 +26,7 @@ async function loop(){
    if(!running)break;
    const elapsed=performance.now()-t;overlay.width=result.width;overlay.height=result.height;const ctx=overlay.getContext('2d');ctx.strokeStyle='#83f0b8';ctx.fillStyle='#83f0b8';ctx.lineWidth=2;ctx.font='15px sans-serif';
    for(const d of result.detections){const [x1,y1,x2,y2]=d.xyxy;ctx.strokeRect(x1,y1,x2-x1,y2-y1);ctx.fillText(`${d.label} ${Math.round(d.confidence*100)}%`,x1,Math.max(16,y1-5));}
-   $('latency').textContent=`Atraso: ${Math.round(elapsed)} ms · detector ${result.inferenceMs} ms`;$('count').textContent=`Objetos: ${result.detections.length}`;$('status').textContent='Análise local ativa. Progresso e rotas ainda exigem confirmação.';
+   $('latency').textContent=`Atraso: ${Math.round(elapsed)} ms · detector ${result.inferenceMs} ms`;$('count').textContent=`Objetos: ${result.detections.length}`;renderSummary(result.summary);$('status').textContent='Análise local ativa. Progresso e rotas ainda exigem confirmação.';
   }catch(e){if(running){stop();$('status').textContent=e.message;}break;}
   await new Promise(resolve=>setTimeout(resolve,Math.max(0,250-(performance.now()-t))));
  }

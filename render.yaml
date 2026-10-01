@@ -10,5 +10,7 @@ services:
         value: production
       - key: SESSION_SECRET
         generateValue: true
+      - key: IANA_API_KEY
+        generateValue: true
       - key: SESSION_SECURE
         value: true

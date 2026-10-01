@@ -21,16 +21,25 @@ import os
 import sys
 import time
 import json
+import importlib
+import hmac
 import logging
+import threading
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 
 from flask import Flask, request, jsonify, Response
 from dotenv import load_dotenv
+from werkzeug.exceptions import RequestEntityTooLarge
 
 # Carrega variáveis de ambiente do arquivo .env
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(dotenv_path=BASE_DIR / ".env")
+_env_local = BASE_DIR / ".env"
+_env_root = BASE_DIR.parent / ".env"
+if _env_local.exists():
+    load_dotenv(dotenv_path=_env_local)
+else:
+    load_dotenv(dotenv_path=_env_root)
 
 # Configuração de Logging Profissional
 logging.basicConfig(
@@ -42,6 +51,7 @@ logger = logging.getLogger("IanaAPI")
 
 # Tenta integrar o pipeline da Iana (iana_v2.py)
 RUN_PIPELINE_OK = False
+sys.path.insert(0, str(BASE_DIR))
 try:
     import iana_v2
     RUN_PIPELINE_OK = True
@@ -51,16 +61,39 @@ except ImportError:
 except Exception as e:
     logger.error(f"Erro ao inicializar 'iana_v2.py': {e}")
 
+try:
+    from core import vision_worker
+except Exception:
+    try:
+        import vision_worker
+    except Exception:
+        vision_worker = None
+
 # Inicialização do App Flask
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
 
 # Configurações Globais
 API_VERSION = "1.0.0"
 
-IANA_API_KEY = os.getenv("IANA_API_KEY", "iana-v1-secret").strip()
 
-if not IANA_API_KEY: logger.error("❌ IANA\_API\_KEY não definida no .env — a API não pode iniciar sem ela.")
-sys.exit(1)
+def resolve_api_key() -> str:
+    """Resolve a chave de autenticação da API priorizando configuração explícita e fallback seguro para desenvolvimento."""
+    explicit_key = os.getenv("IANA_API_KEY", "").strip()
+    if explicit_key:
+        return explicit_key
+
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if gemini_key:
+        logger.warning("IANA_API_KEY ausente; usando GEMINI_API_KEY como fallback para desenvolvimento local.")
+        return gemini_key
+
+    fallback_key = "dev-iana-local-key"
+    logger.warning("IANA_API_KEY ausente; usando chave local de desenvolvimento. Configure IANA_API_KEY em produção.")
+    return fallback_key
+
+
+IANA_API_KEY = resolve_api_key()
 
 # System Prompt Base
 SYSTEM_PROMPT_GAMER = """
@@ -82,8 +115,20 @@ Sua comunicação é espontânea, fluida, humana e autêntica — como uma parce
 </regras_de_conhecimento_rag>
 """.strip()
 
-# Armazenamento de Sessões em Memória (Estrutura Thread-Safe em Memória)
+# Armazenamento em memória protegido contra acesso concorrente.
 sessoes_memoria: Dict[str, List[Dict[str, str]]] = {}
+sessoes_lock = threading.RLock()
+pipeline_lock = threading.Lock()
+MAX_MESSAGE_LENGTH = 20_000
+MAX_SESSION_ID_LENGTH = 128
+MAX_NAME_LENGTH = 80
+MAX_HISTORY_MESSAGES = 100
+
+
+def limitar_historico(sessao: List[Dict[str, str]]) -> None:
+    mensagens = sessao[1:]
+    if len(mensagens) > MAX_HISTORY_MESSAGES:
+        sessao[:] = [sessao[0], *mensagens[-MAX_HISTORY_MESSAGES:]]
 
 
 # ================================================================
@@ -101,7 +146,7 @@ def verificar_autenticacao() -> Tuple[bool, Optional[Response]]:
         if auth_header.startswith("Bearer "):
             api_key = auth_header[7:].strip()
 
-    if not api_key or api_key != IANA_API_KEY:
+    if not api_key or not hmac.compare_digest(api_key, IANA_API_KEY):
         logger.warning(f"Tentativa de acesso não autorizada de {request.remote_addr}")
         resposta_erro = jsonify({
             "status": "erro",
@@ -117,10 +162,20 @@ def verificar_autenticacao() -> Tuple[bool, Optional[Response]]:
 @app.after_request
 def adicionar_headers_cors(response):
     """Garante suporte a requisições Cross-Origin (CORS) e JSON utf-8."""
-    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Origin"] = os.getenv("IANA_ALLOWED_ORIGIN", "*")
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-API-Key"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
     return response
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def payload_muito_grande(_erro):
+    return jsonify({
+        "status": "erro",
+        "codigo": 413,
+        "erro": "Payload Too Large",
+        "mensagem": "O corpo da requisição excede o limite permitido."
+    }), 413
 
 
 # ================================================================
@@ -133,12 +188,15 @@ def health_check():
     GET /health
     Verifica a saúde da API, status do pipeline e uso de memória.
     """
+    with sessoes_lock:
+        sessoes_ativas = len(sessoes_memoria)
+
     return jsonify({
         "status": "online",
         "servico": "Iana AI REST API",
         "versao": API_VERSION,
         "pipeline_rag_ativo": RUN_PIPELINE_OK,
-        "sessoes_ativas": len(sessoes_memoria),
+        "sessoes_ativas": sessoes_ativas,
         "timestamp": int(time.time())
     }), 200
 
@@ -183,10 +241,29 @@ def chat_iana():
     if not autenticado and erro_resp:
         return erro_resp
 
-    dados = request.get_json(silent=True) or {}
-    mensagem_usuario = str(dados.get("mensagem", "")).strip()
-    sessao_id = str(dados.get("sessao_id", "jogador_default")).strip()
-    nome_usuario = str(dados.get("nome_usuario", "Jogador")).strip()
+    dados = request.get_json(silent=True)
+    if not isinstance(dados, dict):
+        return jsonify({
+            "status": "erro",
+            "codigo": 400,
+            "erro": "Bad Request",
+            "mensagem": "O corpo da requisição deve ser um objeto JSON válido."
+        }), 400
+
+    mensagem_usuario = dados.get("mensagem", "")
+    sessao_id = dados.get("sessao_id", "jogador_default")
+    nome_usuario = dados.get("nome_usuario", "Jogador")
+    if not isinstance(mensagem_usuario, str) or not isinstance(sessao_id, str) or not isinstance(nome_usuario, str):
+        return jsonify({
+            "status": "erro",
+            "codigo": 400,
+            "erro": "Bad Request",
+            "mensagem": "mensagem, sessao_id e nome_usuario devem ser textos."
+        }), 400
+
+    mensagem_usuario = mensagem_usuario.strip()
+    sessao_id = sessao_id.strip()
+    nome_usuario = nome_usuario.strip() or "Jogador"
 
     if not mensagem_usuario:
         return jsonify({
@@ -196,25 +273,41 @@ def chat_iana():
             "mensagem": "O campo 'mensagem' é obrigatório e não pode estar vazio."
         }), 400
 
-    # Inicializa o histórico da sessão se for nova
-    if sessao_id not in sessoes_memoria:
-        sessoes_memoria[sessao_id] = [
-            {"role": "system", "content": SYSTEM_PROMPT_GAMER}
-        ]
+    if len(mensagem_usuario) > MAX_MESSAGE_LENGTH or len(sessao_id) > MAX_SESSION_ID_LENGTH or len(nome_usuario) > MAX_NAME_LENGTH:
+        return jsonify({
+            "status": "erro",
+            "codigo": 413,
+            "erro": "Payload Too Large",
+            "mensagem": "Mensagem, identificador de sessão ou nome excede o limite permitido."
+        }), 413
 
-    # Registra a mensagem do usuário na sessão
-    sessoes_memoria[sessao_id].append({"role": "user", "content": mensagem_usuario})
+    if not sessao_id:
+        return jsonify({
+            "status": "erro",
+            "codigo": 400,
+            "erro": "Bad Request",
+            "mensagem": "O campo 'sessao_id' não pode estar vazio."
+        }), 400
+
+    # Inicializa o histórico da sessão se for nova
+    with sessoes_lock:
+        sessoes_memoria.setdefault(sessao_id, [
+            {"role": "system", "content": SYSTEM_PROMPT_GAMER}
+        ])
+        sessoes_memoria[sessao_id].append({"role": "user", "content": mensagem_usuario})
+        limitar_historico(sessoes_memoria[sessao_id])
+        historico_sessao = list(sessoes_memoria[sessao_id][-10:])
 
     # Processa a resposta via pipeline RAG ou Fallback
     resposta_final = None
 
     if RUN_PIPELINE_OK:
         try:
-            # Injeta o contexto no pipeline
-            iana_v2.msg_final = mensagem_usuario
-            iana_v2.nome_usuario = nome_usuario
-            iana_v2.historico = sessoes_memoria[sessao_id][-10:]
-            resposta_final = iana_v2.run_pipeline()
+            with pipeline_lock:
+                iana_v2.msg_final = mensagem_usuario
+                iana_v2.nome_usuario = nome_usuario
+                iana_v2.historico = historico_sessao
+                resposta_final = iana_v2.run_pipeline()
         except Exception as e:
             logger.error(f"Erro na execução do pipeline RAG para sessão '{sessao_id}': {e}")
 
@@ -227,14 +320,17 @@ def chat_iana():
         )
 
     # Registra a resposta da Iana no histórico da sessão
-    sessoes_memoria[sessao_id].append({"role": "assistant", "content": resposta_final})
+    with sessoes_lock:
+        sessoes_memoria[sessao_id].append({"role": "assistant", "content": str(resposta_final)})
+        limitar_historico(sessoes_memoria[sessao_id])
+        historico_count = len(sessoes_memoria[sessao_id]) - 1
 
     return jsonify({
         "status": "sucesso",
         "versao_api": API_VERSION,
         "sessao_id": sessao_id,
         "resposta": resposta_final,
-        "historico_count": len(sessoes_memoria[sessao_id]) - 1,
+        "historico_count": historico_count,
         "timestamp": int(time.time())
     }), 200
 
@@ -249,7 +345,11 @@ def obter_historico(sessao_id: str):
     if not autenticado and erro_resp:
         return erro_resp
 
-    if sessao_id not in sessoes_memoria:
+    with sessoes_lock:
+        sessao = sessoes_memoria.get(sessao_id)
+        mensagens = [dict(m) for m in sessao if m.get("role") != "system"] if sessao else None
+
+    if mensagens is None:
         return jsonify({
             "status": "erro",
             "codigo": 404,
@@ -258,8 +358,6 @@ def obter_historico(sessao_id: str):
         }), 404
 
     # Filtra as mensagens (descontando o system prompt interno)
-    mensagens = [m for m in sessoes_memoria[sessao_id] if m.get("role") != "system"]
-
     return jsonify({
         "status": "sucesso",
         "sessao_id": sessao_id,
@@ -278,9 +376,9 @@ def limpar_historico(sessao_id: str):
     if not autenticado and erro_resp:
         return erro_resp
 
-    if sessao_id in sessoes_memoria:
-        del sessoes_memoria[sessao_id]
-        logger.info(f"Sessão '{sessao_id}' resetada com sucesso.")
+    with sessoes_lock:
+        sessoes_memoria.pop(sessao_id, None)
+    logger.info(f"Sessão '{sessao_id}' resetada com sucesso.")
 
     return jsonify({
         "status": "sucesso",
@@ -295,5 +393,17 @@ def limpar_historico(sessao_id: str):
 
 if __name__ == '__main__':
     porta = int(os.getenv("PORT", "5000"))
-    logger.info(f"🚀 Iniciando Iana API Server v{API_VERSION} na porta {porta}...")
-    app.run(host='0.0.0.0', port=porta, debug=True)
+    debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+    logger.info(f"Iniciando Iana API Server v{API_VERSION} na porta {porta}...")
+    if debug:
+        app.run(host="0.0.0.0", port=porta, debug=True)
+    else:
+        try:
+            waitress = importlib.import_module("waitress")
+        except ImportError as erro:
+            if os.getenv("NODE_ENV", "").lower() == "production":
+                raise RuntimeError("Waitress é obrigatório em produção.") from erro
+            logger.warning("Waitress não instalado; usando servidor Flask de desenvolvimento.")
+            app.run(host="0.0.0.0", port=porta, debug=False)
+        else:
+            waitress.serve(app, host="0.0.0.0", port=porta)

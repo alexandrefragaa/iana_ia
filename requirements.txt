@@ -1,5 +1,7 @@
 requests
 python-dotenv
+Flask
+waitress
 chromadb
 sentence-transformers
 beautifulsoup4

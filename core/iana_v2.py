@@ -95,11 +95,15 @@ contexto_memoria_usuario = ""
 bloco_contexto = ""
 instrucao_humor = ""
 
-# Credenciais da API Customizada
-MINHA_API_URL = os.getenv("MINHA_API_URL", "http://localhost:11434/v1/chat/completions").strip()
+# Provedor de geração da Iana
+MINHA_API_PROVIDER = os.getenv("MINHA_API_PROVIDER", "gemini" if os.getenv("GEMINI_API_KEY") else "custom").strip().lower()
 MINHA_API_KEY = os.getenv("MINHA_API_KEY", "").strip().replace('"', "").replace("'", "")
 MINHA_API_MODEL = os.getenv("MINHA_API_MODEL", "llama-3.3-70b-versatile").strip()
-MINHA_API_TIMEOUT = int(os.getenv("MINHA_API_TIMEOUT", "25"))
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_API_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_API_MODEL}:generateContent"
+MINHA_API_URL = os.getenv("MINHA_API_URL", "").strip()
+MINHA_API_TIMEOUT = int(os.getenv("MINHA_API_TIMEOUT", "15"))
 
 
 # ================================================================
@@ -155,6 +159,13 @@ Você é a Iana.
 """.strip()
 
 system_prompt = os.getenv("SYSTEM_PROMPT", "").strip() or DEFAULT_SYSTEM_PROMPT
+
+INSTRUCAO_CONVERSA_NATURAL = """
+Converse de forma natural e acolhedora, respeitando esta personalidade e as preferências definidas no system prompt.
+Perceba o tom, a intenção e o tamanho da mensagem da pessoa; acompanhe esse ritmo sem imitar ou repetir suas palavras.
+Em papo casual, responda como numa conversa contínua e use o histórico recente. Não transforme respostas simples em listas, avisos ou textos de suporte técnico.
+Use emojis e expressões gamer apenas quando combinarem com o momento. Não anuncie buscas, fontes ou limitações técnicas se isso não for relevante para a pergunta.
+""".strip()
 
 
 # ================================================================
@@ -442,6 +453,21 @@ def formatar_historico(hist=None, nome_usr=None):
     )
 
 
+def mensagem_conversacional_curta(texto):
+    """Identifica conversa social simples que não precisa de busca factual."""
+    texto_limpo = re.sub(r"\s+", " ", texto_seguro(texto).lower()).strip()
+    if len(texto_limpo) > 100:
+        return False
+
+    padroes = (
+        r"(?:oi|olá|ola|e aí|eai|eae|hey|salve|fala|bom dia|boa tarde|boa noite)"
+        r"(?:[!,.? ]+(?:tudo bem|como vai|como você está|como voce esta|e você|e voce|por aí|por ai))*[!,.? ]*",
+        r"(?:tudo bem|como vai|como você está|como voce esta|e você|e voce)[!,.? ]*",
+        r"(?:valeu|obrigado|obrigada|brigado|brigada)(?:[!,.? ]+(?:pela ajuda|viu|e você|e voce))*[!,.? ]*",
+    )
+    return any(re.fullmatch(padrao, texto_limpo) for padrao in padroes)
+
+
 # ================================================================
 # CONSTRUTOR MASTER DO PROMPT
 # ================================================================
@@ -455,7 +481,7 @@ def construir_prompt_master(msg_usr=None, usr_nome=None, ctx_bloco=None, cfg_usr
     hist = hist_lista if hist_lista is not None else historico
 
     # 1. System Prompt
-    sys_partes = [system_prompt or DEFAULT_SYSTEM_PROMPT]
+    sys_partes = [system_prompt or DEFAULT_SYSTEM_PROMPT, INSTRUCAO_CONVERSA_NATURAL]
     cfg_texto = montar_config_prompt(config)
     if cfg_texto:
         sys_partes.append(cfg_texto)
@@ -532,15 +558,11 @@ def extrair_texto_da_resposta_api(dados):
     return None
 
 
-def chamar_minha_api(msg_usr=None, usr_nome=None, cfg_usr=None, tentativas_maximas=2):
+def chamar_minha_api(msg_usr=None, usr_nome=None, cfg_usr=None, tentativas_maximas=1):
     """Executa a chamada HTTP POST para a sua API customizada."""
     local_only = os.getenv("IANA_LOCAL_ONLY", "false").lower() == "true"
     if local_only:
         sys.stderr.write("[API Customizada] Modo local ativo.\n")
-        return None
-
-    if not MINHA_API_URL:
-        sys.stderr.write("[API Customizada] Erro: MINHA_API_URL não configurada no .env.\n")
         return None
 
     system_str, user_str = construir_prompt_master(
@@ -548,6 +570,53 @@ def chamar_minha_api(msg_usr=None, usr_nome=None, cfg_usr=None, tentativas_maxim
         usr_nome=usr_nome,
         cfg_usr=cfg_usr
     )
+
+    if MINHA_API_PROVIDER == "gemini":
+        if not GEMINI_API_KEY:
+            sys.stderr.write("[Gemini] GEMINI_API_KEY não configurada.\n")
+            return None
+
+        payload_gemini = {
+            "systemInstruction": {"parts": [{"text": system_str}]},
+            "contents": [{"role": "user", "parts": [{"text": user_str}]}],
+            "generationConfig": {
+                "temperature": 0.65,
+                "topP": 0.9,
+                "maxOutputTokens": 280 if mensagem_conversacional_curta(msg_usr or msg_final) else 900
+            }
+        }
+        try:
+            response = requests.post(
+                GEMINI_API_URL,
+                params={"key": GEMINI_API_KEY},
+                json=payload_gemini,
+                headers={"Content-Type": "application/json"},
+                timeout=MINHA_API_TIMEOUT
+            )
+            response.raise_for_status()
+            candidates = response.json().get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                texto = "\n".join(
+                    part["text"].strip()
+                    for part in parts
+                    if isinstance(part, dict) and part.get("text", "").strip()
+                )
+                if texto:
+                    return texto
+            sys.stderr.write("[Gemini] Resposta sem texto utilizável.\n")
+        except requests.exceptions.Timeout:
+            sys.stderr.write(f"[Gemini] Timeout após {MINHA_API_TIMEOUT}s.\n")
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else "desconhecido"
+            sys.stderr.write(f"[Gemini] Erro HTTP {status}.\n")
+        except Exception as e:
+            sys.stderr.write(f"[Gemini] Falha na chamada: {type(e).__name__}.\n")
+        return None
+
+    if not MINHA_API_URL:
+        sys.stderr.write("[API Customizada] Erro: MINHA_API_URL não configurada no .env.\n")
+        return None
 
     headers = {
         "Content-Type": "application/json"
@@ -564,7 +633,7 @@ def chamar_minha_api(msg_usr=None, usr_nome=None, cfg_usr=None, tentativas_maxim
         ],
         "temperature": 0.65,
         "top_p": 0.90,
-        "max_tokens": 2048
+        "max_tokens": 280 if mensagem_conversacional_curta(msg_usr or msg_final) else 2048
     }
 
     sys.stderr.write(f"[API Customizada] Conectando a {MINHA_API_URL}...\n")
@@ -662,8 +731,13 @@ def run_pipeline():
     global bloco_contexto
     global instrucao_humor
 
-    contexto_conhecimento = consultar_conhecimento(msg_final, limite=5)
-    contexto_memoria_usuario = consultar_memoria_usuario(msg_final, nome_usuario, limite=6)
+    conversa_curta = mensagem_conversacional_curta(msg_final)
+    if conversa_curta:
+        contexto_conhecimento = ""
+        contexto_memoria_usuario = ""
+    else:
+        contexto_conhecimento = consultar_conhecimento(msg_final, limite=5)
+        contexto_memoria_usuario = consultar_memoria_usuario(msg_final, nome_usuario, limite=6)
     bloco_contexto = montar_bloco_contexto(contexto_conhecimento, contexto_memoria_usuario)
     instrucao_humor = obter_instrucao_humor(msg_final, config_usuario)
 

@@ -29,9 +29,11 @@ const server = http.createServer(app);
    ================================================================ */
 const PORT = process.env.PORT || 3333;
 const PYTHON_API_PORT = process.env.PYTHON_API_PORT || '5000';
-const PYTHON_API_URL = process.env.PYTHON_API_URL || `http://127.0.0.1:${PYTHON_API_PORT}/api/v1/chat`;
 const START_PYTHON_API = process.env.START_PYTHON_API === 'true' ||
   (process.env.START_PYTHON_API !== 'false' && !process.env.PYTHON_API_URL);
+const PYTHON_API_URL = START_PYTHON_API
+  ? `http://127.0.0.1:${PYTHON_API_PORT}/api/v1/chat`
+  : process.env.PYTHON_API_URL || `http://127.0.0.1:${PYTHON_API_PORT}/api/v1/chat`;
 const IANA_API_KEY = (process.env.IANA_API_KEY || '').trim();
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
 

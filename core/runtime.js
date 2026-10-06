@@ -27,11 +27,11 @@ export async function ensureConversation(pool, userId, requestedId, message) {
 }
 
 export function attachmentPart(body) {
-  const raw = body.imagem || body.audio || body.arquivo;
+  const raw = body.imagem || body.audio || body.video || body.arquivo;
   if (!raw) return null;
   if (typeof raw !== 'string') throw Object.assign(new Error('Anexo inválido.'), { status: 400 });
   const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(raw);
-  const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'audio/webm', 'audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'application/pdf']);
+  const allowed = new Set(['image/png', 'image/jpeg', 'image/webp', 'audio/webm', 'audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'video/mp4', 'video/webm', 'video/quicktime', 'application/pdf']);
   if (!match || !allowed.has(match[1])) throw Object.assign(new Error('Formato de anexo não suportado.'), { status: 400 });
   if (Buffer.byteLength(match[2], 'base64') > 10 * 1024 * 1024) throw Object.assign(new Error('Anexo maior que 10 MB.'), { status: 413 });
   return { inlineData: { mimeType: match[1], data: match[2] } };

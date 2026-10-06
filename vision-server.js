@@ -10,10 +10,26 @@ const app=express();
 const port=Number(process.env.IANA_VISION_PORT||3334);
 const token=crypto.randomBytes(24).toString('hex');
 const detector=new VisionBridge(root);
+const allowedOrigins=new Set([
+  'https://iana-ia.onrender.com',
+  'http://localhost:3333',
+  'http://localhost:3000',
+  ...(process.env.ALLOWED_ORIGINS||'').split(',').map(origin=>origin.trim()).filter(Boolean)
+]);
 app.use((req,res,next)=>{
   const host=req.hostname;
   if(!['localhost','127.0.0.1','::1'].includes(host))return res.status(403).json({error:'Acesso somente local.'});
   res.set('Cache-Control','no-store');
+  const origin=req.get('Origin');
+  if(origin){
+    if(!allowedOrigins.has(origin))return res.status(403).json({error:'Origem não permitida.'});
+    res.set('Access-Control-Allow-Origin',origin);
+    res.set('Vary','Origin');
+    res.set('Access-Control-Allow-Headers','Content-Type, X-Iana-Vision');
+    res.set('Access-Control-Allow-Methods','GET, POST, OPTIONS');
+    if(req.get('Access-Control-Request-Private-Network')==='true')res.set('Access-Control-Allow-Private-Network','true');
+  }
+  if(req.method==='OPTIONS')return res.sendStatus(origin&&allowedOrigins.has(origin)?204:403);
   if(req.method==='POST' && req.get('X-Iana-Vision')!==token)return res.status(403).json({error:'Sessão local inválida.'});
   next();
 });

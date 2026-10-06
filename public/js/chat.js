@@ -39,8 +39,16 @@ let audioPcmResto = new Uint8Array(0);
 let vozProcessando = false;
 let vozFalando = false;
 let vozInicializando = false;
+let vozSpeechRetryCount = 0;
+let vozSpeechRetryTimer = null;
 
 let emChamadaVoz = false;
+let visaoChamadaAtiva = false;
+let visaoChamadaToken = '';
+let visaoChamadaStream = null;
+let visaoChamadaVideo = null;
+let visaoChamadaCanvas = null;
+let visaoChamadaOverlay = null;
 
 let mediaRecorderAudio = null;
 let audioChunks = [];
@@ -364,6 +372,28 @@ function falar(texto) {
            audio: 'BASE64_PCM'
        });
 
+       vozSocket.on('voz:usar-tts-local', dados => {
+           const texto = String(dados?.texto || '');
+           if (!texto || !emChamadaVoz || typeof speechSynthesis === 'undefined') {
+               vozSocket?.emit('voz:tts-local-finalizado');
+               return;
+           }
+
+           speechSynthesis.cancel();
+           const fala = new SpeechSynthesisUtterance(texto);
+           fala.lang = 'pt-BR';
+           fala.voice = escolherVozTTS() || null;
+           fala.onstart = () => {
+               vozFalando = true;
+               atualizarEstadoVoz('falando', 'Iana está falando...');
+           };
+           fala.onend = fala.onerror = () => {
+               vozFalando = false;
+               if (emChamadaVoz) vozSocket?.emit('voz:tts-local-finalizado');
+           };
+           speechSynthesis.speak(fala);
+       });
+
    O áudio esperado nesta implementação é:
 
        PCM
@@ -586,7 +616,9 @@ function garantirSocketVoz() {
 
         try {
             vozSocket.emit('voz:iniciar', {
-                idConversa: idConversaAtiva
+                idConversa: idConversaAtiva,
+                nomeUsuario: usuarioAtual?.nome || 'Jogador',
+                configUsuario: obterConfigSalva()
             });
         } catch (erro) {
             console.error(
@@ -636,6 +668,28 @@ function garantirSocketVoz() {
         if (usuarioAtual) carregarHistorico();
     });
 
+
+    vozSocket.on('voz:usar-tts-local', dados => {
+        const texto = String(dados?.texto || '');
+        if (!texto || !emChamadaVoz || typeof speechSynthesis === 'undefined') {
+            vozSocket.emit('voz:tts-local-finalizado');
+            return;
+        }
+
+        speechSynthesis.cancel();
+        const fala = new SpeechSynthesisUtterance(texto);
+        fala.lang = 'pt-BR';
+        fala.voice = escolherVozTTS() || null;
+        fala.onstart = () => {
+            vozFalando = true;
+            atualizarEstadoVoz('falando', 'Iana está falando...');
+        };
+        fala.onend = fala.onerror = () => {
+            vozFalando = false;
+            if (emChamadaVoz) vozSocket.emit('voz:tts-local-finalizado');
+        };
+        speechSynthesis.speak(fala);
+    });
 
     vozSocket.on('voz:audio-resposta', dados => {
         tocarAudioEleven(dados?.audio);
@@ -919,21 +973,17 @@ async function capturarFoto() {
                 0.90
             );
 
-        adicionarImagemUsuario(
-            dataUrl,
-            'foto-camera.jpg'
-        );
-
         fecharCamera();
 
         await processarEnvioIA(
-            '[Usuário enviou uma foto capturada pela câmera.]',
+            'Dá uma olhada nesta foto e me responde naturalmente sobre o que você vê.',
             {
                 tipo: 'imagem',
                 imagem: dataUrl,
                 nome: 'foto-camera.jpg',
                 mimeType: 'image/jpeg'
-            }
+            },
+            { tipo: 'imagem', dataUrl, nome: 'foto-camera.jpg' }
         );
 
     } catch (erro) {
@@ -1010,6 +1060,7 @@ async function abrirVoz() {
     vozProcessando = false;
     vozFalando = false;
     vozInicializando = false;
+    vozSpeechRetryCount = 0;
 
     window._vozMutado = false;
 
@@ -1048,7 +1099,9 @@ async function abrirVoz() {
 
     if (socket.connected) {
         socket.emit('voz:iniciar', {
-            idConversa: idConversaAtiva
+            idConversa: idConversaAtiva,
+            nomeUsuario: usuarioAtual?.nome || 'Jogador',
+            configUsuario: obterConfigSalva()
         });
         iniciarReconhecimentoVoz();
     }
@@ -1059,6 +1112,7 @@ function fecharVoz() {
     const overlay = obterElemento('overlay-voz');
 
     emChamadaVoz = false;
+    pararVisaoChamada();
     vozProcessando = false;
     vozFalando = false;
     vozInicializando = false;
@@ -1125,7 +1179,9 @@ function fecharVoz() {
 
     if (mute) {
         mute.classList.remove('mutado');
-        mute.textContent = '🎙️';
+        mute.setAttribute('aria-pressed', 'false');
+        mute.setAttribute('aria-label', 'Mutar microfone');
+        mute.title = 'Mutar microfone';
     }
 
     if (window.IanaHUD?.setEstado) {
@@ -1268,6 +1324,9 @@ function pararVisualizacaoAudio() {
 ================================================================ */
 
 function pararReconhecimentoVoz() {
+    clearTimeout(vozSpeechRetryTimer);
+    vozSpeechRetryTimer = null;
+
     const rec =
         window._recognitionVoz;
 
@@ -1395,6 +1454,7 @@ function iniciarReconhecimentoVoz() {
         const texto =
             textoFinal.trim();
 
+        vozSpeechRetryCount = 0;
         console.info('[IANA SPEECH] texto reconhecido:', texto);
 
         if (vozFalando && vozSocket?.connected) {
@@ -1486,14 +1546,20 @@ function iniciarReconhecimentoVoz() {
             return;
         }
 
+        if (event.error === 'network') {
+            vozSpeechRetryCount += 1;
+        }
+
         if (
             !vozProcessando &&
             !vozFalando &&
             !window._vozMutado
         ) {
             atualizarEstadoVoz(
-                'ouvindo',
-                'Reconectando ao microfone...'
+                'processando',
+                event.error === 'network'
+                    ? 'Reconectando ao reconhecimento de voz...'
+                    : 'Reconectando ao microfone...'
             );
         }
     };
@@ -1514,7 +1580,20 @@ function iniciarReconhecimentoVoz() {
             !vozFalando &&
             !vozProcessando
         ) {
-            setTimeout(() => {
+            if (vozSpeechRetryCount >= 4) {
+                atualizarEstadoVoz(
+                    'processando',
+                    'O reconhecimento de voz está indisponível. Confira a conexão e reabra a chamada.'
+                );
+                return;
+            }
+
+            const retryDelay = vozSpeechRetryCount
+                ? Math.min(750 * (2 ** (vozSpeechRetryCount - 1)), 6000)
+                : 300;
+
+            vozSpeechRetryTimer = setTimeout(() => {
+                vozSpeechRetryTimer = null;
                 if (
                     emChamadaVoz &&
                     !window._vozMutado &&
@@ -1524,7 +1603,7 @@ function iniciarReconhecimentoVoz() {
                 ) {
                     iniciarReconhecimentoVoz();
                 }
-            }, 300);
+            }, retryDelay);
         }
     };
 
@@ -1558,7 +1637,9 @@ function toggleMuteVoz() {
         btn?.classList.add('mutado');
 
         if (btn) {
-            btn.textContent = '🔇';
+            btn.setAttribute('aria-pressed', 'true');
+            btn.setAttribute('aria-label', 'Ativar microfone');
+            btn.title = 'Ativar microfone';
         }
 
         atualizarEstadoVoz(
@@ -1574,7 +1655,9 @@ function toggleMuteVoz() {
     btn?.classList.remove('mutado');
 
     if (btn) {
-        btn.textContent = '🎙️';
+        btn.setAttribute('aria-pressed', 'false');
+        btn.setAttribute('aria-label', 'Mutar microfone');
+        btn.title = 'Mutar microfone';
     }
 
     if (
@@ -1729,6 +1812,21 @@ function iniciarMenuUpload() {
             }
         );
 
+    obterElemento('up-video')
+        ?.addEventListener(
+            'click',
+            () => {
+                menu.style.display = 'none';
+
+                if (fileInput) {
+                    fileInput.accept =
+                        'video/mp4,video/webm,video/quicktime';
+
+                    fileInput.click();
+                }
+            }
+        );
+
 
     obterElemento('up-arquivo')
         ?.addEventListener(
@@ -1738,7 +1836,7 @@ function iniciarMenuUpload() {
 
                 if (fileInput) {
                     fileInput.accept =
-                        '.pdf,.txt,.doc,.docx';
+                        '.pdf,.txt';
 
                     fileInput.click();
                 }
@@ -1810,19 +1908,37 @@ function iniciarUpload() {
                             file
                         );
 
-                    adicionarImagemUsuario(
-                        dataUrl,
-                        file.name
-                    );
-
                     await processarEnvioIA(
-                        `[Usuário enviou uma imagem: ${file.name}]`,
+                        'Dá uma olhada nesta imagem e me responde naturalmente sobre o que você vê.',
                         {
                             tipo: 'imagem',
                             imagem: dataUrl,
                             nome: file.name,
                             mimeType: file.type
-                        }
+                        },
+                        { tipo: 'imagem', dataUrl, nome: file.name }
+                    );
+
+                    return;
+                }
+
+                if (
+                    file.type.startsWith(
+                        'video/'
+                    ) &&
+                    ['video/mp4', 'video/webm', 'video/quicktime'].includes(file.type)
+                ) {
+                    const dataUrl = await arquivoParaDataURL(file);
+
+                    await processarEnvioIA(
+                        'Assista a este vídeo e me responda naturalmente sobre o que acontece nele.',
+                        {
+                            tipo: 'video',
+                            video: dataUrl,
+                            nome: file.name,
+                            mimeType: file.type
+                        },
+                        { tipo: 'video', dataUrl, nome: file.name }
                     );
 
                     return;
@@ -1834,14 +1950,17 @@ function iniciarUpload() {
                         'audio/'
                     )
                 ) {
+                    const dataUrl = await arquivoParaDataURL(file);
+
                     await processarEnvioIA(
-                        `[Usuário enviou um áudio: ${file.name}]`,
+                        'Ouça este áudio e me responda naturalmente com base no que foi dito.',
                         {
                             tipo: 'audio',
-                            audio: await arquivoParaDataURL(file),
+                            audio: dataUrl,
                             nome: file.name,
                             mimeType: file.type
-                        }
+                        },
+                        { tipo: 'audio', dataUrl, nome: file.name }
                     );
 
                     return;
@@ -1862,27 +1981,30 @@ function iniciarUpload() {
                         texto.slice(0, 12000);
 
                     await processarEnvioIA(
-                        `[Usuário enviou o arquivo "${file.name}".]\n\nConteúdo:\n${limitado}`,
+                        `Leia o arquivo "${file.name}" e responda naturalmente com base no conteúdo abaixo:\n\n${limitado}`,
                         {
                             tipo: 'arquivo',
                             nome: file.name,
                             mimeType: file.type
-                        }
+                        },
+                        { tipo: 'arquivo', nome: file.name, mimeType: 'text/plain' }
                     );
 
                     return;
                 }
 
 
-                if (file.type !== 'application/pdf') throw new Error('Use imagem PNG/JPEG/WebP, áudio, PDF ou TXT.');
+                if (file.type !== 'application/pdf') throw new Error('Use imagem PNG/JPEG/WebP, vídeo MP4/WebM/MOV, áudio, PDF ou TXT.');
+                const dataUrl = await arquivoParaDataURL(file);
                 await processarEnvioIA(
-                    `[Usuário enviou um arquivo: ${file.name}]`,
+                    `Leia o PDF "${file.name}" e responda naturalmente com base no conteúdo dele.`,
                     {
                         tipo: 'arquivo',
-                        arquivo: await arquivoParaDataURL(file),
+                        arquivo: dataUrl,
                         nome: file.name,
                         mimeType: file.type
-                    }
+                    },
+                    { tipo: 'arquivo', dataUrl, nome: file.name, mimeType: file.type }
                 );
 
             } catch (erro) {
@@ -2394,7 +2516,7 @@ async function realizarLogin() {
             mostrarErroTela(
                 'login-erro',
                 mensagemErroAuth(
-                    data.erro,
+                    data.mensagem || data.erro,
                     'Falha no login.'
                 )
             );
@@ -2489,7 +2611,7 @@ async function realizarCadastro() {
             mostrarErroTela(
                 'cad-erro',
                 mensagemErroAuth(
-                    data.erro,
+                    data.mensagem || data.erro,
                     'Falha no cadastro.'
                 )
             );
@@ -2523,14 +2645,21 @@ async function realizarCadastro() {
 
 async function realizarLogout() {
     try {
-        await fetch(
+        const res = await fetch(
             '/auth/logout',
             {
                 method: 'POST',
                 credentials: 'include'
             }
         );
-    } catch {}
+        if (!res.ok) {
+            throw new Error('Não foi possível encerrar a sessão.');
+        }
+    } catch (erro) {
+        console.error('[IANA LOGOUT]', erro);
+        alert('Não foi possível encerrar a sessão. Tente novamente.');
+        return;
+    }
 
     atualizarUIVisitante();
 
@@ -2581,7 +2710,7 @@ async function enviarCodigoRecuperacao() {
             mostrarErroTela(
                 'esq-erro',
                 mensagemErroAuth(
-                    data.erro,
+                    data.mensagem || data.erro,
                     'Não foi possível enviar o código.'
                 )
             );
@@ -2656,7 +2785,7 @@ async function alterarSenha() {
             mostrarErroTela(
                 'cod-erro',
                 mensagemErroAuth(
-                    data.erro,
+                    data.mensagem || data.erro,
                     'Código inválido.'
                 )
             );
@@ -3057,11 +3186,13 @@ function renderizarMensagens(mensagens) {
             mensagem.content ??
             mensagem.conteudo ??
             mensagem.texto ??
+            mensagem.mensagem ??
             '';
 
+        const papelNormalizado = String(papel || '').toLowerCase();
         if (
-            papel === 'user' ||
-            papel === 'usuario'
+            papelNormalizado === 'user' ||
+            papelNormalizado === 'usuario'
         ) {
             adicionarMensagemDOM(
                 'usuario',
@@ -3127,34 +3258,45 @@ function adicionarMensagemDOM(
 }
 
 
-function adicionarImagemUsuario(
-    dataUrl,
-    nome
-) {
+function adicionarAnexoUsuarioDOM(anexo) {
     const container =
         obterElemento('chat-messages') ||
         obterElemento('mensagens');
 
-    if (!container) {
-        return;
-    }
+    if (!container) return;
 
     const mensagem =
         document.createElement('div');
 
     mensagem.className =
         'mensagem mensagem-usuario';
+    mensagem.dataset.role = 'usuario';
 
-    mensagem.innerHTML = `
-        <div class="mensagem-conteudo">
-            <img
-                src="${escaparHTML(dataUrl)}"
-                alt="${escaparHTML(nome || 'Imagem enviada')}"
-                style="max-width:320px;max-height:320px;border-radius:12px;object-fit:contain"
-            >
-        </div>
-    `;
+    const conteudo = document.createElement('div');
+    conteudo.className = 'mensagem-conteudo mensagem-anexo-conteudo';
 
+    if (anexo.dataUrl && anexo.tipo === 'imagem') {
+        const preview = document.createElement('img');
+        preview.src = anexo.dataUrl;
+        preview.alt = 'Imagem anexada';
+        conteudo.appendChild(preview);
+    } else if (anexo.dataUrl && anexo.tipo === 'video') {
+        const preview = document.createElement('video');
+        preview.src = anexo.dataUrl;
+        preview.controls = true;
+        preview.preload = 'metadata';
+        preview.setAttribute('aria-label', 'Vídeo anexado');
+        conteudo.appendChild(preview);
+    } else if (anexo.dataUrl && anexo.tipo === 'audio') {
+        const preview = document.createElement('audio');
+        preview.src = anexo.dataUrl;
+        preview.controls = true;
+        preview.preload = 'metadata';
+        preview.setAttribute('aria-label', 'Áudio anexado');
+        conteudo.appendChild(preview);
+    }
+
+    mensagem.appendChild(conteudo);
     container.appendChild(
         mensagem
     );
@@ -3502,7 +3644,8 @@ function atualizarMensagemIA(
 
 async function processarEnvioIA(
     mensagem,
-    anexo = null
+    anexo = null,
+    visualizacaoAnexo = null
 ) {
     if (
         aguardandoResposta &&
@@ -3527,10 +3670,14 @@ async function processarEnvioIA(
             true
         );
 
-        adicionarMensagemDOM(
-            'usuario',
-            texto
-        );
+        if (visualizacaoAnexo) {
+            adicionarAnexoUsuarioDOM(visualizacaoAnexo);
+        } else {
+            adicionarMensagemDOM(
+                'usuario',
+                texto
+            );
+        }
 
         removerWelcome();
 
@@ -3608,6 +3755,7 @@ async function processarEnvioIA(
             throw new Error(
                 erro?.erro ||
                 erro?.error ||
+                erro?.mensagem ||
                 `Erro HTTP ${res.status}`
             );
         }
@@ -3744,7 +3892,7 @@ async function processarEnvioIA(
         } else {
             adicionarMensagemDOM(
                 'ia',
-                'Não foi possível processar sua mensagem. Tente novamente.'
+                erro?.message || 'Não foi possível processar sua mensagem. Tente novamente.'
             );
         }
 
@@ -3965,11 +4113,11 @@ async function enviarFeedback() {
                 }
             );
 
-        if (!res.ok) {
-            throw new Error(
-                'Falha ao enviar feedback.'
-            );
-        }
+        let data = {};
+        try {
+            data = await res.json();
+        } catch {}
+        if (!res.ok) throw new Error(data.mensagem || data.erro || 'Falha ao enviar feedback.');
 
         if (input) {
             input.value = '';
@@ -3982,14 +4130,11 @@ async function enviarFeedback() {
         );
 
     } catch (erro) {
-        console.error(
-            '[IANA FEEDBACK]',
-            erro
-        );
+        console.error('[IANA FEEDBACK]', erro);
 
         mostrarErroTela(
             'feedback-erro',
-            'Não foi possível enviar o feedback.'
+            erro.message || 'Não foi possível enviar o feedback.'
         );
     }
 }
@@ -4283,6 +4428,206 @@ function iniciarEventosVoz() {
         'click',
         toggleMuteVoz
     );
+
+    obterElemento('btn-voz-visao')?.addEventListener('click', iniciarVisaoChamada);
+    obterElemento('btn-voz-visao-parar')?.addEventListener('click', pararVisaoChamada);
+}
+
+const URL_VISAO_LOCAL = 'http://127.0.0.1:3334';
+
+async function chamarVisaoLocal(path, options = {}) {
+    const response = await fetch(`${URL_VISAO_LOCAL}${path}`, {
+        mode: 'cors',
+        cache: 'no-store',
+        ...options
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Serviço de visão respondeu HTTP ${response.status}.`);
+    return data;
+}
+
+async function iniciarVisaoChamada() {
+    if (!emChamadaVoz || visaoChamadaAtiva) return;
+    const iniciar = obterElemento('btn-voz-visao');
+    const parar = obterElemento('btn-voz-visao-parar');
+    const status = obterElemento('voz-visao-status');
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+        if (status) status.textContent = 'Este navegador não permite compartilhar a tela.';
+        return;
+    }
+
+    if (iniciar) iniciar.disabled = true;
+    if (status) status.textContent = 'Conectando ao YOLO local…';
+    try {
+        visaoChamadaStream = await navigator.mediaDevices.getDisplayMedia({
+            video: { frameRate: { ideal: 5, max: 10 } },
+            audio: false
+        });
+        if (!emChamadaVoz) {
+            visaoChamadaStream.getTracks().forEach(track => track.stop());
+            visaoChamadaStream = null;
+            return;
+        }
+        const track = visaoChamadaStream.getVideoTracks()[0];
+        if (track) track.addEventListener('ended', pararVisaoChamada, { once: true });
+
+        const localStatus = await chamarVisaoLocal('/api/status');
+        visaoChamadaToken = localStatus.token;
+        if (localStatus.error) throw new Error(localStatus.error);
+        if (!localStatus.ready) {
+            await chamarVisaoLocal('/api/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Iana-Vision': visaoChamadaToken },
+                body: '{}'
+            });
+            if (status) status.textContent = 'Carregando o modelo YOLO local…';
+            const deadline = Date.now() + 90_000;
+            let pronto = false;
+            while (Date.now() < deadline && emChamadaVoz) {
+                await sleep(1000);
+                const atual = await chamarVisaoLocal('/api/status');
+                if (atual.error) throw new Error(atual.error);
+                if (atual.ready) {
+                    pronto = true;
+                    break;
+                }
+            }
+            if (!pronto) throw new Error('O detector local não ficou pronto. Verifique a janela da Visão local.');
+        }
+
+        const preview = obterElemento('voz-visao-preview');
+        const previewVideo = obterElemento('voz-visao-video');
+        visaoChamadaOverlay = obterElemento('voz-visao-overlay');
+        if (!preview || !previewVideo || !visaoChamadaOverlay) {
+            throw new Error('A prévia de visão não está disponível nesta página.');
+        }
+        visaoChamadaVideo = previewVideo;
+        visaoChamadaVideo.srcObject = visaoChamadaStream;
+        visaoChamadaVideo.muted = true;
+        await visaoChamadaVideo.play();
+        visaoChamadaCanvas = document.createElement('canvas');
+        visaoChamadaAtiva = true;
+        preview.hidden = false;
+        if (iniciar) iniciar.hidden = true;
+        if (parar) parar.hidden = false;
+        if (status) status.textContent = 'Tela compartilhada · análise local ativa. Diga o nome do jogo para eu consultar os guias certos.';
+        analisarQuadrosDaChamada();
+    } catch (error) {
+        await pararVisaoChamada();
+        if (status) {
+            status.textContent = error?.name === 'NotAllowedError'
+                ? 'Compartilhamento cancelado.'
+                : `${error.message} Inicie o detector neste computador com “npm run vision”.`;
+        }
+    } finally {
+        if (iniciar && !visaoChamadaAtiva) iniciar.disabled = false;
+    }
+}
+
+async function analisarQuadrosDaChamada() {
+    while (visaoChamadaAtiva && visaoChamadaVideo && visaoChamadaCanvas) {
+        try {
+            const video = visaoChamadaVideo;
+            const canvas = visaoChamadaCanvas;
+            if (!video.videoWidth || !video.videoHeight) {
+                await sleep(500);
+                continue;
+            }
+            const escala = Math.min(1, 640 / video.videoWidth);
+            canvas.width = Math.round(video.videoWidth * escala);
+            canvas.height = Math.round(video.videoHeight * escala);
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            const image = canvas.toDataURL('image/jpeg', 0.65).split(',')[1];
+            const result = await chamarVisaoLocal('/api/frame', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Iana-Vision': visaoChamadaToken },
+                body: JSON.stringify({ image })
+            });
+
+            if (!visaoChamadaAtiva) break;
+            const detections = Array.isArray(result.detections) ? result.detections : [];
+            const status = obterElemento('voz-visao-status');
+            const rotulos = [...new Set(detections.map(item => item.label).filter(Boolean))];
+            const overlay = visaoChamadaOverlay;
+            if (overlay) {
+                overlay.width = result.width;
+                overlay.height = result.height;
+                const context = overlay.getContext('2d');
+                context.clearRect(0, 0, overlay.width, overlay.height);
+                context.font = `${Math.max(13, Math.round(overlay.width / 55))}px sans-serif`;
+                context.lineWidth = Math.max(2, overlay.width / 320);
+                context.strokeStyle = '#83f0b8';
+                context.fillStyle = '#83f0b8';
+                for (const detection of detections) {
+                    const [x1, y1, x2, y2] = detection.xyxy || [];
+                    if (![x1, y1, x2, y2].every(Number.isFinite)) continue;
+                    const label = `${detection.label} ${Math.round((detection.confidence || 0) * 100)}%`;
+                    context.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                    const labelY = Math.max(18, y1 - 6);
+                    const labelWidth = context.measureText(label).width + 8;
+                    context.fillRect(x1, labelY - 17, labelWidth, 20);
+                    context.fillStyle = '#07110c';
+                    context.fillText(label, x1 + 4, labelY - 2);
+                    context.fillStyle = '#83f0b8';
+                }
+            }
+            if (status) {
+                status.textContent = rotulos.length
+                    ? `YOLO local ativo · detectado: ${rotulos.join(', ')}`
+                    : 'YOLO local ativo · nenhum elemento reconhecido neste quadro.';
+            }
+            vozSocket?.emit('voz:visao', {
+                width: result.width,
+                height: result.height,
+                detections: detections.map(item => ({
+                    label: item.label,
+                    confidence: item.confidence,
+                    xyxy: item.xyxy
+                }))
+            });
+        } catch (error) {
+            if (visaoChamadaAtiva) {
+                const status = obterElemento('voz-visao-status');
+                if (status) status.textContent = `A análise local parou: ${error.message}`;
+                await pararVisaoChamada();
+            }
+            break;
+        }
+        await sleep(2500);
+    }
+}
+
+async function pararVisaoChamada() {
+    const estavaAtiva = visaoChamadaAtiva;
+    visaoChamadaAtiva = false;
+    visaoChamadaStream?.getTracks().forEach(track => track.stop());
+    visaoChamadaStream = null;
+    if (visaoChamadaVideo) visaoChamadaVideo.srcObject = null;
+    visaoChamadaVideo = null;
+    visaoChamadaCanvas = null;
+    visaoChamadaOverlay?.getContext('2d')?.clearRect(0, 0, visaoChamadaOverlay.width, visaoChamadaOverlay.height);
+    visaoChamadaOverlay = null;
+    const preview = obterElemento('voz-visao-preview');
+    if (preview) preview.hidden = true;
+
+    if (visaoChamadaToken) {
+        chamarVisaoLocal('/api/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Iana-Vision': visaoChamadaToken },
+            body: '{}'
+        }).catch(() => {});
+    }
+    visaoChamadaToken = '';
+
+    const iniciar = obterElemento('btn-voz-visao');
+    const parar = obterElemento('btn-voz-visao-parar');
+    const status = obterElemento('voz-visao-status');
+    if (iniciar) {
+        iniciar.hidden = false;
+        iniciar.disabled = false;
+    }
+    if (parar) parar.hidden = true;
+    if (status && estavaAtiva) status.textContent = 'Compartilhamento de jogo encerrado.';
 }
 
 

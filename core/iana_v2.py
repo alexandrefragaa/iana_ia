@@ -94,6 +94,9 @@ contexto_conhecimento = ""
 contexto_memoria_usuario = ""
 bloco_contexto = ""
 instrucao_humor = ""
+contexto_visual = ""
+jogo_atual = ""
+anexo_usuario = None
 
 # Provedor de geração da Iana
 MINHA_API_PROVIDER = os.getenv("MINHA_API_PROVIDER", "gemini" if os.getenv("GEMINI_API_KEY") else "custom").strip().lower()
@@ -389,18 +392,32 @@ def detectar_humor(texto):
     return "normal"
 
 
-def obter_instrucao_humor(texto, cfg=None):
+def obter_instrucao_humor(texto, cfg=None, estado_detectado=None):
     """Gera diretrizes de tom em XML conforme o humor detectado."""
     config_alvo = cfg if cfg is not None else config_usuario
     if isinstance(config_alvo, dict) and config_alvo.get("humor") is False:
         return ""
 
-    humor = detectar_humor(texto)
+    estados_validos = {"normal", "raiva", "frustrado", "estressado"}
+    humor = (
+        estado_detectado
+        if isinstance(estado_detectado, str) and estado_detectado in estados_validos
+        else detectar_humor(texto)
+    )
+    if humor == "normal":
+        return ""
     if humor == "raiva":
         return (
             "\n\n<diretriz_de_tom>\n"
             "=== ADAPTAÇÃO EMOCIONAL (IRRITAÇÃO DETECTADA) ===\n"
             "O jogador está irritado. Responda com serenidade, empatia e apoio prático. Seja objetivo.\n"
+            "</diretriz_de_tom>"
+        )
+    elif humor == "frustrado":
+        return (
+            "\n\n<diretriz_de_tom>\n"
+            "=== ADAPTAÇÃO EMOCIONAL (FRUSTRAÇÃO DETECTADA) ===\n"
+            "O jogador está frustrado. Reconheça a dificuldade com empatia e ofereça ajuda prática, sem pressionar.\n"
             "</diretriz_de_tom>"
         )
     elif humor == "estressado":
@@ -464,7 +481,7 @@ def mensagem_conversacional_curta(texto):
 
     padroes = (
         r"(?:oi|olá|ola|e aí|eai|eae|hey|salve|fala|bom dia|boa tarde|boa noite)"
-        r"(?:[!,.? ]+(?:tudo bem|como vai|como você está|como voce esta|e você|e voce|por aí|por ai))*[!,.? ]*",
+        r"(?:[!,.? ]+(?:(?:iana|amiga|amigo)[!,.? ]+)?(?:tudo bem|como vai|como você está|como voce esta|e você|e voce|por aí|por ai|está tudo funcionando|esta tudo funcionando))?[!,.? ]*",
         r"(?:tudo bem|como vai|como você está|como voce esta|e você|e voce)[!,.? ]*",
         r"(?:valeu|obrigado|obrigada|brigado|brigada)(?:[!,.? ]+(?:pela ajuda|viu|e você|e voce))*[!,.? ]*",
     )
@@ -488,7 +505,9 @@ def construir_prompt_master(msg_usr=None, usr_nome=None, ctx_bloco=None, cfg_usr
     cfg_texto = montar_config_prompt(config)
     if cfg_texto:
         sys_partes.append(cfg_texto)
-    tom_texto = obter_instrucao_humor(msg, config)
+    tom_texto = obter_instrucao_humor(
+        msg, config, config.get("estado_emocional") if isinstance(config, dict) else None
+    )
     if tom_texto:
         sys_partes.append(tom_texto)
 
@@ -498,6 +517,20 @@ def construir_prompt_master(msg_usr=None, usr_nome=None, ctx_bloco=None, cfg_usr
     usr_partes = []
     if bloco_ctx:
         usr_partes.append(bloco_ctx)
+
+    if contexto_visual:
+        usr_partes.append(
+            "<observacao_visual>\n"
+            "=== ELEMENTOS DETECTADOS NA TELA COMPARTILHADA ===\n"
+            "Uma detecção YOLO genérica pode errar e não identifica necessariamente elementos ou mecânicas do jogo. "
+            "As posições indicam apenas onde algo aparece no quadro compartilhado, não a localização no mapa do jogo. "
+            "Trate os rótulos abaixo como observações incertas, não como fatos confirmados; não invente o que eles significam. "
+            "Use os dados apenas para orientar sua resposta; nunca repita rótulos técnicos, percentuais, coordenadas ou nomes de campos. "
+            "Não mostre chaves, colchetes, parênteses nem marcação XML. Fale naturalmente, como numa conversa por voz.\n"
+            f"{limitar_texto(texto_seguro(contexto_visual), 1200)}\n"
+            "=== FIM DAS OBSERVAÇÕES VISUAIS ===\n"
+            "</observacao_visual>"
+        )
 
     hist_texto = formatar_historico(hist, nome)
     if hist_texto:
@@ -561,7 +594,7 @@ def extrair_texto_da_resposta_api(dados):
     return None
 
 
-def chamar_minha_api(msg_usr=None, usr_nome=None, cfg_usr=None, tentativas_maximas=1):
+def chamar_minha_api(msg_usr=None, usr_nome=None, cfg_usr=None, tentativas_maximas=1, anexo_usr=None):
     """Executa a chamada HTTP POST para a sua API customizada."""
     local_only = os.getenv("IANA_LOCAL_ONLY", "false").lower() == "true"
     if local_only:
@@ -573,15 +606,34 @@ def chamar_minha_api(msg_usr=None, usr_nome=None, cfg_usr=None, tentativas_maxim
         usr_nome=usr_nome,
         cfg_usr=cfg_usr
     )
+    tempo_limite = max(MINHA_API_TIMEOUT, 60) if anexo_usr else MINHA_API_TIMEOUT
+    if anexo_usr and anexo_usr.get("mime_type", "").startswith(("image/", "video/")):
+        system_str += (
+            "\n\n<analise_de_midia_do_usuario>\n"
+            "Analise diretamente a imagem ou o vídeo anexado. Para perguntas sobre o que aparece ou acontece, "
+            "use o conteúdo visual enviado como evidência e responda de forma natural e direta. "
+            "A regra de conhecimento aprendido continua valendo para fatos externos sobre jogos; "
+            "não invente detalhes que não estejam visíveis.\n"
+            "</analise_de_midia_do_usuario>"
+        )
 
     if MINHA_API_PROVIDER == "gemini":
         if not GEMINI_API_KEY:
             sys.stderr.write("[Gemini] GEMINI_API_KEY não configurada.\n")
             return None
 
+        partes_usuario = [{"text": user_str}]
+        if anexo_usr:
+            partes_usuario.append({
+                "inline_data": {
+                    "mime_type": anexo_usr["mime_type"],
+                    "data": anexo_usr["data"],
+                }
+            })
+
         payload_gemini = {
             "systemInstruction": {"parts": [{"text": system_str}]},
-            "contents": [{"role": "user", "parts": [{"text": user_str}]}],
+            "contents": [{"role": "user", "parts": partes_usuario}],
             "generationConfig": {
                 "temperature": 0.65,
                 "topP": 0.9,
@@ -594,7 +646,7 @@ def chamar_minha_api(msg_usr=None, usr_nome=None, cfg_usr=None, tentativas_maxim
                 params={"key": GEMINI_API_KEY},
                 json=payload_gemini,
                 headers={"Content-Type": "application/json"},
-                timeout=MINHA_API_TIMEOUT
+                timeout=tempo_limite
             )
             response.raise_for_status()
             candidates = response.json().get("candidates", [])
@@ -609,7 +661,7 @@ def chamar_minha_api(msg_usr=None, usr_nome=None, cfg_usr=None, tentativas_maxim
                     return texto
             sys.stderr.write("[Gemini] Resposta sem texto utilizável.\n")
         except requests.exceptions.Timeout:
-            sys.stderr.write(f"[Gemini] Timeout após {MINHA_API_TIMEOUT}s.\n")
+            sys.stderr.write(f"[Gemini] Timeout após {tempo_limite}s.\n")
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else "desconhecido"
             sys.stderr.write(f"[Gemini] Erro HTTP {status}.\n")
@@ -697,21 +749,17 @@ def resposta_do_contexto():
     if not fonte:
         return None
 
-    trecho = limitar_texto(fonte, 1400)
     return (
-        f"Minha conexão com o servidor caiu temporariamente, mas busquei no meu inventário de conhecimento e encontrei isso aqui: 🧠🎮\n\n"
-        f"{trecho}\n\n"
-        f"*(Assim que o sinal com a API voltar, consigo elaborar uma estratégia mais detalhada para você!)*"
+        "Tô com uma instabilidade na conexão e não consegui organizar direitinho o que encontrei nos meus guias. "
+        "Prefiro não te passar pedaços soltos como se fossem uma resposta completa. Tenta falar comigo de novo daqui a pouco?"
     )
 
 
 def resposta_criativa_sem_api():
     """Fallback de emergência offline."""
     msg_limpa = (msg_final or "").lower().strip()
-    palavras = msg_limpa.split()
-
     saudacoes = ("oi", "olá", "ola", "hey", "eae", "salve", "fala", "boa", "iaee")
-    if any(p in msg_limpa for p in saudacoes) and len(palavras) <= 4:
+    if any(msg_limpa.startswith(p) for p in saudacoes):
         nome = nome_usuario or "Jogador"
         return f"E aí, {nome}! 👾 Como estão as jogatinas hoje?"
 
@@ -734,17 +782,38 @@ def run_pipeline():
     global bloco_contexto
     global instrucao_humor
 
-    conversa_curta = mensagem_conversacional_curta(msg_final)
+    conversa_curta = mensagem_conversacional_curta(msg_final) and not jogo_atual and not contexto_visual
     if conversa_curta:
         contexto_conhecimento = ""
         contexto_memoria_usuario = ""
     else:
-        contexto_conhecimento = consultar_conhecimento(msg_final, limite=5)
-        contexto_memoria_usuario = consultar_memoria_usuario(msg_final, nome_usuario, limite=6)
+        consulta = msg_final
+        if jogo_atual:
+            consulta = f"Jogo em andamento: {jogo_atual}. Pergunta ou pedido atual: {consulta}"
+        historico_recente = [
+            texto_seguro(item.get("content") or item.get("mensagem") or "")
+            for item in historico[-6:]
+            if isinstance(item, dict)
+        ]
+        if historico_recente:
+            consulta = f"{consulta}\nContexto recente do jogador: {' '.join(historico_recente)}"
+        if contexto_visual:
+            consulta = f"{consulta}\nElementos detectados e posições na tela atual: {contexto_visual}"
+        contexto_conhecimento = consultar_conhecimento(consulta, limite=5)
+        contexto_memoria_usuario = consultar_memoria_usuario(consulta, nome_usuario, limite=6)
     bloco_contexto = montar_bloco_contexto(contexto_conhecimento, contexto_memoria_usuario)
-    instrucao_humor = obter_instrucao_humor(msg_final, config_usuario)
+    instrucao_humor = obter_instrucao_humor(
+        msg_final,
+        config_usuario,
+        config_usuario.get("estado_emocional") if isinstance(config_usuario, dict) else None,
+    )
 
-    resposta_final = chamar_minha_api(msg_final, nome_usuario, config_usuario)
+    resposta_final = chamar_minha_api(
+        msg_final,
+        nome_usuario,
+        config_usuario,
+        anexo_usr=anexo_usuario,
+    )
 
     if not resposta_final:
         resposta_final = resposta_do_contexto()

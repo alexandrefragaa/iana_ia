@@ -72,6 +72,27 @@
     box-shadow: 0 4px 15px rgba(34, 211, 238, .15);
 }
 
+.mensagem-usuario .mensagem-anexo-conteudo {
+    width: fit-content;
+    max-width: min(80vw, 380px);
+    padding: 8px;
+}
+
+.mensagem-anexo-conteudo img,
+.mensagem-anexo-conteudo video {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: 12px;
+    object-fit: contain;
+}
+
+.mensagem-anexo-conteudo audio {
+    display: block;
+    max-width: 100%;
+}
+
 .mensagem-conteudo::selection {
     background: #22d3ee;
     color: #000;

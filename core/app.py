@@ -23,7 +23,10 @@ import time
 import json
 import importlib
 import hmac
+import base64
+import binascii
 import logging
+import re
 import threading
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
@@ -71,7 +74,7 @@ except Exception:
 
 # Inicialização do App Flask
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 256 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
 # Configurações Globais
 API_VERSION = "1.0.0"
@@ -103,6 +106,49 @@ MAX_MESSAGE_LENGTH = 20_000
 MAX_SESSION_ID_LENGTH = 128
 MAX_NAME_LENGTH = 80
 MAX_HISTORY_MESSAGES = 100
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+
+def normalizar_anexo(dados: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Valida um arquivo suportado e prepara seus dados para o provedor multimodal."""
+    campos = ("imagem", "audio", "video", "arquivo")
+    anexos = [(campo, dados.get(campo)) for campo in campos if dados.get(campo) is not None]
+    if not anexos:
+        return None
+    if len(anexos) != 1:
+        raise ValueError("Envie apenas um arquivo por mensagem.")
+
+    tipo, data_url = anexos[0]
+    if not isinstance(data_url, str):
+        raise ValueError("O anexo enviado é inválido.")
+
+    match = re.fullmatch(
+        r"data:([^;,]+)(?:;[^;,]+)*;base64,([A-Za-z0-9+/]*={0,2})",
+        data_url,
+    )
+    if not match:
+        raise ValueError("O anexo deve estar em formato base64 válido.")
+
+    mime_type = match.group(1).strip().lower()
+    base64_data = match.group(2)
+    mime_base = mime_type.split("/", 1)[0]
+    if tipo == "imagem" and mime_base != "image":
+        raise ValueError("O tipo do arquivo não corresponde a uma imagem.")
+    if tipo == "audio" and mime_base != "audio":
+        raise ValueError("O tipo do arquivo não corresponde a um áudio.")
+    if tipo == "video" and mime_type not in {"video/mp4", "video/webm", "video/quicktime"}:
+        raise ValueError("São aceitos vídeos MP4, WebM ou MOV.")
+    if tipo == "arquivo" and mime_type != "application/pdf":
+        raise ValueError("São aceitos apenas arquivos PDF ou TXT.")
+
+    try:
+        conteudo = base64.b64decode(base64_data, validate=True)
+    except (binascii.Error, ValueError) as erro:
+        raise ValueError("O anexo contém dados inválidos.") from erro
+    if not conteudo or len(conteudo) > MAX_ATTACHMENT_BYTES:
+        raise ValueError("O limite é de 10 MB por anexo.")
+
+    return {"mime_type": mime_type, "data": base64_data}
 
 
 def normalizar_config_usuario(config: Any) -> Dict[str, Any]:
@@ -157,6 +203,22 @@ def normalizar_config_usuario(config: Any) -> Dict[str, Any]:
         normalizada[campo] = valor
 
     return normalizada
+
+
+def normalizar_contexto_visual(contexto: Any) -> str:
+    if contexto is None:
+        return ""
+    if not isinstance(contexto, str) or len(contexto.strip()) > 1200:
+        raise ValueError("contexto_visual deve ser um texto de até 1200 caracteres.")
+    return contexto.strip()
+
+
+def normalizar_jogo_atual(jogo: Any) -> str:
+    if jogo is None:
+        return ""
+    if not isinstance(jogo, str) or len(jogo.strip()) > 80:
+        raise ValueError("jogo_atual deve ser um texto de até 80 caracteres.")
+    return jogo.strip()
 
 
 def limitar_historico(sessao: List[Dict[str, str]]) -> None:
@@ -285,6 +347,16 @@ def chat_iana():
 
     try:
         config_usuario = normalizar_config_usuario(dados.get("config_usuario"))
+        estado_emocional = dados.get("estadoEmocional")
+        if estado_emocional is not None:
+            if not isinstance(estado_emocional, str) or estado_emocional not in {
+                "normal", "raiva", "frustrado", "estressado"
+            }:
+                raise ValueError("estadoEmocional contém um estado inválido.")
+            config_usuario["estado_emocional"] = estado_emocional
+        contexto_visual = normalizar_contexto_visual(dados.get("contexto_visual"))
+        jogo_atual = normalizar_jogo_atual(dados.get("jogo_atual"))
+        anexo = normalizar_anexo(dados)
     except ValueError as erro:
         return jsonify({
             "status": "erro",
@@ -292,6 +364,14 @@ def chat_iana():
             "erro": "Bad Request",
             "mensagem": str(erro)
         }), 400
+
+    if anexo and (not RUN_PIPELINE_OK or iana_v2.MINHA_API_PROVIDER != "gemini"):
+        return jsonify({
+            "status": "erro",
+            "codigo": 503,
+            "erro": "Attachments Unsupported",
+            "mensagem": "O provedor de IA configurado não oferece suporte multimodal para anexos."
+        }), 503
 
     mensagem_usuario = dados.get("mensagem", "")
     sessao_id = dados.get("sessao_id", "jogador_default")
@@ -349,7 +429,15 @@ def chat_iana():
                 iana_v2.nome_usuario = nome_usuario
                 iana_v2.historico = historico_sessao
                 iana_v2.config_usuario = config_usuario
-                resposta_final = iana_v2.run_pipeline()
+                iana_v2.contexto_visual = contexto_visual
+                iana_v2.jogo_atual = jogo_atual
+                iana_v2.anexo_usuario = anexo
+                try:
+                    resposta_final = iana_v2.run_pipeline()
+                finally:
+                    iana_v2.contexto_visual = ""
+                    iana_v2.jogo_atual = ""
+                    iana_v2.anexo_usuario = None
         except Exception as e:
             logger.error(f"Erro na execução do pipeline RAG para sessão '{sessao_id}': {e}")
 

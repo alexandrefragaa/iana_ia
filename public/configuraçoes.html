@@ -217,6 +217,19 @@
 </div>
 
 <!-- BARRA SALVAR FIXA -->
+<section class="config-card config-seguranca">
+    <span class="config-card-titulo">🔐 Segurança da conta</span>
+    <p>Altere a senha da sua conta usando a senha atual.</p>
+    <label for="senha-atual">Senha atual</label>
+    <input id="senha-atual" class="config-input" type="password" autocomplete="current-password">
+    <label for="senha-nova">Nova senha</label>
+    <input id="senha-nova" class="config-input" type="password" autocomplete="new-password">
+    <label for="senha-nova-confirmar">Confirme a nova senha</label>
+    <input id="senha-nova-confirmar" class="config-input" type="password" autocomplete="new-password">
+    <p id="seguranca-msg" class="config-seguranca-msg" role="status" aria-live="polite"></p>
+    <button id="btn-trocar-senha" class="btn-salvar-config" type="button">Alterar senha</button>
+</section>
+
 <div class="config-salvar-bar">
     <button class="btn-salvar-config" id="btn-salvar">Salvar configurações</button>
 </div>

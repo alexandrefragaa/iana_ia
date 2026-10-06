@@ -23,6 +23,7 @@ test('attachment validation rejects URLs, wrong types and oversized payloads',()
  for(const imagem of ['http://localhost/test','data:text/html;base64,PHNjcmlwdD4=',42])assert.throws(()=>attachmentPart({imagem}),{status:400});
  assert.throws(()=>attachmentPart({imagem:'data:image/png;base64,'+'A'.repeat(15*1024*1024)}),{status:413});
  assert.deepEqual(attachmentPart({imagem:'data:image/png;base64,YWJj'}),{inlineData:{mimeType:'image/png',data:'YWJj'}});
+ assert.deepEqual(attachmentPart({video:'data:video/mp4;base64,YWJj'}),{inlineData:{mimeType:'video/mp4',data:'YWJj'}});
 });
 test('private and mapped addresses cannot be fetched',()=>{
  for(const ip of ['127.0.0.1','10.0.0.1','169.254.169.254','172.16.0.1','192.168.0.1','100.64.0.1','::1','::ffff:127.0.0.1','::ffff:7f00:1','fc00::1','fe80::1','0.0.0.0'])assert.equal(isPublicIP(ip),false,ip);

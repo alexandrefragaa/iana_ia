@@ -28,7 +28,6 @@
         </div>
 
         <div class="sidebar-actions">
-            <a class="btn-buscar" href="http://localhost:3334" target="_blank" rel="noopener" aria-label="Visão local do jogo" title="Visão local do jogo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><span>Visão local do jogo</span></a>
             <button class="btn-novo-chat" id="btn-novo-chat" aria-label="Novo Chat">
                 <img src="/img/escrever.png" style="width:18px;filter:invert(1);">
                 <span>Novo Chat</span>
@@ -85,7 +84,7 @@
                 <button class="pill-btn btn-mais" id="btn-mais" title="Anexar">
                     <img src="/img/mais.png" style="width:22px;filter:invert(.7);">
                 </button>
-                <input type="file" id="file-input" style="display:none;" accept="image/*,.pdf,.txt,audio/*,.doc,.docx">
+                <input type="file" id="file-input" style="display:none;" accept="image/*,video/mp4,video/webm,video/quicktime,.pdf,.txt,audio/*">
                 <textarea id="chat-input" class="chat-textarea" placeholder="Peça à Iana..." rows="1"></textarea>
                 <button class="pill-btn btn-mic" id="btn-mic" title="Gravar áudio">
                     <img src="/img/microfone.png" style="width:20px;filter:invert(.7);">
@@ -110,6 +109,7 @@
 <div class="upload-menu" id="upload-menu" style="display:none;">
     <button class="upload-item" id="up-foto">📷 Câmera / Foto</button>
     <button class="upload-item" id="up-imagem">🖼️ Imagem</button>
+    <button class="upload-item" id="up-video">🎥 Vídeo</button>
     <button class="upload-item" id="up-arquivo">📄 Arquivo</button>
     <button class="upload-item" id="up-audio">🎵 Áudio</button>
     <button class="upload-item" id="up-tela">🖥️ Compartilhar Tela</button>
@@ -147,10 +147,29 @@
              e a legenda ao vivo do que você está falando aqui (voz-interim) -->
         <p class="voz-transcript" id="voz-transcript"></p>
         <p class="voz-interim" id="voz-interim"></p>
+        <div class="voz-visao-preview" id="voz-visao-preview" hidden>
+            <video id="voz-visao-video" muted playsinline></video>
+            <canvas id="voz-visao-overlay" aria-label="Elementos detectados na tela compartilhada"></canvas>
+        </div>
+        <p class="voz-visao-status" id="voz-visao-status" role="status" aria-live="polite"></p>
 
         <div class="voz-acoes">
-            <button class="btn-voz-mute" id="btn-voz-mute" title="Mutar">🎙️</button>
-            <button class="btn-voz-encerrar" id="btn-voz-encerrar">Encerrar chamada</button>
+            <button class="btn-voz-visao" id="btn-voz-visao" type="button" title="Compartilhar a tela do jogo com a Iana">
+                <svg class="voz-icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4M8 10l2.5 2.5L16 7"></path></svg>
+                <span>Compartilhar tela</span>
+            </button>
+            <button class="btn-voz-visao btn-voz-visao-parar" id="btn-voz-visao-parar" type="button" title="Parar o compartilhamento da tela" hidden>
+                <svg class="voz-icone" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4M9 9l6 6m0-6-6 6"></path></svg>
+                <span>Parar tela</span>
+            </button>
+            <button class="btn-voz-mute" id="btn-voz-mute" type="button" title="Mutar microfone" aria-label="Mutar microfone" aria-pressed="false">
+                <svg class="voz-icone voz-icone-mic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"></path></svg>
+                <svg class="voz-icone voz-icone-mic-mutado" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9v5a3 3 0 0 0 5.1 2.1M15 9V5a3 3 0 0 0-5.8-1M5 10a7 7 0 0 0 12 4.9M19 10a7 7 0 0 1-1 3.6M12 17v5m-4 0h8M3 3l18 18"></path></svg>
+            </button>
+            <button class="btn-voz-encerrar" id="btn-voz-encerrar" type="button">
+                <svg class="voz-icone" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 15.5a12 12 0 0 1 15 0l1.2 1a1.8 1.8 0 0 1 .4 2.3l-.7 1.1a1.8 1.8 0 0 1-2 .8l-3.1-.9a1.8 1.8 0 0 1-1.3-1.7v-1.2a13 13 0 0 0-4 0v1.2a1.8 1.8 0 0 1-1.3 1.7l-3.1.9a1.8 1.8 0 0 1-2-.8l-.7-1.1a1.8 1.8 0 0 1 .4-2.3z"></path></svg>
+                <span>Encerrar</span>
+            </button>
         </div>
     </div>
 </div>

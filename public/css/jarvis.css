@@ -543,9 +543,74 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 16px;
+    flex-wrap: wrap;
+    gap: 12px;
     margin-top: auto;
     padding-top: 20px;
+}
+
+.voz-visao-status {
+    min-height: 1.25em;
+    max-width: 100%;
+    margin: 0 0 8px;
+    color: rgba(207, 250, 254, .85);
+    font-size: .85rem;
+    overflow-wrap: anywhere;
+}
+
+.voz-visao-preview {
+    position: relative;
+    width: min(100%, 520px);
+    max-height: min(34vh, 240px);
+    aspect-ratio: 16 / 9;
+    margin: 0 auto 8px;
+    overflow: hidden;
+    border: 1px solid rgba(34, 211, 238, .45);
+    border-radius: 12px;
+    background: #05060a;
+    box-shadow: 0 0 24px rgba(34, 211, 238, .1);
+}
+
+.voz-visao-preview video,
+.voz-visao-preview canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.voz-visao-preview canvas {
+    pointer-events: none;
+}
+
+.btn-voz-visao {
+    min-height: 48px;
+    padding: 0 18px;
+    border: 1px solid rgba(34, 211, 238, .45);
+    border-radius: 999px;
+    background: rgba(34, 211, 238, .1);
+    color: #cffafe;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .2s ease, border-color .2s ease, transform .2s ease;
+}
+
+.btn-voz-visao:hover:not(:disabled) {
+    background: rgba(34, 211, 238, .2);
+    border-color: rgba(34, 211, 238, .8);
+    transform: translateY(-1px);
+}
+
+.btn-voz-visao:disabled {
+    cursor: wait;
+    opacity: .7;
+}
+
+.btn-voz-visao-parar {
+    border-color: rgba(248, 113, 113, .5);
+    background: rgba(248, 113, 113, .12);
+    color: #fecaca;
 }
 
 .btn-voz-mute {
@@ -602,6 +667,10 @@
     .voz-acoes {
         gap: 12px;
     }
+    .btn-voz-visao {
+        min-height: 46px;
+        padding: 0 14px;
+    }
     .btn-voz-mute {
         width: 48px;
         height: 48px;
@@ -620,4 +689,57 @@
     .btn-voz-encerrar {
         transition: none !important;
     }
+}
+
+/* Ícones das opções da chamada. */
+.voz-icone {
+    width: 17px;
+    height: 17px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.btn-voz-visao,
+.btn-voz-encerrar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+}
+
+.btn-voz-visao[hidden] {
+    display: none;
+}
+
+.btn-voz-visao {
+    min-height: 44px;
+    padding: 0 14px;
+    font-size: .9rem;
+}
+
+.btn-voz-mute {
+    width: 44px;
+    height: 44px;
+}
+
+.btn-voz-encerrar {
+    min-height: 44px;
+    padding: 0 14px;
+    font-size: .9rem;
+}
+
+.btn-voz-mute .voz-icone-mic-mutado {
+    display: none;
+}
+
+.btn-voz-mute.mutado .voz-icone-mic {
+    display: none;
+}
+
+.btn-voz-mute.mutado .voz-icone-mic-mutado {
+    display: block;
 }

@@ -121,7 +121,7 @@ async function trocarSenha() {
         });
         const data = await res.json();
         if (!res.ok) {
-            mostrarMsgSeguranca(data.erro || 'Não foi possível trocar a senha.', 'erro');
+            mostrarMsgSeguranca(data.mensagem || data.erro || 'Não foi possível trocar a senha.', 'erro');
         } else {
             mostrarMsgSeguranca('✅ Senha alterada com sucesso!', 'sucesso');
             document.getElementById('senha-atual').value = '';

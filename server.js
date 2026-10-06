@@ -296,7 +296,8 @@ app.post('/chat', chatLimiter, async (req, res) => {
       body: JSON.stringify({
         mensagem: mensagem,
         sessao_id: conversaId,
-        nome_usuario: nomeUsuario
+        nome_usuario: nomeUsuario,
+        config_usuario: req.body.configRaw
       })
     });
 

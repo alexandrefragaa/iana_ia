@@ -47,11 +47,67 @@ class ApiTests(unittest.TestCase):
              patch.object(api.iana_v2, "GEMINI_API_KEY", "test-gemini-key"), \
              patch.object(api.iana_v2, "GEMINI_API_URL", "https://example.test/generateContent"), \
              patch.object(api.iana_v2.requests, "post", return_value=response) as post:
-            reply = api.iana_v2.chamar_minha_api(msg_usr="Oi", usr_nome="Alex")
+            reply = api.iana_v2.chamar_minha_api(
+                msg_usr="Oi",
+                usr_nome="Alex",
+                cfg_usr={"personalidade": ["descontraída"]},
+            )
 
         self.assertEqual(reply, "Oi, Alex! Tudo certo por aqui.")
         self.assertEqual(post.call_args.kwargs["params"], {"key": "test-gemini-key"})
-        self.assertEqual(post.call_args.kwargs["json"]["contents"][0]["role"], "user")
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["contents"][0]["role"], "user")
+        system_instruction = payload["systemInstruction"]["parts"][0]["text"]
+        self.assertIn(api.iana_v2.system_prompt, system_instruction)
+        self.assertIn(api.iana_v2.INSTRUCAO_CONVERSA_NATURAL, system_instruction)
+        self.assertIn("descontraída", system_instruction)
+
+    def test_chat_passes_frontend_preferences_to_pipeline(self):
+        preferencias = {
+            "personalidade": ["bem-humorada"],
+            "instrucoes": "Fale de forma espontânea.",
+        }
+
+        def pipeline_com_preferencias():
+            return api.iana_v2.montar_config_prompt(api.iana_v2.config_usuario)
+
+        with patch.object(api, "RUN_PIPELINE_OK", True), \
+             patch.object(api.iana_v2, "run_pipeline", side_effect=pipeline_com_preferencias):
+            response = self.client.post(
+                "/api/v1/chat",
+                json={
+                    "mensagem": "Oi",
+                    "sessao_id": "preferencias",
+                    "config_usuario": preferencias,
+                },
+                headers=self.headers(),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("bem-humorada", response.json["resposta"])
+        self.assertIn("Fale de forma espontânea.", response.json["resposta"])
+
+    def test_chat_rejects_invalid_frontend_preferences(self):
+        response = self.client.post(
+            "/api/v1/chat",
+            json={"mensagem": "Oi", "config_usuario": ["invalid"]},
+            headers=self.headers(),
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_system_prompt_is_not_formatted_as_conversation_history(self):
+        history = [
+            {"role": "system", "content": "Instruções privadas da Iana"},
+            {"role": "user", "content": "Oi"},
+            {"role": "assistant", "content": "E aí!"},
+        ]
+
+        formatted = api.iana_v2.formatar_historico(history, "Alex")
+
+        self.assertNotIn("Instruções privadas da Iana", formatted)
+        self.assertIn("Usuário (Alex): Oi", formatted)
+        self.assertIn("Iana: E aí!", formatted)
 
     def test_short_social_chat_skips_knowledge_search_and_keeps_personality(self):
         with patch.object(api.iana_v2, "msg_final", "Oi, tudo bem?"), \
@@ -114,6 +170,7 @@ class ApiTests(unittest.TestCase):
         response = self.client.get("/api/v1/chat/historico/bounded", headers=self.headers())
         self.assertEqual(response.status_code, 200)
         self.assertLessEqual(response.json["total"], api.MAX_HISTORY_MESSAGES)
+        self.assertNotIn("system", [item["role"] for item in api.sessoes_memoria["bounded"]])
 
     def test_concurrent_sessions_do_not_overwrite_pipeline_input(self):
         entered = threading.Event()

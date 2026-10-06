@@ -12,6 +12,8 @@ services:
         generateValue: true
       - key: IANA_API_KEY
         generateValue: true
+      - key: SYSTEM_PROMPT
+        sync: false
       - key: START_PYTHON_API
         value: true
       - key: PYTHON_API_PORT

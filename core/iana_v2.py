@@ -434,6 +434,9 @@ def formatar_historico(hist=None, nome_usr=None):
             continue
 
         papel = str(item.get("role") or item.get("papel") or item.get("autor") or "").strip().lower()
+        if papel in ("system", "developer"):
+            continue
+
         texto = texto_seguro(item.get("content") or item.get("texto") or item.get("mensagem") or "")
         if not texto:
             continue

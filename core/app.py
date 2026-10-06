@@ -95,26 +95,6 @@ def resolve_api_key() -> str:
 
 IANA_API_KEY = resolve_api_key()
 
-# System Prompt Base
-SYSTEM_PROMPT_GAMER = """
-<identidade>
-Você é a Iana, uma assistente de IA com personalidade própria, apaixonada por videogames, cultura pop, troféus e platinas.
-Sua comunicação é espontânea, fluida, humana e autêntica — como uma parceira de jogos em uma chamada do Discord.
-</identidade>
-
-<personalidade>
-- Tom de voz: Animada, descontraída, inteligente, curiosa e parceira.
-- Estilo de fala: Use gírias gamer brasileiras ("build", "platina", "buffar", "nerfar", "GG", "boss") e emojis de forma orgânica.
-- Flexibilidade: Varie a extensão das respostas conforme a necessidade do contexto.
-</personalidade>
-
-<regras_de_conhecimento_rag>
-1. Use estritamente as informações do contexto de conhecimento retornado sobre jogos e builds.
-2. PROIBIDO ALUCINAR: Não invente nem extrapole fatos não presentes na base de conhecimento.
-3. Se a informação for insuficiente, diga naturalmente que ainda não encontrou esse dado.
-</regras_de_conhecimento_rag>
-""".strip()
-
 # Armazenamento em memória protegido contra acesso concorrente.
 sessoes_memoria: Dict[str, List[Dict[str, str]]] = {}
 sessoes_lock = threading.RLock()
@@ -125,10 +105,63 @@ MAX_NAME_LENGTH = 80
 MAX_HISTORY_MESSAGES = 100
 
 
+def normalizar_config_usuario(config: Any) -> Dict[str, Any]:
+    """Valida e limita as preferências enviadas pela interface."""
+    if config is None:
+        return {}
+    if not isinstance(config, dict):
+        raise ValueError("config_usuario deve ser um objeto.")
+
+    normalizada: Dict[str, Any] = {}
+    campos_lista = {
+        "personalidade": (10, 40),
+        "foco": (10, 40),
+        "plataforma": (10, 40),
+        "voz": (10, 40),
+    }
+    for campo, (max_itens, max_tamanho) in campos_lista.items():
+        valor = config.get(campo)
+        if valor is None:
+            continue
+        if not isinstance(valor, list) or len(valor) > max_itens:
+            raise ValueError(f"config_usuario.{campo} deve ser uma lista válida.")
+        itens = []
+        for item in valor:
+            if not isinstance(item, str) or len(item.strip()) > max_tamanho:
+                raise ValueError(f"config_usuario.{campo} contém um item inválido.")
+            item = item.strip()
+            if item:
+                itens.append(item)
+        normalizada[campo] = itens
+
+    campos_texto = {
+        "tamanho": 30,
+        "emojis": 30,
+        "instrucoes": 800,
+        "sobreVoce": 400,
+    }
+    for campo, max_tamanho in campos_texto.items():
+        valor = config.get(campo)
+        if valor is None:
+            continue
+        if not isinstance(valor, str) or len(valor.strip()) > max_tamanho:
+            raise ValueError(f"config_usuario.{campo} deve ser um texto de até {max_tamanho} caracteres.")
+        normalizada[campo] = valor.strip()
+
+    for campo in ("perguntas", "humor", "criatividade", "contexto"):
+        valor = config.get(campo)
+        if valor is None:
+            continue
+        if not isinstance(valor, bool):
+            raise ValueError(f"config_usuario.{campo} deve ser verdadeiro ou falso.")
+        normalizada[campo] = valor
+
+    return normalizada
+
+
 def limitar_historico(sessao: List[Dict[str, str]]) -> None:
-    mensagens = sessao[1:]
-    if len(mensagens) > MAX_HISTORY_MESSAGES:
-        sessao[:] = [sessao[0], *mensagens[-MAX_HISTORY_MESSAGES:]]
+    if len(sessao) > MAX_HISTORY_MESSAGES:
+        sessao[:] = sessao[-MAX_HISTORY_MESSAGES:]
 
 
 # ================================================================
@@ -250,6 +283,16 @@ def chat_iana():
             "mensagem": "O corpo da requisição deve ser um objeto JSON válido."
         }), 400
 
+    try:
+        config_usuario = normalizar_config_usuario(dados.get("config_usuario"))
+    except ValueError as erro:
+        return jsonify({
+            "status": "erro",
+            "codigo": 400,
+            "erro": "Bad Request",
+            "mensagem": str(erro)
+        }), 400
+
     mensagem_usuario = dados.get("mensagem", "")
     sessao_id = dados.get("sessao_id", "jogador_default")
     nome_usuario = dados.get("nome_usuario", "Jogador")
@@ -291,12 +334,10 @@ def chat_iana():
 
     # Inicializa o histórico da sessão se for nova
     with sessoes_lock:
-        sessoes_memoria.setdefault(sessao_id, [
-            {"role": "system", "content": SYSTEM_PROMPT_GAMER}
-        ])
+        sessoes_memoria.setdefault(sessao_id, [])
         sessoes_memoria[sessao_id].append({"role": "user", "content": mensagem_usuario})
         limitar_historico(sessoes_memoria[sessao_id])
-        historico_sessao = list(sessoes_memoria[sessao_id][-10:])
+        historico_sessao = list(sessoes_memoria[sessao_id][:-1][-10:])
 
     # Processa a resposta via pipeline RAG ou Fallback
     resposta_final = None
@@ -307,6 +348,7 @@ def chat_iana():
                 iana_v2.msg_final = mensagem_usuario
                 iana_v2.nome_usuario = nome_usuario
                 iana_v2.historico = historico_sessao
+                iana_v2.config_usuario = config_usuario
                 resposta_final = iana_v2.run_pipeline()
         except Exception as e:
             logger.error(f"Erro na execução do pipeline RAG para sessão '{sessao_id}': {e}")

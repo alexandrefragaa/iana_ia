@@ -63,6 +63,21 @@ class ApiTests(unittest.TestCase):
         self.assertIn(api.iana_v2.INSTRUCAO_CONVERSA_NATURAL, system_instruction)
         self.assertIn("descontraída", system_instruction)
 
+    def test_gemini_provider_uses_extended_default_timeout(self):
+        response = Mock()
+        response.json.return_value = {
+            "candidates": [{"content": {"parts": [{"text": "Resposta gerada."}]}}]
+        }
+        with patch.object(api.iana_v2, "MINHA_API_PROVIDER", "gemini"), \
+             patch.object(api.iana_v2, "MINHA_API_TIMEOUT", 45), \
+             patch.object(api.iana_v2, "GEMINI_API_KEY", "test-gemini-key"), \
+             patch.object(api.iana_v2, "GEMINI_API_URL", "https://example.test/generateContent"), \
+             patch.object(api.iana_v2.requests, "post", return_value=response) as post:
+            reply = api.iana_v2.chamar_minha_api(msg_usr="Onde fica o mercador?")
+
+        self.assertEqual(reply, "Resposta gerada.")
+        self.assertEqual(post.call_args.kwargs["timeout"], 45)
+
     def test_gemini_provider_includes_uploaded_media(self):
         for mime_type, prompt in (
             ("image/png", "Descreva a imagem."),

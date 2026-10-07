@@ -106,7 +106,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_API_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_API_MODEL}:generateContent"
 MINHA_API_URL = os.getenv("MINHA_API_URL", "").strip()
-MINHA_API_TIMEOUT = int(os.getenv("MINHA_API_TIMEOUT", "15"))
+MINHA_API_TIMEOUT = int(os.getenv("MINHA_API_TIMEOUT", "45"))
 
 
 # ================================================================

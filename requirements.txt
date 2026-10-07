@@ -2,8 +2,9 @@ requests
 python-dotenv
 Flask
 waitress
-chromadb
-sentence-transformers
+# Optional semantic RAG dependencies; only install on hosts with sufficient RAM.
+# chromadb
+# sentence-transformers
 beautifulsoup4
 google-generativeai
 pymysql

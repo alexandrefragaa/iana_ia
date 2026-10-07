@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -34,16 +35,29 @@ from typing import Any, Dict, List, Optional
 # DEPENDÊNCIAS
 # ================================================================
 
-try:
-    import chromadb
-except Exception:
-    chromadb = None
+RAG_MODE = os.getenv("IANA_RAG_MODE", "").strip().lower()
+if not RAG_MODE:
+    RAG_MODE = (
+        "semantic"
+        if importlib.util.find_spec("sentence_transformers")
+        else "keyword"
+    )
+if RAG_MODE not in {"keyword", "semantic"}:
+    raise ValueError("IANA_RAG_MODE deve ser 'keyword' ou 'semantic'.")
 
+chromadb = None
+SentenceTransformer = None
 
-try:
-    from sentence_transformers import SentenceTransformer
-except Exception:
-    SentenceTransformer = None
+if RAG_MODE == "semantic":
+    try:
+        import chromadb
+    except Exception:
+        chromadb = None
+
+    try:
+        from sentence_transformers import SentenceTransformer
+    except Exception:
+        SentenceTransformer = None
 
 
 # ================================================================
@@ -52,10 +66,11 @@ except Exception:
 
 COLLECTION_NAME = "memoria_iana"
 
-EMBEDDING_MODEL = os.getenv(
-    "IANA_EMBEDDING_MODEL",
+EMBEDDING_MODEL = os.getenv("IANA_EMBEDDING_MODEL", (
     "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-)
+    if RAG_MODE == "semantic"
+    else "keyword-overlap"
+))
 
 CHUNK_SIZE = int(
     os.getenv("IANA_CHUNK_SIZE", "3500")
@@ -228,6 +243,14 @@ def _inicializar_memoria() -> bool:
         return not modo_fallback
 
     memoria_inicializada = True
+
+    if RAG_MODE == "keyword":
+        modo_fallback = True
+        sys.stderr.write(
+            "[learning_engine] RAG lexical leve ativado; "
+            "embeddings semânticos desativados pela configuração.\n"
+        )
+        return False
 
     try:
 

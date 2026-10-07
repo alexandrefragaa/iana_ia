@@ -4159,7 +4159,7 @@ function iniciarSidebar() {
 
     const mobile = window.matchMedia('(max-width: 768px)');
     const sidebarTop = sidebar.querySelector('.sidebar-top');
-    const topbar = document.querySelector('.topbar');
+    const main = document.querySelector('.main');
     const backdrop = document.createElement('div');
     backdrop.className = 'sidebar-overlay';
     backdrop.setAttribute('aria-hidden', 'true');
@@ -4180,13 +4180,16 @@ function iniciarSidebar() {
     const fecharMobile = () => {
         if (!mobile.matches || !sidebar.classList.contains('mobile-open')) return;
         sidebar.classList.remove('mobile-open');
+        main?.prepend(sidebarToggle);
         fecharMenusHistorico();
         sidebarToggle.focus();
         atualizarSidebar();
     };
     const ajustarTela = () => {
         if (mobile.matches) {
-            topbar?.prepend(sidebarToggle);
+            if (!sidebar.classList.contains('mobile-open')) {
+                main?.prepend(sidebarToggle);
+            }
         } else {
             sidebarTop?.append(sidebarToggle);
         }
@@ -4199,6 +4202,7 @@ function iniciarSidebar() {
         if (mobile.matches) {
             if (sidebar.classList.contains('mobile-open')) return fecharMobile();
             sidebar.classList.add('mobile-open');
+            sidebarTop?.append(sidebarToggle);
         } else {
             desktopCollapsed = sidebar.classList.toggle('collapsed');
         }

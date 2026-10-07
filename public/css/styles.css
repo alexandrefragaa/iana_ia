@@ -156,9 +156,7 @@ button:disabled {
     opacity: .65;
 }
 
-#topbar-menu-toggle {
-    display: none;
-}
+
 
 
 /* ==========================================================================
@@ -1556,12 +1554,6 @@ select:focus-visible {
 @media (max-width: 768px) {
 
     /* ── Topbar ─────────────────────────────────────────────── */
-
-    #topbar-menu-toggle {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
 
     .topbar {
         padding: 10px 14px;

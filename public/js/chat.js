@@ -4148,21 +4148,18 @@ function iniciarSidebar() {
     const sidebar =
         obterElemento('sidebar');
 
-    const topbarMenu =
-        obterElemento(
-            'topbar-menu-toggle'
-        );
-
     const sidebarToggle =
         obterElemento(
             'sidebar-toggle'
         );
 
-    if (!sidebar) {
+    if (!sidebar || !sidebarToggle) {
         return;
     }
 
     const mobile = window.matchMedia('(max-width: 768px)');
+    const sidebarTop = sidebar.querySelector('.sidebar-top');
+    const topbar = document.querySelector('.topbar');
     const backdrop = document.createElement('div');
     backdrop.className = 'sidebar-overlay';
     backdrop.setAttribute('aria-hidden', 'true');
@@ -4175,25 +4172,27 @@ function iniciarSidebar() {
             : !sidebar.classList.contains('collapsed');
         sidebar.inert = mobile.matches && !aberto;
         backdrop.classList.toggle('ativo', mobile.matches && aberto);
-        for (const button of [topbarMenu, sidebarToggle]) {
-            if (!button) continue;
-            button.title = aberto ? 'Fechar menu' : 'Abrir menu';
-            button.setAttribute('aria-label', button.title);
-            button.setAttribute('aria-controls', 'sidebar');
-            button.setAttribute('aria-expanded', String(aberto));
-        }
+        sidebarToggle.title = aberto ? 'Fechar menu' : 'Abrir menu';
+        sidebarToggle.setAttribute('aria-label', sidebarToggle.title);
+        sidebarToggle.setAttribute('aria-controls', 'sidebar');
+        sidebarToggle.setAttribute('aria-expanded', String(aberto));
     };
     const fecharMobile = () => {
         if (!mobile.matches || !sidebar.classList.contains('mobile-open')) return;
         sidebar.classList.remove('mobile-open');
         fecharMenusHistorico();
-        topbarMenu?.focus();
+        sidebarToggle.focus();
         atualizarSidebar();
     };
     const ajustarTela = () => {
+        if (mobile.matches) {
+            topbar?.prepend(sidebarToggle);
+        } else {
+            sidebarTop?.append(sidebarToggle);
+        }
         sidebar.classList.remove('mobile-open');
         sidebar.classList.toggle('collapsed', !mobile.matches && desktopCollapsed);
-        if (mobile.matches && sidebar.contains(document.activeElement)) topbarMenu?.focus();
+        if (mobile.matches && sidebar.contains(document.activeElement)) sidebarToggle.focus();
         atualizarSidebar();
     };
     const alternarSidebar = () => {
@@ -4204,7 +4203,6 @@ function iniciarSidebar() {
             desktopCollapsed = sidebar.classList.toggle('collapsed');
         }
         atualizarSidebar();
-        if (mobile.matches) sidebarToggle?.focus();
     };
     backdrop.addEventListener('click', fecharMobile);
     sidebar.addEventListener('click', event => {
@@ -4216,15 +4214,7 @@ function iniciarSidebar() {
     mobile.addEventListener('change', ajustarTela);
     ajustarTela();
 
-    sidebarToggle?.addEventListener(
-        'click',
-        alternarSidebar
-    );
-
-    topbarMenu?.addEventListener(
-        'click',
-        alternarSidebar
-    );
+    sidebarToggle.addEventListener('click', alternarSidebar);
 }
 
 

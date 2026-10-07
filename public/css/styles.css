@@ -636,6 +636,13 @@ button:disabled {
     padding: 20px 20px 8px;
 }
 
+.chatbox > .msgs {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .chatbox::-webkit-scrollbar {
     width: 8px;
 }
@@ -725,6 +732,7 @@ button:disabled {
 
 .chat-textarea {
     flex: 1;
+    min-width: 0;
     background: transparent;
     border: none;
     outline: none;
@@ -1559,6 +1567,16 @@ select:focus-visible {
         padding: 10px 14px;
     }
 
+    .topbar-right {
+        gap: 6px;
+    }
+
+    .btn-entrar,
+    .btn-registrar {
+        min-height: 34px;
+        padding: 7px 12px;
+    }
+
     .main > #sidebar-toggle {
         position: fixed;
         top: 10px;
@@ -1630,7 +1648,15 @@ select:focus-visible {
 
     .input-pill {
         border-radius: 20px;
+        gap: 4px;
         padding-left: 10px;
+    }
+
+    .pill-btn,
+    .btn-send {
+        width: 36px;
+        height: 36px;
+        flex-basis: 36px;
     }
 
     .chat-textarea {
@@ -1718,6 +1744,18 @@ select:focus-visible {
    ========================================================================== */
 
 @media (max-width: 420px) {
+
+    .topbar {
+        padding-right: 10px;
+        padding-left: 10px;
+    }
+
+    .btn-entrar,
+    .btn-registrar {
+        padding-right: 9px;
+        padding-left: 9px;
+        font-size: .88rem;
+    }
 
     .topbar-brand span {
         font-size: 1rem;

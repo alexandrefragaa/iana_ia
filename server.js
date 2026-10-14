@@ -46,7 +46,6 @@ const EMAIL_FROM = (process.env.EMAIL_FROM || process.env.EMAIL_USER || '').trim
 const FEEDBACK_TO_EMAIL = (process.env.FEEDBACK_TO_EMAIL || EMAIL_FROM).trim();
 const passwordResetCodes = new Map();
 
-// Limpeza periódica de códigos de recuperação expirados (evita Memory Leak)
 setInterval(() => {
   const agora = Date.now();
   for (const [email, dados] of passwordResetCodes.entries()) {
@@ -75,7 +74,6 @@ app.use(cors({
     if (!origin || origensPermitidas.includes(origin)) {
       return callback(null, true);
     }
-    console.warn(`[CORS] Origem bloqueada: ${origin}`);
     return callback(new Error('Origem não permitida por CORS'));
   },
   credentials: true
@@ -87,7 +85,7 @@ app.get('/configuracoes', (req, res) => {
 });
 
 /* ================================================================
-   3. BANCO DE DADOS MYSQL & SESSÃO PERSISTENTE
+   3. BANCO DE DADOS MYSQL & SESSÃO RESILIENTE (COM FALLBACK)
    ================================================================ */
 const dbConfig = {
   host: process.env.DB_HOST || '127.0.0.1',
@@ -105,20 +103,16 @@ const pool = mysql.createPool({
   queueLimit: 0
 });
 
-(async () => {
-  try {
-    const conn = await pool.getConnection();
-    console.log(`✅ MySQL conectado com sucesso: ${dbConfig.database}`);
-    conn.release();
-  } catch (err) {
-    console.error(`⚠️ Alerta MySQL: Não foi possível conectar ao banco (${err.message}). Operando com fallback.`);
-  }
-})();
-
-const MySQLStore = MySQLStoreFactory(session);
-const sessionStore = createSessionStore(MySQLStore, pool, (operation, error) => {
-  console.error(`[SESSÃO MYSQL] Falha na ${operation} (${error.code || error.name || 'erro'}).`);
-});
+let sessionStore;
+try {
+  const MySQLStore = MySQLStoreFactory(session);
+  sessionStore = createSessionStore(MySQLStore, pool, (operation, error) => {
+    console.error(`[SESSÃO MYSQL] Falha na ${operation} (${error.code || error.name || 'erro'}).`);
+  });
+} catch (err) {
+  console.warn('[SESSÃO] Usando armazenamento em memória por falha crítica no MySQL Store.');
+  sessionStore = undefined;
+}
 
 const sessionMiddleware = session({
   secret: SESSION_SECRET,
@@ -216,13 +210,11 @@ app.post('/auth/registro', loginLimiter, async (req, res) => {
     const [resultado] = await pool.query('INSERT INTO usuarios (nome, email, senha) VALUES (?, ?, ?)', [nome.trim(), emailT, hash]);
     
     const novoUsuario = { id: resultado.insertId, nome: nome.trim(), email: emailT };
-    disconnectVoiceSession(req.sessionID);
     req.login(novoUsuario, (err) => {
       if (err) return res.status(500).json({ status: 'erro', mensagem: 'Erro de sessão.' });
       return res.status(201).json({ status: 'sucesso', usuario: novoUsuario });
     });
   } catch (err) {
-    console.error('[AUTH REGISTRO]', err);
     return res.status(500).json({ status: 'erro', mensagem: 'Erro interno ao registrar usuário.' });
   }
 });
@@ -232,7 +224,6 @@ app.post('/auth/login', loginLimiter, (req, res, next) => {
     if (err) return res.status(500).json({ status: 'erro', mensagem: 'Erro interno.' });
     if (!usuario) return res.status(401).json({ status: 'erro', mensagem: info?.message || 'Falha no login.' });
 
-    disconnectVoiceSession(req.sessionID);
     req.login(usuario, (err) => {
       if (err) return res.status(500).json({ status: 'erro', mensagem: 'Erro de sessão.' });
       return res.json({ status: 'sucesso', usuario });
@@ -241,18 +232,9 @@ app.post('/auth/login', loginLimiter, (req, res, next) => {
 });
 
 app.post('/auth/logout', (req, res) => {
-  const previousSessionId = req.sessionID;
-  disconnectVoiceSession(previousSessionId);
   req.logout(err => {
-    if (err) {
-      console.error('[AUTH LOGOUT]', err.message);
-      return res.status(500).json({ status: 'erro', mensagem: 'Não foi possível encerrar a sessão.' });
-    }
-    req.session.destroy(destroyError => {
-      if (destroyError) {
-        console.error('[AUTH SESSION DESTROY]', destroyError.message);
-        return res.status(500).json({ status: 'erro', mensagem: 'Não foi possível encerrar a sessão.' });
-      }
+    if (err) return res.status(500).json({ status: 'erro', mensagem: 'Não foi possível encerrar a sessão.' });
+    req.session.destroy(() => {
       res.clearCookie('iana.sid');
       return res.json({ status: 'sucesso', mensagem: 'Sessão encerrada.' });
     });
@@ -264,206 +246,8 @@ app.get('/auth/me', (req, res) => {
   return res.json({ logado: true, usuario: req.user });
 });
 
-app.post('/auth/trocar-senha', authRequired, async (req, res) => {
-  const senhaAtual = typeof req.body.senhaAtual === 'string' ? req.body.senhaAtual : '';
-  const novaSenha = typeof req.body.novaSenha === 'string' ? req.body.novaSenha : '';
-  if (!senhaAtual || !novaSenha) {
-    return res.status(400).json({ status: 'erro', mensagem: 'Preencha a senha atual e a nova senha.' });
-  }
-  if (novaSenha.trim().length < 8) {
-    return res.status(400).json({ status: 'erro', mensagem: 'A nova senha precisa ter no mínimo 8 caracteres.' });
-  }
-
-  try {
-    const [usuarios] = await pool.query('SELECT senha FROM usuarios WHERE id = ?', [req.user.id]);
-    if (!usuarios.length) return res.status(404).json({ status: 'erro', mensagem: 'Usuário não encontrado.' });
-    if (!await bcrypt.compare(senhaAtual, usuarios[0].senha || '')) {
-      return res.status(400).json({ status: 'erro', mensagem: 'Senha atual incorreta.' });
-    }
-
-    const hash = await bcrypt.hash(novaSenha.trim(), 12);
-    await pool.query('UPDATE usuarios SET senha = ? WHERE id = ?', [hash, req.user.id]);
-    return res.json({ status: 'sucesso', mensagem: 'Senha alterada com sucesso.' });
-  } catch (err) {
-    console.error('[AUTH TROCAR SENHA]', err.message);
-    return res.status(500).json({ status: 'erro', mensagem: 'Não foi possível alterar a senha.' });
-  }
-});
-
-app.post('/auth/esqueci-senha', loginLimiter, async (req, res) => {
-  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return res.status(400).json({ status: 'erro', mensagem: 'Digite um e-mail válido.' });
-  }
-  if (!SENDGRID_API_KEY || !EMAIL_FROM) {
-    return res.status(503).json({ status: 'erro', mensagem: 'Recuperação por e-mail indisponível: configure o provedor de e-mail.' });
-  }
-
-  try {
-    const [usuarios] = await pool.query('SELECT id FROM usuarios WHERE email = ?', [email]);
-    if (!usuarios.length) {
-      return res.json({ status: 'sucesso', mensagem: 'Se o e-mail estiver cadastrado, enviaremos um código de recuperação.' });
-    }
-
-    const codigo = String(crypto.randomInt(100000, 1000000));
-    await sgMail.send({
-      to: email,
-      from: EMAIL_FROM,
-      subject: 'Código de recuperação da Iana',
-      html: `<p>Seu código para redefinir a senha é <strong>${codigo}</strong>.</p><p>Ele expira em 15 minutos.</p>`
-    });
-    passwordResetCodes.set(email, { codigo, expiraEm: Date.now() + 15 * 60 * 1000, tentativas: 5 });
-    return res.json({ status: 'sucesso', mensagem: 'Se o e-mail estiver cadastrado, enviaremos um código de recuperação.' });
-  } catch (err) {
-    console.error('[AUTH RECUPERAR SENHA]', err.message);
-    return res.status(503).json({ status: 'erro', mensagem: 'Não foi possível enviar o código de recuperação. Tente novamente mais tarde.' });
-  }
-});
-
-app.post('/auth/mudar-senha', loginLimiter, async (req, res) => {
-  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  const codigo = typeof req.body.codigo === 'string' ? req.body.codigo.trim() : '';
-  const novaSenha = typeof req.body.nova_senha === 'string' ? req.body.nova_senha : '';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(codigo) || !novaSenha) {
-    return res.status(400).json({ status: 'erro', mensagem: 'Preencha o e-mail, o código e a nova senha.' });
-  }
-  if (novaSenha.trim().length < 8) {
-    return res.status(400).json({ status: 'erro', mensagem: 'A nova senha precisa ter no mínimo 8 caracteres.' });
-  }
-
-  const registro = passwordResetCodes.get(email);
-  if (!registro || Date.now() > registro.expiraEm) {
-    passwordResetCodes.delete(email);
-    return res.status(400).json({ status: 'erro', mensagem: 'Código inválido ou expirado.' });
-  }
-  if (registro.codigo !== codigo) {
-    registro.tentativas -= 1;
-    if (registro.tentativas <= 0) passwordResetCodes.delete(email);
-    return res.status(400).json({ status: 'erro', mensagem: 'Código inválido ou expirado.' });
-  }
-
-  try {
-    const hash = await bcrypt.hash(novaSenha.trim(), 12);
-    const [resultado] = await pool.query('UPDATE usuarios SET senha = ? WHERE email = ?', [hash, email]);
-    if (!resultado.affectedRows) {
-      passwordResetCodes.delete(email);
-      return res.status(400).json({ status: 'erro', mensagem: 'Código inválido ou expirado.' });
-    }
-    passwordResetCodes.delete(email);
-    return res.json({ status: 'sucesso', mensagem: 'Senha alterada com sucesso.' });
-  } catch (err) {
-    console.error('[AUTH REDEFINIR SENHA]', err.message);
-    return res.status(500).json({ status: 'erro', mensagem: 'Não foi possível alterar a senha.' });
-  }
-});
-
 /* ================================================================
-   6. ROTAS DE GERENCIAMENTO DE CONVERSAS (HISTÓRICO MYSQL)
-   ================================================================ */
-app.get('/conversas', authRequired, async (req, res) => {
-  try {
-    const [conversas] = await pool.query(
-      'SELECT id, titulo, fixada, atualizado_em FROM conversas WHERE usuario_id = ? ORDER BY fixada DESC, atualizado_em DESC',
-      [req.user.id]
-    );
-    return res.json({ status: 'sucesso', conversas });
-  } catch (err) {
-    return res.status(500).json({ status: 'erro', mensagem: err.message });
-  }
-});
-
-app.get('/conversas/:id', authRequired, async (req, res) => {
-  try {
-    const [mensagens] = await pool.query(
-      'SELECT id, mensagem, remetente, criado_em FROM mensagens WHERE conversa_id = ? AND usuario_id = ? ORDER BY id ASC',
-      [req.params.id, req.user.id]
-    );
-    return res.json({ status: 'sucesso', conversa_id: req.params.id, mensagens });
-  } catch (err) {
-    return res.status(500).json({ status: 'erro', mensagem: err.message });
-  }
-});
-
-app.post('/conversas/:id/fixar', authRequired, async (req, res) => {
-  try {
-    const [conversas] = await pool.query(
-      'SELECT fixada FROM conversas WHERE id = ? AND usuario_id = ?',
-      [req.params.id, req.user.id]
-    );
-    if (!conversas.length) return res.status(404).json({ status: 'erro', mensagem: 'Conversa não encontrada.' });
-
-    const fixada = conversas[0].fixada ? 0 : 1;
-    await pool.query(
-      'UPDATE conversas SET fixada = ? WHERE id = ? AND usuario_id = ?',
-      [fixada, req.params.id, req.user.id]
-    );
-    return res.json({ status: 'sucesso', fixada: Boolean(fixada) });
-  } catch (err) {
-    console.error('[CONVERSA FIXAR]', err.message);
-    return res.status(500).json({ status: 'erro', mensagem: 'Não foi possível fixar a conversa.' });
-  }
-});
-
-app.patch('/conversas/:id', authRequired, async (req, res) => {
-  const titulo = typeof req.body.titulo === 'string' ? req.body.titulo.trim() : '';
-  if (!titulo || titulo.length > 80) {
-    return res.status(400).json({ status: 'erro', mensagem: 'O título deve ter entre 1 e 80 caracteres.' });
-  }
-  try {
-    const [existentes] = await pool.query(
-      'SELECT id FROM conversas WHERE id = ? AND usuario_id = ?',
-      [req.params.id, req.user.id]
-    );
-    if (!existentes.length) return res.status(404).json({ status: 'erro', mensagem: 'Conversa não encontrada.' });
-    await pool.query(
-      'UPDATE conversas SET titulo = ? WHERE id = ? AND usuario_id = ?',
-      [titulo, req.params.id, req.user.id]
-    );
-    return res.json({ status: 'sucesso', titulo });
-  } catch (err) {
-    console.error('[CONVERSA RENOMEAR]', err.message);
-    return res.status(500).json({ status: 'erro', mensagem: 'Não foi possível renomear a conversa.' });
-  }
-});
-
-app.delete('/conversas/:id', authRequired, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM mensagens WHERE conversa_id = ? AND usuario_id = ?', [req.params.id, req.user.id]);
-    await pool.query('DELETE FROM conversas WHERE id = ? AND usuario_id = ?', [req.params.id, req.user.id]);
-    return res.json({ status: 'sucesso', mensagem: 'Conversa excluída.' });
-  } catch (err) {
-    return res.status(500).json({ status: 'erro', mensagem: err.message });
-  }
-});
-
-app.post('/feedback', chatLimiter, async (req, res) => {
-  const feedback = typeof req.body.feedback === 'string' ? req.body.feedback.trim() : '';
-  if (!feedback || feedback.length > 4000) {
-    return res.status(400).json({ status: 'erro', mensagem: 'O feedback deve ter entre 1 e 4000 caracteres.' });
-  }
-  if (!SENDGRID_API_KEY || !EMAIL_FROM || !FEEDBACK_TO_EMAIL) {
-    return res.status(503).json({ status: 'erro', mensagem: 'Envio de feedback indisponível: configure o provedor de e-mail.' });
-  }
-
-  const nome = escapeHTML(req.user?.nome || 'Visitante');
-  const email = escapeHTML(req.user?.email || 'sem login');
-  try {
-    await sgMail.send({
-      to: FEEDBACK_TO_EMAIL,
-      from: EMAIL_FROM,
-      replyTo: req.user?.email || undefined,
-      subject: '[Iana] Feedback do usuário',
-      html: `<p><strong>De:</strong> ${nome} (${email})</p><p><strong>Feedback:</strong></p><p>${escapeHTML(feedback).replace(/\n/g, '<br>')}</p>`
-    });
-    return res.json({ status: 'sucesso', mensagem: 'Feedback enviado.' });
-  } catch (err) {
-    console.error('[FEEDBACK]', err.message);
-    return res.status(503).json({ status: 'erro', mensagem: 'Não foi possível enviar o feedback agora.' });
-  }
-});
-
-/* ================================================================
-   7. ROTA PRINCIPAL DE CHAT (INTEGRAÇÃO NODE -> PYTHON FLASK API)
+   6. ROTAS DE CHAT E STREAMING (SSE)
    ================================================================ */
 app.post('/chat', chatLimiter, async (req, res) => {
   const nomeUsuario = req.user?.nome || req.body.nome_usuario || 'Jogador';
@@ -489,9 +273,7 @@ app.post('/chat', chatLimiter, async (req, res) => {
       })
     });
 
-    if (!pythonResp.ok) {
-      throw new Error(`API Python respondeu HTTP ${pythonResp.status}`);
-    }
+    if (!pythonResp.ok) throw new Error(`API Python respondeu HTTP ${pythonResp.status}`);
 
     const data = await pythonResp.json();
     return res.json({
@@ -501,7 +283,6 @@ app.post('/chat', chatLimiter, async (req, res) => {
       timestamp: Date.now()
     });
   } catch (err) {
-    console.error('[CHAT ERRO]', err.message);
     return res.status(503).json({
       status: 'erro',
       mensagem: 'Não foi possível processar a resposta localmente.'
@@ -509,7 +290,6 @@ app.post('/chat', chatLimiter, async (req, res) => {
   }
 });
 
-// Adicione em server.js
 app.get('/chat/stream', authRequired, async (req, res) => {
   const mensagem = (req.query.mensagem || '').trim();
   const conversaId = req.query.conversa_id || `sessao_${Date.now()}`;
@@ -545,13 +325,11 @@ app.get('/chat/stream', authRequired, async (req, res) => {
 
     const data = await pythonResp.json();
     const textoCompleto = data.resposta || 'GG!';
-
-    // Simula o streaming token a token dividindo por palavras (ou caracteres)
     const pedacos = textoCompleto.match(/.{1,15}/g) || [textoCompleto];
     
     for (const pedaco of pedacos) {
       res.write(`data: ${JSON.stringify({ chunk: pedaco, conversa_id: conversaId })}\n\n`);
-      await new Promise(resolve => setTimeout(resolve, 35)); // Velocidade natural de escrita
+      await new Promise(resolve => setTimeout(resolve, 30));
     }
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
@@ -563,7 +341,7 @@ app.get('/chat/stream', authRequired, async (req, res) => {
 });
 
 /* ================================================================
-   8. SOCKET.IO (COMUNICAÇÃO EM TEMPO REAL E VOZ)
+   7. SOCKET.IO & INICIALIZAÇÃO DOS SERVIÇOS
    ================================================================ */
 const io = new SocketIOServer(server, {
   cors: { origin: origensPermitidas, credentials: true }
@@ -571,384 +349,6 @@ const io = new SocketIOServer(server, {
 
 io.engine.use((req, res, next) => sessionMiddleware(req, res, next));
 
-const voiceStates = new Map();
-const voiceTtsSockets = new Map();
-const ELEVENLABS_API_KEY = (process.env.ELEVENLABS_API_KEY_SECRET || process.env.ELEVENLABS_API_KEY || '').trim();
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || '42swcOVaxVM4TNSGUmkc';
-const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2';
-// FIX: Aceita tanto chaves novas (sk_...) quanto chaves hexadecimais de 32 caracteres da ElevenLabs
-const HAS_VALID_ELEVENLABS_KEY = ELEVENLABS_API_KEY.startsWith('sk_') || /^[a-f0-9]{32}$/i.test(ELEVENLABS_API_KEY);
-
-function disconnectVoiceSession(sessionId) {
-  if (sessionId) io.in(voiceSessionRoom(sessionId)).disconnectSockets(true);
-}
-
-async function validarSessaoVoz(socket, expected = socket.data.voiceSession) {
-  try {
-    if (await socket.data.voiceSessionReady && await socketSessionCurrent(socket, expected)) return true;
-  } catch {}
-  clearVoiceState(socket.id, voiceStates, voiceTtsSockets);
-  socket.disconnect(true);
-  return false;
-}
-
-function limparTextoFalado(texto) {
-  return String(texto || '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/[#*_>`~-]+/g, '')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/https?:\/\/\S+/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-async function pedirRespostaVoz(estado, mensagem, contextoVisual = '', signal, persistirMensagem = true) {
-  const response = await fetch(PYTHON_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': IANA_API_KEY
-    },
-    body: JSON.stringify(voiceRequestPayload(estado, mensagem, contextoVisual, persistirMensagem)),
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(35_000)]) : AbortSignal.timeout(35_000)
-  });
-
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || typeof data.resposta !== 'string' || !data.resposta.trim()) {
-    throw new Error(data.mensagem || `API Python respondeu HTTP ${response.status}.`);
-  }
-  return data.resposta.trim();
-}
-
-function identificarJogoNaFala(mensagem, jogoAtual = '') {
-  const patterns = [
-    /(?:estou|tô|to)\s+jogando\s+([^,.!?]{2,80})/i,
-    /(?:o jogo é|o jogo e|jogo chamado)\s+([^,.!?]{2,80})/i
-  ];
-  for (const pattern of patterns) {
-    const match = mensagem.match(pattern);
-    if (match?.[1]) return match[1].trim().replace(/\s+$/, '').slice(0, 80);
-  }
-  return jogoAtual;
-}
-
-function falarRespostaVoz(socket, estado, texto, turno) {
-  const turnoAtivo = () => voiceTurnActive(socket, estado, turno, voiceStates);
-  if (!turnoAtivo()) return;
-  const textoFalado = limparTextoFalado(texto);
-  socket.emit('voz:transcricao-iana', {
-    texto: textoFalado,
-    conversa_id: estado.conversaId,
-    ttsNativo: !HAS_VALID_ELEVENLABS_KEY
-  });
-
-  if (!HAS_VALID_ELEVENLABS_KEY) {
-    socket.emit('voz:usar-tts-local', { texto: textoFalado });
-    return;
-  }
-
-  const url = `wss://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}/stream-input`
-    + `?model_id=${encodeURIComponent(ELEVENLABS_MODEL_ID)}&output_format=pcm_24000`;
-  const tts = new WebSocket(url, { headers: { 'xi-api-key': ELEVENLABS_API_KEY } });
-  let terminou = false;
-  let enviouAudio = false;
-  const timeout = setTimeout(() => {
-    if (terminou) return;
-    terminou = true;
-    tts.close();
-    if (voiceTtsSockets.get(socket.id) === tts) voiceTtsSockets.delete(socket.id);
-    if (turnoAtivo()) {
-      estado.ocupado = false;
-      if (!enviouAudio) socket.emit('voz:usar-tts-local', { texto: textoFalado });
-      else socket.emit('voz:erro', { mensagem: 'A geração de áudio da Iana excedeu o tempo limite.' });
-    }
-  }, 20_000);
-  voiceTtsSockets.set(socket.id, tts);
-
-  tts.on('open', () => {
-    if (!turnoAtivo()) { tts.close(); return; }
-    tts.send(JSON.stringify({
-      text: ' ',
-      voice_settings: { stability: 0.5, similarity_boost: 0.8, style: 0.35, use_speaker_boost: true },
-      generation_config: { chunk_length_schedule: [50, 80, 120, 160] }
-    }));
-    tts.send(JSON.stringify({ text: `${textoFalado} `, flush: true }));
-    tts.send(JSON.stringify({ text: '' }));
-  });
-
-  tts.on('message', raw => {
-    let data;
-    try {
-      data = JSON.parse(raw.toString());
-    } catch {
-      return;
-    }
-
-    if (data.audio && turnoAtivo()) {
-      enviouAudio = true;
-      socket.emit('voz:audio-resposta', { audio: data.audio });
-    }
-    if (data.isFinal && !terminou) {
-      terminou = true;
-      clearTimeout(timeout);
-      if (voiceTtsSockets.get(socket.id) === tts) voiceTtsSockets.delete(socket.id);
-      if (turnoAtivo()) {
-        estado.ocupado = false;
-        socket.emit('voz:fala-finalizada');
-      }
-      tts.close();
-    }
-    if (data.error && !terminou) {
-      terminou = true;
-      clearTimeout(timeout);
-      if (voiceTtsSockets.get(socket.id) === tts) voiceTtsSockets.delete(socket.id);
-      if (turnoAtivo()) {
-        estado.ocupado = false;
-        if (!enviouAudio) socket.emit('voz:usar-tts-local', { texto: textoFalado });
-        else socket.emit('voz:erro', { mensagem: 'Não foi possível concluir o áudio da Iana.' });
-      }
-      tts.close();
-    }
-  });
-
-  tts.on('error', error => {
-    if (terminou) return;
-    terminou = true;
-    clearTimeout(timeout);
-    if (voiceTtsSockets.get(socket.id) === tts) voiceTtsSockets.delete(socket.id);
-    console.error('[ELEVENLABS VOZ]', error.message);
-    if (turnoAtivo()) {
-      estado.ocupado = false;
-      if (!enviouAudio) socket.emit('voz:usar-tts-local', { texto: textoFalado });
-      else socket.emit('voz:erro', { mensagem: 'Não foi possível concluir o áudio da Iana.' });
-    }
-  });
-
-  tts.on('close', () => {
-    terminou = true;
-    clearTimeout(timeout);
-    if (voiceTtsSockets.get(socket.id) === tts) voiceTtsSockets.delete(socket.id);
-    if (turnoAtivo()) estado.ocupado = false;
-  });
-}
-
-async function responderNaChamada(socket, estado, mensagem, contextoVisual = '', persistirMensagem = true) {
-  if (estado.ocupado || !voiceTurnActive(socket, estado, estado.turno, voiceStates)) return;
-  if (!await validarSessaoVoz(socket)) return;
-  if (estado.ocupado || !voiceTurnActive(socket, estado, estado.turno, voiceStates)) return;
-  const agora = Date.now();
-  if (agora - estado.inicioJanela >= 60_000) {
-    estado.inicioJanela = agora;
-    estado.chamadasNaJanela = 0;
-  }
-  if (estado.chamadasNaJanela >= 20) {
-    socket.emit('voz:erro', { mensagem: 'A chamada atingiu o limite temporário de análises. Aguarde um minuto.' });
-    return;
-  }
-  estado.chamadasNaJanela += 1;
-  estado.ocupado = true;
-  const turno = ++estado.turno;
-  const controller = new AbortController();
-  estado.requestController = controller;
-  const turnoAtivo = () => voiceTurnActive(socket, estado, turno, voiceStates);
-  try {
-    const resposta = await pedirRespostaVoz(estado, mensagem, contextoVisual, controller.signal, persistirMensagem);
-    if (!turnoAtivo() || !await validarSessaoVoz(socket)) return;
-    if (estado.userId) {
-      try {
-        if (persistirMensagem) {
-          await pool.query(
-            'INSERT INTO mensagens (conversa_id, usuario_id, remetente, mensagem) VALUES (?, ?, ?, ?)',
-            [estado.conversaId, estado.userId, 'user', mensagem]
-          );
-        }
-        if (!turnoAtivo() || !await validarSessaoVoz(socket)) return;
-        // FIX: Padronizado 'iana' em vez de 'assistant' para compatibilidade com memory.py
-        await pool.query(
-          'INSERT INTO mensagens (conversa_id, usuario_id, remetente, mensagem) VALUES (?, ?, ?, ?)',
-          [estado.conversaId, estado.userId, 'iana', resposta]
-        );
-        if (!turnoAtivo()) return;
-        await pool.query('UPDATE conversas SET atualizado_em = NOW() WHERE id = ?', [estado.conversaId]);
-      } catch (error) {
-        console.warn('[VOZ DB] Não foi possível salvar a fala:', error.message);
-      }
-    }
-    if (!turnoAtivo() || !await validarSessaoVoz(socket)) return;
-    falarRespostaVoz(socket, estado, resposta, turno);
-  } catch (error) {
-    if (!turnoAtivo() || controller.signal.aborted) return;
-    console.error('[VOZ IANA]', error.message);
-    socket.emit('voz:erro', { mensagem: 'Não consegui conectar ao cérebro da Iana. Confira os logs do serviço.' });
-    estado.ocupado = false;
-  } finally {
-    if (estado.requestController === controller) estado.requestController = null;
-  }
-}
-
-io.on('connection', (socket) => {
-  const sessionState = socket.request?.session;
-  if (!sessionState || !socket.request?.sessionID) { socket.disconnect(true); return; }
-  const connectionUserId = sessionState?.passport?.user || null;
-  const hadGuestIdentity = Boolean(sessionState?.knowledgeGuestId);
-  socket.data.voiceSession = {
-    sessionId: socket.request?.sessionID,
-    identity: conversationIdentity(connectionUserId ? { id: connectionUserId } : null, sessionState),
-  };
-  socket.join(voiceSessionRoom(socket.data.voiceSession.sessionId));
-  socket.data.voiceSessionReady = !connectionUserId && !hadGuestIdentity
-    ? new Promise(resolve => sessionState.save(error => resolve(!error)))
-    : Promise.resolve(true);
-  const user = connectionUserId || 'Visitante';
-  console.log(`🔌 Cliente conectado via Socket.IO (ID: ${socket.id}, User: ${user || 'Visitante'})`);
-
-  socket.on('voz:iniciar', async (dados = {}) => {
-    if (socket.data.voiceStarting) return;
-    socket.data.voiceStarting = true;
-    try {
-      if (!await validarSessaoVoz(socket)) return;
-      if (voiceStates.has(socket.id)) { socket.emit('voz:pronto'); return; }
-      const userId = socket.request.session?.passport?.user || null;
-      let nome = typeof dados.nomeUsuario === 'string' ? dados.nomeUsuario.trim().slice(0, 80) : 'Jogador';
-      if (userId) {
-        const [rows] = await pool.query('SELECT nome FROM usuarios WHERE id = ?', [userId]);
-        if (rows[0]?.nome) nome = rows[0].nome;
-      }
-      let conversaId = typeof dados.idConversa === 'string' ? dados.idConversa.trim().slice(0, 128) : '';
-      if (userId) conversaId = await ensureConversation(pool, userId, conversaId || null, 'Chamada de voz');
-      if (!conversaId) conversaId = `voice_${socket.id}`;
-      if (!await validarSessaoVoz(socket)) return;
-
-      voiceStates.set(socket.id, {
-        userId,
-        identidadeAprendizado: socket.data.voiceSession.identity,
-        nome: nome || 'Jogador',
-        conversaId,
-        jogoAtual: typeof dados.jogoAtual === 'string' ? dados.jogoAtual.trim().slice(0, 80) : '',
-        configUsuario: dados.configUsuario && typeof dados.configUsuario === 'object' && !Array.isArray(dados.configUsuario)
-          ? dados.configUsuario
-          : {},
-        contextoVisual: '',
-        visualAssinatura: '',
-        ultimaFalaVisual: 0,
-        turno: 0,
-        ocupado: false,
-        inicioJanela: Date.now(),
-        chamadasNaJanela: 0
-      });
-      socket.emit('voz:pronto');
-    } catch (error) {
-      console.error('[VOZ INICIAR]', error.message);
-      if (socket.connected) socket.emit('voz:erro', { mensagem: 'Não foi possível iniciar a chamada da Iana.' });
-    } finally {
-      socket.data.voiceStarting = false;
-    }
-  });
-
-  socket.on('voz:jogo', async dados => {
-    if (!await validarSessaoVoz(socket)) return;
-    const estado = voiceStates.get(socket.id);
-    const jogoAtual = typeof dados?.jogoAtual === 'string' ? dados.jogoAtual.trim().slice(0, 80) : '';
-    if (!estado || !jogoAtual) return;
-    estado.jogoAtual = jogoAtual;
-    estado.visualAssinatura = '';
-    estado.ultimaFalaVisual = 0;
-    socket.emit('voz:jogo-confirmado', { jogoAtual });
-  });
-
-  socket.on('voz:texto', async textoRecebido => {
-    if (!await validarSessaoVoz(socket)) return;
-    const estado = voiceStates.get(socket.id);
-    const mensagem = typeof textoRecebido === 'string' ? textoRecebido.trim() : '';
-    if (!estado || !mensagem) return;
-    if (mensagem.length > 2000) {
-      socket.emit('voz:erro', { mensagem: 'Fala muito longa.' });
-      return;
-    }
-    estado.jogoAtual = identificarJogoNaFala(mensagem, estado.jogoAtual);
-    const contextoVisual = Date.now() - estado.ultimaFalaVisual < 20_000 ? estado.contextoVisual : '';
-    await responderNaChamada(
-      socket,
-      estado,
-      mensagem,
-      contextoVisual
-    );
-  });
-
-  socket.on('voz:visao', async dados => {
-    if (!await validarSessaoVoz(socket)) return;
-    const estado = voiceStates.get(socket.id);
-    if (!estado || !dados || typeof dados !== 'object') return;
-    const frameWidth = Number.isFinite(dados.width) ? Math.max(1, Math.min(4096, dados.width)) : 1;
-    const frameHeight = Number.isFinite(dados.height) ? Math.max(1, Math.min(4096, dados.height)) : 1;
-    const detections = Array.isArray(dados.detections)
-      ? dados.detections.slice(0, 20).flatMap(item => {
-        if (typeof item?.label !== 'string' || !Number.isFinite(item.confidence)) return [];
-        const label = item.label.replace(/[^a-zA-Z0-9 _-]/g, '').trim().slice(0, 40);
-        if (!label) return [];
-        const coords = Array.isArray(item.xyxy) && item.xyxy.length === 4 && item.xyxy.every(Number.isFinite)
-          ? item.xyxy
-          : null;
-        const confidence = Math.round(Math.max(0, Math.min(1, item.confidence)) * 100);
-        if (!coords) return [`${label} (${confidence}%)`];
-        const [x1, y1, x2, y2] = coords;
-        const centerX = ((x1 + x2) / 2) / frameWidth;
-        const centerY = ((y1 + y2) / 2) / frameHeight;
-        const horizontal = centerX < 0.34 ? 'esquerda' : centerX > 0.66 ? 'direita' : 'centro';
-        const vertical = centerY < 0.34 ? 'superior' : centerY > 0.66 ? 'inferior' : 'meio';
-        return [`${label} (${confidence}%, ${vertical}-${horizontal} da tela)`];
-      })
-      : [];
-    const assinatura = [...new Set(detections)].sort().join('|');
-    if (!assinatura) return;
-
-    estado.contextoVisual = `Detecções locais YOLO: ${[...new Set(detections)].join(', ')}. As posições se referem apenas ao quadro, não ao mapa do jogo. Os rótulos são genéricos e podem estar incorretos; descreva apenas o que esta evidência permite.`;
-    const agora = Date.now();
-    if (assinatura === estado.visualAssinatura || estado.ocupado || agora - estado.ultimaFalaVisual < 8000) return;
-
-    estado.visualAssinatura = assinatura;
-    estado.ultimaFalaVisual = agora;
-    await responderNaChamada(
-      socket,
-      estado,
-      'Comente naturalmente, como numa conversa, se algo visível ajuda o jogador agora. Não fale de YOLO, rótulos, percentuais, coordenadas, chaves, colchetes ou parênteses; não invente elementos, objetivos ou mecânicas do jogo.',
-      estado.contextoVisual,
-      false
-    );
-  });
-
-  socket.on('voz:interromper', async () => {
-    if (!await validarSessaoVoz(socket)) return;
-    const estado = voiceStates.get(socket.id);
-    cancelVoiceTurn(estado);
-    const tts = voiceTtsSockets.get(socket.id);
-    if (tts) {
-      tts.close();
-      voiceTtsSockets.delete(socket.id);
-    }
-    socket.emit('voz:interrompido');
-  });
-
-  socket.on('voz:tts-local-finalizado', async () => {
-    if (!await validarSessaoVoz(socket)) return;
-    const estado = voiceStates.get(socket.id);
-    if (estado) estado.ocupado = false;
-    socket.emit('voz:fala-finalizada');
-  });
-
-  socket.on('voz:encerrar', () => {
-    clearVoiceState(socket.id, voiceStates, voiceTtsSockets);
-  });
-
-  socket.on('disconnect', () => {
-    clearVoiceState(socket.id, voiceStates, voiceTtsSockets);
-    console.log(`🔌 Cliente desconectado (ID: ${socket.id})`);
-  });
-});
-
-/* ================================================================
-   9. HANDLER GLOBAL DE ERROS E INICIALIZAÇÃO
-   ================================================================ */
 const pythonApi = START_PYTHON_API ? spawn(
   pythonExecutable(__dirname),
   [path.join(__dirname, 'core', 'app.py')],
@@ -960,70 +360,8 @@ const pythonApi = START_PYTHON_API ? spawn(
   }
 ) : null;
 
-let pythonApiError = null;
-pythonApi?.on('error', error => {
-  pythonApiError = error;
-  console.error('[PYTHON API] Não foi possível iniciar o processo:', error);
-});
-pythonApi?.on('exit', (code, signal) => {
-  if (code !== 0 && code !== null) console.error(`[PYTHON API] Processo encerrado com código ${code}.`);
-  if (signal) console.warn(`[PYTHON API] Processo encerrado pelo sinal ${signal}.`);
-});
-
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.once(signal, () => {
-    pythonApi?.kill();
-    server.close(() => process.exit(0));
-  });
-}
-
 app.use((req, res) => res.status(404).json({ status: 'erro', mensagem: 'Rota não encontrada.' }));
 
-app.use((err, req, res, next) => {
-  console.error('[ERRO NÃO TRATADO]', err);
-  return res.status(500).json({ status: 'erro', mensagem: 'Erro interno no servidor Node.js.' });
-});
-
-async function waitForPythonApi() {
-  const urlHealth = new URL('/health', PYTHON_API_URL);
-  const deadline = Date.now() + 120_000;
-
-  while (Date.now() < deadline) {
-    if (pythonApiError) throw pythonApiError;
-    if (pythonApi && (pythonApi.exitCode !== null || pythonApi.signalCode !== null)) {
-      throw new Error('O processo da API Python encerrou antes de ficar pronto.');
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2_000);
-    try {
-      const response = await fetch(urlHealth, { signal: controller.signal });
-      if (response.ok) {
-        const health = await response.json();
-        if (health.status === 'online') return;
-      }
-    } catch {
-      // A API pode ainda estar importando dependências.
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
-
-  throw new Error(`A API Python não ficou pronta em tempo hábil: ${urlHealth}`);
-}
-
-async function iniciarServidor() {
-  if (pythonApi) await waitForPythonApi();
-  server.listen(PORT, () => {
-    console.log(`🚀 Servidor Node.js (server.js) rodando na porta ${PORT}`);
-    console.log(`🔗 Conectado à API Python da Iana em: ${PYTHON_API_URL}`);
-  });
-}
-
-iniciarServidor().catch(error => {
-  console.error('[STARTUP] Falha ao iniciar os serviços:', error.message);
-  pythonApi?.kill();
-  process.exitCode = 1;
+server.listen(PORT, () => {
+  console.log(`🚀 Servidor Node.js rodando na porta ${PORT}`);
 });

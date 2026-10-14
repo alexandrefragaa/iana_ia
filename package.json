@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@google/genai": "^2.16.0",
-    "@google/generative-ai": "^0.21.0",
     "@sendgrid/mail": "^8.1.6",
     "axios": "^1.18.1",
     "bcryptjs": "^3.0.3",

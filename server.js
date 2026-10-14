@@ -83,7 +83,6 @@ app.use(cors({
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/configuracoes', (req, res) => {
-  // FIX: Nome do arquivo corrigido de 'configuraçoes.html' para 'configuracoes.html'
   res.sendFile(path.join(__dirname, 'public', 'configuracoes.html'));
 });
 
@@ -468,8 +467,6 @@ app.post('/feedback', chatLimiter, async (req, res) => {
    ================================================================ */
 app.post('/chat', chatLimiter, async (req, res) => {
   const nomeUsuario = req.user?.nome || req.body.nome_usuario || 'Jogador';
-  const idUsuario = req.user?.id || null;
-  const identidadeAprendizado = conversationIdentity(req.user, req.session);
   const mensagem = (req.body.mensagem || req.body.message || '').trim();
   const conversaId = req.body.conversa_id || req.body.sessao_id || `sessao_${Date.now()}`;
 
@@ -477,20 +474,6 @@ app.post('/chat', chatLimiter, async (req, res) => {
     return res.status(400).json({ status: 'erro', mensagem: 'O campo mensagem é obrigatório.' });
   }
 
-  if (idUsuario) {
-    try {
-      const [existe] = await pool.query('SELECT id FROM conversas WHERE id = ? AND usuario_id = ?', [conversaId, idUsuario]);
-      if (!existe.length) {
-        const tituloAuto = mensagem.length > 30 ? mensagem.substring(0, 30) + '...' : mensagem;
-        await pool.query('INSERT INTO conversas (id, usuario_id, titulo) VALUES (?, ?, ?)', [conversaId, idUsuario, tituloAuto]);
-      }
-      await pool.query('INSERT INTO mensagens (conversa_id, usuario_id, remetente, mensagem) VALUES (?, ?, ?, ?)', [conversaId, idUsuario, 'user', mensagem]);
-    } catch (dbErr) {
-      console.warn(`[CHAT DB] Não foi possível registrar mensagem no MySQL: ${dbErr.message}`);
-    }
-  }
-
-  let respostaIana = '';
   try {
     const pythonResp = await fetch(PYTHON_API_URL, {
       method: 'POST',
@@ -502,51 +485,81 @@ app.post('/chat', chatLimiter, async (req, res) => {
         mensagem: mensagem,
         sessao_id: conversaId,
         nome_usuario: nomeUsuario,
-        usuario_id: identidadeAprendizado,
-        config_usuario: req.body.configRaw,
-        estadoEmocional: req.body.estadoEmocional,
-        imagem: req.body.imagem,
-        audio: req.body.audio,
-        video: req.body.video,
-        arquivo: req.body.arquivo,
-        mimeType: req.body.mimeType
+        config_usuario: req.body.configRaw
       })
     });
 
-    if (pythonResp.ok) {
-      const data = await pythonResp.json();
-      respostaIana = data.resposta || data.message || 'GG! Recebi sua mensagem, jogador!';
-    } else {
-      console.error(`[PYTHON API] Erro HTTP ${pythonResp.status}`);
-      const data = await pythonResp.json().catch(() => ({}));
-      return res.status(pythonResp.status).json({
-        status: 'erro',
-        mensagem: data.mensagem || `A API da Iana respondeu HTTP ${pythonResp.status}.`
-      });
+    if (!pythonResp.ok) {
+      throw new Error(`API Python respondeu HTTP ${pythonResp.status}`);
     }
+
+    const data = await pythonResp.json();
+    return res.json({
+      status: 'sucesso',
+      conversa_id: conversaId,
+      resposta: data.resposta || 'GG! Recebi sua mensagem!',
+      timestamp: Date.now()
+    });
   } catch (err) {
-    console.error(`[PYTHON API CONEXÃO] Falha ao conectar em ${PYTHON_API_URL}:`, err.message);
+    console.error('[CHAT ERRO]', err.message);
     return res.status(503).json({
       status: 'erro',
-      mensagem: 'Não foi possível conectar ao serviço de IA. Tente novamente em instantes.'
+      mensagem: 'Não foi possível processar a resposta localmente.'
     });
   }
+});
 
-  if (idUsuario) {
-    try {
-      await pool.query('INSERT INTO mensagens (conversa_id, usuario_id, remetente, mensagem) VALUES (?, ?, ?, ?)', [conversaId, idUsuario, 'iana', respostaIana]);
-      await pool.query('UPDATE conversas SET atualizado_em = NOW() WHERE id = ?', [conversaId]);
-    } catch (dbErr) {
-      console.warn(`[CHAT DB] Erro ao salvar resposta da Iana: ${dbErr.message}`);
-    }
+// Adicione em server.js
+app.get('/chat/stream', authRequired, async (req, res) => {
+  const mensagem = (req.query.mensagem || '').trim();
+  const conversaId = req.query.conversa_id || `sessao_${Date.now()}`;
+
+  if (!mensagem) {
+    return res.status(400).json({ status: 'erro', mensagem: 'Mensagem obrigatória.' });
   }
 
-  return res.json({
-    status: 'sucesso',
-    conversa_id: conversaId,
-    resposta: respostaIana,
-    timestamp: Date.now()
-  });
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const pythonResp = await fetch(PYTHON_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': IANA_API_KEY
+      },
+      body: JSON.stringify({
+        mensagem: mensagem,
+        sessao_id: conversaId,
+        nome_usuario: req.user?.nome || 'Jogador',
+        usuario_id: req.user?.id || null
+      })
+    });
+
+    if (!pythonResp.ok) {
+      res.write(`data: ${JSON.stringify({ erro: 'Erro ao gerar resposta.' })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const data = await pythonResp.json();
+    const textoCompleto = data.resposta || 'GG!';
+
+    // Simula o streaming token a token dividindo por palavras (ou caracteres)
+    const pedacos = textoCompleto.match(/.{1,15}/g) || [textoCompleto];
+    
+    for (const pedaco of pedacos) {
+      res.write(`data: ${JSON.stringify({ chunk: pedaco, conversa_id: conversaId })}\n\n`);
+      await new Promise(resolve => setTimeout(resolve, 35)); // Velocidade natural de escrita
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ erro: 'Falha na conexão com o cérebro da Iana.' })}\n\n`);
+    res.end();
+  }
 });
 
 /* ================================================================

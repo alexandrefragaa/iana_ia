@@ -20,16 +20,24 @@ def respond(payload):
 
 
 def summarize_scene(detections):
-    """Transforma objetos detectados em um resumo estruturado para o guia do jogador."""
-    if not isinstance(detections, list):
-        return {
-            'status': 'sem_dados',
-            'risk': 'baixa',
-            'route': 'esperar e reagrupar',
-            'items': [],
-            'decision': 'Ainda não há elementos suficientes para sugerir uma rota.',
-            'summary': 'A cena ainda não está clara o bastante para orientar a próxima ação.'
-        }
+    labels = [str(d.get('label', '')).lower() for d in detections if isinstance(d, dict)]
+    detected_items = [l for l in labels if l in {'cell phone', 'book', 'bottle', 'cup', 'clock', 'laptop'}]
+    
+    if detected_items:
+        status = 'explorar'
+        decision = f"Elementos detectados na tela: {', '.join(detected_items)}."
+    else:
+        status = 'seguro'
+        decision = "Cena está estável. Nenhum alerta crítico detectado no momento."
+        
+    return {
+        'status': status,
+        'risk': 'baixa',
+        'route': 'Mantenha o foco na área principal de jogo.',
+        'items': detected_items,
+        'decision': decision,
+        'summary': decision
+    }
 
     labels = []
     for detection in detections:

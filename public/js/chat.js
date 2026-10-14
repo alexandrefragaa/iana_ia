@@ -3656,272 +3656,56 @@ function atualizarMensagemIA(
 }
 
 
-async function processarEnvioIA(
-    mensagem,
-    anexo = null,
-    visualizacaoAnexo = null
-) {
-    if (
-        aguardandoResposta &&
-        !emChamadaVoz
-    ) {
-        return;
-    }
+// Substitua a chamada de envio no chat.js para suportar streaming
+async function processarEnvioIAStreaming(texto) {
+    if (!texto.trim()) return;
 
-    const texto =
-        String(mensagem || '')
-            .trim();
-
-    if (!texto && !anexo) {
-        return;
-    }
-
-    if (!emChamadaVoz) {
-        aguardandoResposta =
-            true;
-
-        atualizarBotoesChat(
-            true
-        );
-
-        if (visualizacaoAnexo) {
-            adicionarAnexoUsuarioDOM(visualizacaoAnexo);
-        } else {
-            adicionarMensagemDOM(
-                'usuario',
-                texto
-            );
-        }
-
-        removerWelcome();
-
-        mostrarIndicadorDigitando();
-    }
-
-    controller =
-        new AbortController();
+    adicionarMensagemDOM('usuario', texto);
+    removerWelcome();
+    
+    const elementoIA = adicionarMensagemDOM('ia', '');
+    const conteudoEl = elementoIA.querySelector('.mensagem-conteudo');
+    
+    let textoAcumulado = '';
 
     try {
-        const configPrompt =
-            montarConfigPrompt();
+        const response = await fetch(`/chat/stream?mensagem=${encodeURIComponent(texto)}`, {
+            credentials: 'include'
+        });
 
-        const payload = {
-            mensagem: texto,
-            message: texto,
-            conversa_id:
-                idConversaAtiva,
-            id_conversa:
-                idConversaAtiva,
-            config:
-                configPrompt,
-            configuracao:
-                configPrompt,
-            // FIX: o iana.py (backend Python) espera o objeto de
-            // configuração cru — não o texto pronto (configPrompt) que
-            // o Gemini via Node usa. Sem isso, as configurações do
-            // usuário eram ignoradas sempre que o Python respondia.
-            configRaw:
-                obterConfigSalva(),
-            // FIX: features.js expõe detectarEstadoEmocional() mas
-            // ninguém chamava — o servidor tinha só o fallback dele
-            // (detectarHumor), sem o estado "frustrado" que só o
-            // features.js detecta.
-            estadoEmocional:
-                typeof detectarEstadoEmocional === 'function'
-                    ? detectarEstadoEmocional(texto)
-                    : undefined
-        };
+        if (!response.ok) throw new Error('Erro no fluxo de streaming.');
 
-        if (anexo) {
-            Object.assign(
-                payload,
-                anexo
-            );
-        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
 
-        const res =
-            await fetch(
-                '/chat',
-                {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: {
-                        'Content-Type':
-                            'application/json'
-                    },
-                    body:
-                        JSON.stringify(
-                            payload
-                        ),
-                    signal:
-                        controller.signal
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            const chunkStr = decoder.decode(value, { stream: true });
+            const linhas = chunkStr.split('\n\n');
+
+            for (const linha of linhas) {
+                if (linha.startsWith('data: ')) {
+                    const json = JSON.parse(linha.substring(6));
+                    if (json.chunk) {
+                        textoAcumulado += json.chunk;
+                        conteudoEl.textContent = textoAcumulado; // Atualiza a palavra em tempo real
+                    }
+                    if (json.conversa_id) {
+                        idConversaAtiva = json.conversa_id;
+                    }
                 }
-            );
-
-        if (!res.ok) {
-            let erro = null;
-
-            try {
-                erro =
-                    await res.json();
-            } catch {}
-
-            throw new Error(
-                erro?.erro ||
-                erro?.error ||
-                erro?.mensagem ||
-                `Erro HTTP ${res.status}`
-            );
-        }
-
-        /*
-           O backend pode retornar JSON.
-        */
-
-        const contentType =
-            res.headers.get(
-                'content-type'
-            ) || '';
-
-        if (
-            contentType.includes(
-                'application/json'
-            )
-        ) {
-            const data =
-                await res.json();
-
-            const resposta =
-                data.resposta ??
-                data.response ??
-                data.mensagem ??
-                data.content ??
-                '';
-
-            if (data.conversa_id) {
-                idConversaAtiva =
-                    data.conversa_id;
             }
-
-            if (data.id_conversa) {
-                idConversaAtiva =
-                    data.id_conversa;
-            }
-
-            if (emChamadaVoz) {
-                finalizarRespostaVoz(
-                    resposta
-                );
-
-                return;
-            }
-
-            removerIndicadorDigitando();
-
-            const mensagemIA =
-                adicionarMensagemDOM(
-                    'ia',
-                    resposta
-                );
-
-            if (
-                ttsNextResponse &&
-                resposta
-            ) {
-                ttsNextResponse =
-                    false;
-
-                await falar(
-                    resposta
-                );
-            }
-
-            if (data.conversa) {
-                idConversaAtiva =
-                    data.conversa.id ??
-                    data.conversa._id ??
-                    idConversaAtiva;
-            }
-
-            if (usuarioAtual) {
-                carregarHistorico();
-            }
-
-            return;
+        }
+        
+        // Aplica formatação Markdown final assim que termina
+        if (typeof marked !== 'undefined') {
+            conteudoEl.innerHTML = sanitizarHTML(marked.parse(textoAcumulado, { breaks: true }));
         }
 
-        /*
-           Fallback para resposta em texto.
-        */
-
-        const resposta =
-            await res.text();
-
-        if (emChamadaVoz) {
-            finalizarRespostaVoz(
-                resposta
-            );
-
-            return;
-        }
-
-        removerIndicadorDigitando();
-
-        adicionarMensagemDOM(
-            'ia',
-            resposta
-        );
-
-        if (
-            ttsNextResponse &&
-            resposta
-        ) {
-            ttsNextResponse =
-                false;
-
-            await falar(
-                resposta
-            );
-        }
-
-    } catch (erro) {
-        if (
-            erro?.name ===
-            'AbortError'
-        ) {
-            return;
-        }
-
-        console.error(
-            '[IANA CHAT]',
-            erro
-        );
-
-        removerIndicadorDigitando();
-
-        if (emChamadaVoz) {
-            finalizarRespostaVoz(
-                'Não consegui processar sua solicitação.'
-            );
-        } else {
-            adicionarMensagemDOM(
-                'ia',
-                erro?.message || 'Não foi possível processar sua mensagem. Tente novamente.'
-            );
-        }
-
-    } finally {
-        if (!emChamadaVoz) {
-            aguardandoResposta =
-                false;
-
-            atualizarBotoesChat(
-                false
-            );
-
-            controller =
-                null;
-        }
+    } catch (err) {
+        conteudoEl.textContent = 'Ocorreu um erro ao gerar a resposta em tempo real.';
     }
 }
 

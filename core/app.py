@@ -82,6 +82,27 @@ app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 # Configurações Globais
 API_VERSION = "1.0.0"
 
+# FIX: estas constantes eram usadas em várias funções abaixo
+# (normalizar_anexo, limitar_historico, chat_iana) mas nunca foram
+# definidas em lugar nenhum do arquivo — cada chamada dessas funções
+# ia lançar NameError na hora.
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024       # 10 MB por anexo (mesmo limite citado na mensagem de erro)
+MAX_HISTORY_MESSAGES = 40                     # mensagens mantidas em memória por sessão
+MAX_MESSAGE_LENGTH = 8000
+MAX_SESSION_ID_LENGTH = 128
+MAX_NAME_LENGTH = 80
+
+# FIX: usados em várias rotas (`with sessoes_lock:`, `with pipeline_lock:`)
+# mas nunca instanciados — mesmo problema, NameError garantido na
+# primeira requisição a /api/v1/chat ou /health.
+# sessoes_lock protege o dicionário sessoes_memoria (acesso concorrente
+# de múltiplas requisições). pipeline_lock serializa o acesso ao
+# iana_v2, que guarda o estado da conversa em variáveis de módulo
+# (iana_v2.msg_final, iana_v2.historico, etc.) — sem essa serialização,
+# duas requisições simultâneas se misturariam uma na outra.
+sessoes_lock = threading.Lock()
+pipeline_lock = threading.Lock()
+
 
 def resolve_api_key() -> str:
     """Resolve a chave de autenticação da API priorizando configuração explícita e fallback seguro para desenvolvimento."""
@@ -104,7 +125,7 @@ IANA_API_KEY = resolve_api_key()
 # Armazenamento em memória protegido contra acesso concorrente.
 from collections import OrderedDict
 MAX_ACTIVE_SESSIONS = 500
-sessoes_memoria: OrderedDict[str, List[Dict[str, str]]] = OrderedDict()
+sessoes_memoria: "OrderedDict[str, List[Dict[str, str]]]" = OrderedDict()
 
 
 def normalizar_identidade_usuario(value, session_id=None):
@@ -289,12 +310,14 @@ def health_check():
     GET /health
     Verifica a saúde da API, status do pipeline e uso de memória.
     """
-   with sessoes_lock:
-    if chave_historico in sessoes_memoria:
-        sessoes_memoria.move_to_end(chave_historico)
-    elif len(sessoes_memoria) >= MAX_ACTIVE_SESSIONS:
-        sessoes_memoria.popitem(last=False)
-    sessoes_memoria.setdefault(chave_historico, [])
+    # FIX: esta função tinha, colado por engano, um pedaço do bloco de
+    # sessão do /api/v1/chat (indentação quebrada — 3 espaços em vez de
+    # 4, o que por si só já é SyntaxError — e usando `chave_historico`,
+    # que não existe aqui; health check não deveria criar/tocar sessão
+    # nenhuma). `sessoes_ativas`, usado no JSON de resposta, também
+    # nunca era calculado. Abaixo, só a contagem real de sessões ativas.
+    with sessoes_lock:
+        sessoes_ativas = len(sessoes_memoria)
 
     return jsonify({
         "status": "online",
@@ -439,6 +462,7 @@ def chat_iana():
 
     # Processa a resposta via pipeline RAG ou Fallback
     resposta_final = None
+    aprendizado_conversa = None
 
     if RUN_PIPELINE_OK:
         try:
@@ -487,7 +511,7 @@ def chat_iana():
         "versao_api": API_VERSION,
         "sessao_id": sessao_id,
         "resposta": resposta_final,
-        "aprendizado_conversa": aprendizado_conversa if RUN_PIPELINE_OK and 'aprendizado_conversa' in locals() else None,
+        "aprendizado_conversa": aprendizado_conversa,
         "historico_count": historico_count,
         "timestamp": int(time.time())
     }), 200
@@ -556,7 +580,7 @@ def limpar_historico(sessao_id: str):
 
 
 # ================================================================
-# EXECUÇÃO DO SERVIDOR
+# BASE DE CONHECIMENTO
 # ================================================================
 
 from core.knowledge_jobs import get_jobs, validate_submission, capabilities
@@ -607,6 +631,11 @@ def get_knowledge_job(job_id):
     if job is None:
         return jsonify({"mensagem": "Tarefa não encontrada."}), 404
     return jsonify({"job": job})
+
+
+# ================================================================
+# EXECUÇÃO DO SERVIDOR
+# ================================================================
 
 if __name__ == '__main__':
     porta = int(os.getenv("PORT", "5000"))

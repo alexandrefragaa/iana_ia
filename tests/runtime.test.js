@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ensureConversation, attachmentPart, escapeHTML, pythonExecutable} from '../core/runtime.js';
+import {ensureConversation, attachmentPart, escapeHTML, pythonExecutable, conversationIdentity} from '../core/runtime.js';
 import {isPublicIP} from '../core/safe-links.js';
 
 test('visitor cannot select a persistent conversation',async()=>{
@@ -31,3 +31,10 @@ test('private and mapped addresses cannot be fetched',()=>{
 });
 test('feedback escapes markup',()=>{assert.equal(escapeHTML('<img onerror="x">'), '&lt;img onerror=&quot;x&quot;&gt;');});
 test('explicit interpreter path is retained',()=>{assert.equal(pythonExecutable('.', {IANA_PYTHON_PATH:'custom'}),'custom');});
+test('learning identity is stable across chats and separate for accounts and visitors',()=>{
+ const a={},b={}; const first=conversationIdentity(null,a);
+ assert.equal(conversationIdentity(null,a),first);
+ assert.notEqual(conversationIdentity(null,b),first);
+ assert.equal(conversationIdentity({id:7},a),'user:7');
+ assert.notEqual(conversationIdentity({id:8},a),'user:7');
+});

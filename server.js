@@ -16,7 +16,10 @@ import { spawn } from 'node:child_process';
 import { Server as SocketIOServer } from 'socket.io';
 import crypto from 'crypto';
 import WebSocket from 'ws';
-import { ensureConversation, escapeHTML, pythonExecutable } from './core/runtime.js';
+import { ensureConversation, escapeHTML, pythonExecutable, conversationIdentity } from './core/runtime.js';
+import { createKnowledgeRouter } from './core/knowledge-proxy.js';
+import { createSessionStore } from './core/session-store.js';
+import { voiceSessionRoom, voiceRequestPayload, socketSessionCurrent, voiceTurnActive, cancelVoiceTurn, clearVoiceState } from './core/voice-session.js';
 
 dotenv.config();
 
@@ -42,6 +45,14 @@ const SENDGRID_API_KEY = (process.env.SENDGRID_API_KEY || '').trim();
 const EMAIL_FROM = (process.env.EMAIL_FROM || process.env.EMAIL_USER || '').trim();
 const FEEDBACK_TO_EMAIL = (process.env.FEEDBACK_TO_EMAIL || EMAIL_FROM).trim();
 const passwordResetCodes = new Map();
+
+// Limpeza periódica de códigos de recuperação expirados (evita Memory Leak)
+setInterval(() => {
+  const agora = Date.now();
+  for (const [email, dados] of passwordResetCodes.entries()) {
+    if (agora > dados.expiraEm) passwordResetCodes.delete(email);
+  }
+}, 5 * 60 * 1000).unref();
 
 if (SENDGRID_API_KEY) sgMail.setApiKey(SENDGRID_API_KEY);
 
@@ -72,7 +83,8 @@ app.use(cors({
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/configuracoes', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'configuraçoes.html'));
+  // FIX: Nome do arquivo corrigido de 'configuraçoes.html' para 'configuracoes.html'
+  res.sendFile(path.join(__dirname, 'public', 'configuracoes.html'));
 });
 
 /* ================================================================
@@ -94,7 +106,6 @@ const pool = mysql.createPool({
   queueLimit: 0
 });
 
-// Teste inicial de conexão MySQL
 (async () => {
   try {
     const conn = await pool.getConnection();
@@ -106,7 +117,9 @@ const pool = mysql.createPool({
 })();
 
 const MySQLStore = MySQLStoreFactory(session);
-const sessionStore = new MySQLStore(dbConfig);
+const sessionStore = createSessionStore(MySQLStore, pool, (operation, error) => {
+  console.error(`[SESSÃO MYSQL] Falha na ${operation} (${error.code || error.name || 'erro'}).`);
+});
 
 const sessionMiddleware = session({
   secret: SESSION_SECRET,
@@ -119,7 +132,7 @@ const sessionMiddleware = session({
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 dias
+    maxAge: 7 * 24 * 60 * 60 * 1000
   }
 });
 
@@ -157,13 +170,11 @@ passport.deserializeUser(async (id, done) => {
   }
 });
 
-// Middleware de verificação de autenticação
 const authRequired = (req, res, next) => {
   if (req.isAuthenticated()) return next();
   return res.status(401).json({ status: 'erro', mensagem: 'Login necessário para acessar este recurso.' });
 };
 
-// Rate Limiters para proteção contra força bruta
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -175,6 +186,17 @@ const chatLimiter = rateLimit({
   max: 30,
   message: { status: 'erro', mensagem: 'Limite de mensagens atingido. Aguarde um momento.' }
 });
+
+app.use('/api/v1/knowledge', createKnowledgeRouter({
+  pythonApiUrl: PYTHON_API_URL,
+  apiKey: IANA_API_KEY,
+  authRequired,
+  createLimiter: rateLimit({
+    windowMs: 60 * 1000,
+    max: 5,
+    message: { status: 'erro', mensagem: 'Aguarde um minuto antes de importar mais fontes.' }
+  })
+}));
 
 /* ================================================================
    5. ROTAS DE AUTENTICAÇÃO E CONTA
@@ -195,6 +217,7 @@ app.post('/auth/registro', loginLimiter, async (req, res) => {
     const [resultado] = await pool.query('INSERT INTO usuarios (nome, email, senha) VALUES (?, ?, ?)', [nome.trim(), emailT, hash]);
     
     const novoUsuario = { id: resultado.insertId, nome: nome.trim(), email: emailT };
+    disconnectVoiceSession(req.sessionID);
     req.login(novoUsuario, (err) => {
       if (err) return res.status(500).json({ status: 'erro', mensagem: 'Erro de sessão.' });
       return res.status(201).json({ status: 'sucesso', usuario: novoUsuario });
@@ -210,6 +233,7 @@ app.post('/auth/login', loginLimiter, (req, res, next) => {
     if (err) return res.status(500).json({ status: 'erro', mensagem: 'Erro interno.' });
     if (!usuario) return res.status(401).json({ status: 'erro', mensagem: info?.message || 'Falha no login.' });
 
+    disconnectVoiceSession(req.sessionID);
     req.login(usuario, (err) => {
       if (err) return res.status(500).json({ status: 'erro', mensagem: 'Erro de sessão.' });
       return res.json({ status: 'sucesso', usuario });
@@ -218,6 +242,8 @@ app.post('/auth/login', loginLimiter, (req, res, next) => {
 });
 
 app.post('/auth/logout', (req, res) => {
+  const previousSessionId = req.sessionID;
+  disconnectVoiceSession(previousSessionId);
   req.logout(err => {
     if (err) {
       console.error('[AUTH LOGOUT]', err.message);
@@ -443,6 +469,7 @@ app.post('/feedback', chatLimiter, async (req, res) => {
 app.post('/chat', chatLimiter, async (req, res) => {
   const nomeUsuario = req.user?.nome || req.body.nome_usuario || 'Jogador';
   const idUsuario = req.user?.id || null;
+  const identidadeAprendizado = conversationIdentity(req.user, req.session);
   const mensagem = (req.body.mensagem || req.body.message || '').trim();
   const conversaId = req.body.conversa_id || req.body.sessao_id || `sessao_${Date.now()}`;
 
@@ -450,7 +477,6 @@ app.post('/chat', chatLimiter, async (req, res) => {
     return res.status(400).json({ status: 'erro', mensagem: 'O campo mensagem é obrigatório.' });
   }
 
-  // 1. Salva a mensagem do usuário no MySQL (se autenticado)
   if (idUsuario) {
     try {
       const [existe] = await pool.query('SELECT id FROM conversas WHERE id = ? AND usuario_id = ?', [conversaId, idUsuario]);
@@ -464,7 +490,6 @@ app.post('/chat', chatLimiter, async (req, res) => {
     }
   }
 
-  // 2. Faz a chamada HTTP para o Servidor Python da Iana (app.py na porta 5000)
   let respostaIana = '';
   try {
     const pythonResp = await fetch(PYTHON_API_URL, {
@@ -477,6 +502,7 @@ app.post('/chat', chatLimiter, async (req, res) => {
         mensagem: mensagem,
         sessao_id: conversaId,
         nome_usuario: nomeUsuario,
+        usuario_id: identidadeAprendizado,
         config_usuario: req.body.configRaw,
         estadoEmocional: req.body.estadoEmocional,
         imagem: req.body.imagem,
@@ -506,7 +532,6 @@ app.post('/chat', chatLimiter, async (req, res) => {
     });
   }
 
-  // 3. Salva a resposta da Iana no MySQL (se autenticado)
   if (idUsuario) {
     try {
       await pool.query('INSERT INTO mensagens (conversa_id, usuario_id, remetente, mensagem) VALUES (?, ?, ?, ?)', [conversaId, idUsuario, 'iana', respostaIana]);
@@ -516,7 +541,6 @@ app.post('/chat', chatLimiter, async (req, res) => {
     }
   }
 
-  // 4. Retorna a resposta JSON para o Frontend
   return res.json({
     status: 'sucesso',
     conversa_id: conversaId,
@@ -539,6 +563,21 @@ const voiceTtsSockets = new Map();
 const ELEVENLABS_API_KEY = (process.env.ELEVENLABS_API_KEY_SECRET || process.env.ELEVENLABS_API_KEY || '').trim();
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || '42swcOVaxVM4TNSGUmkc';
 const ELEVENLABS_MODEL_ID = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2';
+// FIX: Aceita tanto chaves novas (sk_...) quanto chaves hexadecimais de 32 caracteres da ElevenLabs
+const HAS_VALID_ELEVENLABS_KEY = ELEVENLABS_API_KEY.startsWith('sk_') || /^[a-f0-9]{32}$/i.test(ELEVENLABS_API_KEY);
+
+function disconnectVoiceSession(sessionId) {
+  if (sessionId) io.in(voiceSessionRoom(sessionId)).disconnectSockets(true);
+}
+
+async function validarSessaoVoz(socket, expected = socket.data.voiceSession) {
+  try {
+    if (await socket.data.voiceSessionReady && await socketSessionCurrent(socket, expected)) return true;
+  } catch {}
+  clearVoiceState(socket.id, voiceStates, voiceTtsSockets);
+  socket.disconnect(true);
+  return false;
+}
 
 function limparTextoFalado(texto) {
   return String(texto || '')
@@ -550,22 +589,15 @@ function limparTextoFalado(texto) {
     .trim();
 }
 
-async function pedirRespostaVoz(estado, mensagem, contextoVisual = '') {
+async function pedirRespostaVoz(estado, mensagem, contextoVisual = '', signal, persistirMensagem = true) {
   const response = await fetch(PYTHON_API_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-API-Key': IANA_API_KEY
     },
-    body: JSON.stringify({
-      mensagem,
-      sessao_id: estado.conversaId,
-      nome_usuario: estado.nome,
-      config_usuario: estado.configUsuario,
-      jogo_atual: estado.jogoAtual,
-      contexto_visual: contextoVisual
-    }),
-    signal: AbortSignal.timeout(35_000)
+    body: JSON.stringify(voiceRequestPayload(estado, mensagem, contextoVisual, persistirMensagem)),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(35_000)]) : AbortSignal.timeout(35_000)
   });
 
   const data = await response.json().catch(() => ({}));
@@ -588,14 +620,16 @@ function identificarJogoNaFala(mensagem, jogoAtual = '') {
 }
 
 function falarRespostaVoz(socket, estado, texto, turno) {
+  const turnoAtivo = () => voiceTurnActive(socket, estado, turno, voiceStates);
+  if (!turnoAtivo()) return;
   const textoFalado = limparTextoFalado(texto);
   socket.emit('voz:transcricao-iana', {
     texto: textoFalado,
     conversa_id: estado.conversaId,
-    ttsNativo: !ELEVENLABS_API_KEY.startsWith('sk_')
+    ttsNativo: !HAS_VALID_ELEVENLABS_KEY
   });
 
-  if (!ELEVENLABS_API_KEY.startsWith('sk_')) {
+  if (!HAS_VALID_ELEVENLABS_KEY) {
     socket.emit('voz:usar-tts-local', { texto: textoFalado });
     return;
   }
@@ -609,9 +643,9 @@ function falarRespostaVoz(socket, estado, texto, turno) {
     if (terminou) return;
     terminou = true;
     tts.close();
-    voiceTtsSockets.delete(socket.id);
-    estado.ocupado = false;
-    if (estado.turno === turno) {
+    if (voiceTtsSockets.get(socket.id) === tts) voiceTtsSockets.delete(socket.id);
+    if (turnoAtivo()) {
+      estado.ocupado = false;
       if (!enviouAudio) socket.emit('voz:usar-tts-local', { texto: textoFalado });
       else socket.emit('voz:erro', { mensagem: 'A geração de áudio da Iana excedeu o tempo limite.' });
     }
@@ -619,6 +653,7 @@ function falarRespostaVoz(socket, estado, texto, turno) {
   voiceTtsSockets.set(socket.id, tts);
 
   tts.on('open', () => {
+    if (!turnoAtivo()) { tts.close(); return; }
     tts.send(JSON.stringify({
       text: ' ',
       voice_settings: { stability: 0.5, similarity_boost: 0.8, style: 0.35, use_speaker_boost: true },
@@ -636,24 +671,26 @@ function falarRespostaVoz(socket, estado, texto, turno) {
       return;
     }
 
-    if (data.audio && estado.turno === turno) {
+    if (data.audio && turnoAtivo()) {
       enviouAudio = true;
       socket.emit('voz:audio-resposta', { audio: data.audio });
     }
     if (data.isFinal && !terminou) {
       terminou = true;
       clearTimeout(timeout);
-      voiceTtsSockets.delete(socket.id);
-      estado.ocupado = false;
-      if (estado.turno === turno) socket.emit('voz:fala-finalizada');
+      if (voiceTtsSockets.get(socket.id) === tts) voiceTtsSockets.delete(socket.id);
+      if (turnoAtivo()) {
+        estado.ocupado = false;
+        socket.emit('voz:fala-finalizada');
+      }
       tts.close();
     }
     if (data.error && !terminou) {
       terminou = true;
       clearTimeout(timeout);
-      voiceTtsSockets.delete(socket.id);
-      estado.ocupado = false;
-      if (estado.turno === turno) {
+      if (voiceTtsSockets.get(socket.id) === tts) voiceTtsSockets.delete(socket.id);
+      if (turnoAtivo()) {
+        estado.ocupado = false;
         if (!enviouAudio) socket.emit('voz:usar-tts-local', { texto: textoFalado });
         else socket.emit('voz:erro', { mensagem: 'Não foi possível concluir o áudio da Iana.' });
       }
@@ -665,18 +702,27 @@ function falarRespostaVoz(socket, estado, texto, turno) {
     if (terminou) return;
     terminou = true;
     clearTimeout(timeout);
-    voiceTtsSockets.delete(socket.id);
-    estado.ocupado = false;
+    if (voiceTtsSockets.get(socket.id) === tts) voiceTtsSockets.delete(socket.id);
     console.error('[ELEVENLABS VOZ]', error.message);
-    if (estado.turno === turno) {
+    if (turnoAtivo()) {
+      estado.ocupado = false;
       if (!enviouAudio) socket.emit('voz:usar-tts-local', { texto: textoFalado });
       else socket.emit('voz:erro', { mensagem: 'Não foi possível concluir o áudio da Iana.' });
     }
   });
+
+  tts.on('close', () => {
+    terminou = true;
+    clearTimeout(timeout);
+    if (voiceTtsSockets.get(socket.id) === tts) voiceTtsSockets.delete(socket.id);
+    if (turnoAtivo()) estado.ocupado = false;
+  });
 }
 
 async function responderNaChamada(socket, estado, mensagem, contextoVisual = '', persistirMensagem = true) {
-  if (estado.ocupado) return;
+  if (estado.ocupado || !voiceTurnActive(socket, estado, estado.turno, voiceStates)) return;
+  if (!await validarSessaoVoz(socket)) return;
+  if (estado.ocupado || !voiceTurnActive(socket, estado, estado.turno, voiceStates)) return;
   const agora = Date.now();
   if (agora - estado.inicioJanela >= 60_000) {
     estado.inicioJanela = agora;
@@ -689,9 +735,12 @@ async function responderNaChamada(socket, estado, mensagem, contextoVisual = '',
   estado.chamadasNaJanela += 1;
   estado.ocupado = true;
   const turno = ++estado.turno;
+  const controller = new AbortController();
+  estado.requestController = controller;
+  const turnoAtivo = () => voiceTurnActive(socket, estado, turno, voiceStates);
   try {
-    const resposta = await pedirRespostaVoz(estado, mensagem, contextoVisual);
-    if (estado.turno !== turno) return;
+    const resposta = await pedirRespostaVoz(estado, mensagem, contextoVisual, controller.signal, persistirMensagem);
+    if (!turnoAtivo() || !await validarSessaoVoz(socket)) return;
     if (estado.userId) {
       try {
         if (persistirMensagem) {
@@ -700,35 +749,53 @@ async function responderNaChamada(socket, estado, mensagem, contextoVisual = '',
             [estado.conversaId, estado.userId, 'user', mensagem]
           );
         }
+        if (!turnoAtivo() || !await validarSessaoVoz(socket)) return;
+        // FIX: Padronizado 'iana' em vez de 'assistant' para compatibilidade com memory.py
         await pool.query(
           'INSERT INTO mensagens (conversa_id, usuario_id, remetente, mensagem) VALUES (?, ?, ?, ?)',
-          [estado.conversaId, estado.userId, 'assistant', resposta]
+          [estado.conversaId, estado.userId, 'iana', resposta]
         );
+        if (!turnoAtivo()) return;
         await pool.query('UPDATE conversas SET atualizado_em = NOW() WHERE id = ?', [estado.conversaId]);
       } catch (error) {
         console.warn('[VOZ DB] Não foi possível salvar a fala:', error.message);
       }
     }
-    if (estado.turno !== turno) return;
+    if (!turnoAtivo() || !await validarSessaoVoz(socket)) return;
     falarRespostaVoz(socket, estado, resposta, turno);
   } catch (error) {
+    if (!turnoAtivo() || controller.signal.aborted) return;
     console.error('[VOZ IANA]', error.message);
-    if (estado.turno === turno) socket.emit('voz:erro', { mensagem: 'Não consegui conectar ao cérebro da Iana. Confira os logs do serviço.' });
+    socket.emit('voz:erro', { mensagem: 'Não consegui conectar ao cérebro da Iana. Confira os logs do serviço.' });
     estado.ocupado = false;
+  } finally {
+    if (estado.requestController === controller) estado.requestController = null;
   }
 }
 
 io.on('connection', (socket) => {
-  const userId = socket.request?.session?.passport?.user || null;
-  const user = userId || 'Visitante';
+  const sessionState = socket.request?.session;
+  if (!sessionState || !socket.request?.sessionID) { socket.disconnect(true); return; }
+  const connectionUserId = sessionState?.passport?.user || null;
+  const hadGuestIdentity = Boolean(sessionState?.knowledgeGuestId);
+  socket.data.voiceSession = {
+    sessionId: socket.request?.sessionID,
+    identity: conversationIdentity(connectionUserId ? { id: connectionUserId } : null, sessionState),
+  };
+  socket.join(voiceSessionRoom(socket.data.voiceSession.sessionId));
+  socket.data.voiceSessionReady = !connectionUserId && !hadGuestIdentity
+    ? new Promise(resolve => sessionState.save(error => resolve(!error)))
+    : Promise.resolve(true);
+  const user = connectionUserId || 'Visitante';
   console.log(`🔌 Cliente conectado via Socket.IO (ID: ${socket.id}, User: ${user || 'Visitante'})`);
 
   socket.on('voz:iniciar', async (dados = {}) => {
-    if (voiceStates.has(socket.id)) {
-      socket.emit('voz:pronto');
-      return;
-    }
+    if (socket.data.voiceStarting) return;
+    socket.data.voiceStarting = true;
     try {
+      if (!await validarSessaoVoz(socket)) return;
+      if (voiceStates.has(socket.id)) { socket.emit('voz:pronto'); return; }
+      const userId = socket.request.session?.passport?.user || null;
       let nome = typeof dados.nomeUsuario === 'string' ? dados.nomeUsuario.trim().slice(0, 80) : 'Jogador';
       if (userId) {
         const [rows] = await pool.query('SELECT nome FROM usuarios WHERE id = ?', [userId]);
@@ -737,9 +804,11 @@ io.on('connection', (socket) => {
       let conversaId = typeof dados.idConversa === 'string' ? dados.idConversa.trim().slice(0, 128) : '';
       if (userId) conversaId = await ensureConversation(pool, userId, conversaId || null, 'Chamada de voz');
       if (!conversaId) conversaId = `voice_${socket.id}`;
+      if (!await validarSessaoVoz(socket)) return;
 
       voiceStates.set(socket.id, {
         userId,
+        identidadeAprendizado: socket.data.voiceSession.identity,
         nome: nome || 'Jogador',
         conversaId,
         jogoAtual: typeof dados.jogoAtual === 'string' ? dados.jogoAtual.trim().slice(0, 80) : '',
@@ -757,11 +826,14 @@ io.on('connection', (socket) => {
       socket.emit('voz:pronto');
     } catch (error) {
       console.error('[VOZ INICIAR]', error.message);
-      socket.emit('voz:erro', { mensagem: 'Não foi possível iniciar a chamada da Iana.' });
+      if (socket.connected) socket.emit('voz:erro', { mensagem: 'Não foi possível iniciar a chamada da Iana.' });
+    } finally {
+      socket.data.voiceStarting = false;
     }
   });
 
-  socket.on('voz:jogo', dados => {
+  socket.on('voz:jogo', async dados => {
+    if (!await validarSessaoVoz(socket)) return;
     const estado = voiceStates.get(socket.id);
     const jogoAtual = typeof dados?.jogoAtual === 'string' ? dados.jogoAtual.trim().slice(0, 80) : '';
     if (!estado || !jogoAtual) return;
@@ -772,6 +844,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('voz:texto', async textoRecebido => {
+    if (!await validarSessaoVoz(socket)) return;
     const estado = voiceStates.get(socket.id);
     const mensagem = typeof textoRecebido === 'string' ? textoRecebido.trim() : '';
     if (!estado || !mensagem) return;
@@ -784,14 +857,13 @@ io.on('connection', (socket) => {
     await responderNaChamada(
       socket,
       estado,
-      contextoVisual
-        ? `${mensagem}\n\nConsidere também a observação visual recente, sem assumir que os rótulos YOLO identificam corretamente objetos do jogo.`
-        : mensagem,
+      mensagem,
       contextoVisual
     );
   });
 
   socket.on('voz:visao', async dados => {
+    if (!await validarSessaoVoz(socket)) return;
     const estado = voiceStates.get(socket.id);
     if (!estado || !dados || typeof dados !== 'object') return;
     const frameWidth = Number.isFinite(dados.width) ? Math.max(1, Math.min(4096, dados.width)) : 1;
@@ -832,12 +904,10 @@ io.on('connection', (socket) => {
     );
   });
 
-  socket.on('voz:interromper', () => {
+  socket.on('voz:interromper', async () => {
+    if (!await validarSessaoVoz(socket)) return;
     const estado = voiceStates.get(socket.id);
-    if (estado) {
-      estado.turno += 1;
-      estado.ocupado = false;
-    }
+    cancelVoiceTurn(estado);
     const tts = voiceTtsSockets.get(socket.id);
     if (tts) {
       tts.close();
@@ -846,24 +916,19 @@ io.on('connection', (socket) => {
     socket.emit('voz:interrompido');
   });
 
-  socket.on('voz:tts-local-finalizado', () => {
+  socket.on('voz:tts-local-finalizado', async () => {
+    if (!await validarSessaoVoz(socket)) return;
     const estado = voiceStates.get(socket.id);
     if (estado) estado.ocupado = false;
     socket.emit('voz:fala-finalizada');
   });
 
   socket.on('voz:encerrar', () => {
-    voiceStates.delete(socket.id);
-    const tts = voiceTtsSockets.get(socket.id);
-    if (tts) tts.close();
-    voiceTtsSockets.delete(socket.id);
+    clearVoiceState(socket.id, voiceStates, voiceTtsSockets);
   });
 
   socket.on('disconnect', () => {
-    voiceStates.delete(socket.id);
-    const tts = voiceTtsSockets.get(socket.id);
-    if (tts) tts.close();
-    voiceTtsSockets.delete(socket.id);
+    clearVoiceState(socket.id, voiceStates, voiceTtsSockets);
     console.log(`🔌 Cliente desconectado (ID: ${socket.id})`);
   });
 });

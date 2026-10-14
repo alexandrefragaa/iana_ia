@@ -20,6 +20,37 @@ class ApiTests(unittest.TestCase):
     def headers(self):
         return {"X-API-Key": api.IANA_API_KEY}
 
+    def test_history_reset_during_response_stays_cleared(self):
+        started = threading.Event()
+        finish = threading.Event()
+
+        def generate():
+            started.set()
+            self.assertTrue(finish.wait(5))
+            return "Resposta em andamento."
+
+        def chat():
+            with api.app.test_client() as client:
+                return client.post('/api/v1/chat', json={
+                    'mensagem': 'Explique o guia.', 'sessao_id': 'reset-during-response',
+                    'usuario_id': 'user:reset-test',
+                }, headers=self.headers())
+
+        owner_headers = {**self.headers(), 'X-Iana-User-Id': 'user:reset-test'}
+        with patch.object(api, 'RUN_PIPELINE_OK', True), patch.object(api.iana_v2, 'run_pipeline', side_effect=generate):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                pending = executor.submit(chat)
+                try:
+                    self.assertTrue(started.wait(5))
+                    deleted = self.client.delete('/api/v1/chat/historico/reset-during-response', headers=owner_headers)
+                    self.assertEqual(deleted.status_code, 200)
+                finally:
+                    finish.set()
+                response = pending.result(timeout=5)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['historico_count'], 0)
+        self.assertEqual(self.client.get('/api/v1/chat/historico/reset-during-response', headers=owner_headers).status_code, 404)
+
     def test_resolve_api_key_uses_gemini_fallback_for_local_dev(self):
         with patch.dict("os.environ", {"IANA_API_KEY": "", "GEMINI_API_KEY": "fallback-gemini-key"}, clear=False):
             resolved = api.resolve_api_key()

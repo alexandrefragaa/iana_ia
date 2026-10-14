@@ -16,3 +16,6 @@ memory.json
 node_modules/
 mysql.js
 schema.sql
+/work/knowledge-*.log
+/data/.source_registry.lock
+/data/*.tmp

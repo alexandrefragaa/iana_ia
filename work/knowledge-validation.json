@@ -1,0 +1,76 @@
+{
+  "stats": {
+    "sqlite": true,
+    "documentos": 1709,
+    "documents": 1709,
+    "chunks": 2395,
+    "modelo": "keyword-bm25",
+    "banco": "C:\\Users\\alex\\AppData\\Local\\iana_database\\chromadb",
+    "database_path": "C:\\Users\\alex\\AppData\\Local\\iana_database\\chromadb\\memoria.sqlite3",
+    "rag_mode": "keyword",
+    "active_mode": "keyword",
+    "chromadb": false,
+    "fallback": true,
+    "legacy_chroma_pending": false,
+    "legacy_chroma_error": null,
+    "legacy_chroma_warning": null,
+    "semantic_error": null,
+    "legacy_import_error": null,
+    "atualizado_em": 1791389545
+  },
+  "retrieved_sources": [
+    {
+      "title": "I Found DBD's Most HATED Endgame Build",
+      "url": "https://www.youtube.com/watch?v=4Q80bhS-Vls"
+    },
+    {
+      "title": "This INSANE Solo Queue Endgame Build Got BUFFED?!",
+      "url": "https://www.youtube.com/watch?v=Phd5WFbd5T4"
+    },
+    {
+      "title": "Abusing PURE EVIL Killer Builds in DBD",
+      "url": "https://www.youtube.com/watch?v=-jywmHo4tdo"
+    },
+    {
+      "title": "I Created The ULTIMATE Exhaustion Builds In DBD",
+      "url": "https://www.youtube.com/watch?v=2MYI6M8H5Ww"
+    },
+    {
+      "title": "Melhores Builds de Sobreviventes em DBD: Guia Atualizado",
+      "url": "https://dluzgames.com.br/melhores-builds-de-sobreviventes-em-dbd-guia-atualizado/"
+    }
+  ],
+  "chat_http_status": 200,
+  "chat_reply": "Tô com uma instabilidade na conexão e não consegui organizar direitinho o que encontrei nos meus guias. Prefiro não te passar pedaços soltos como se fossem uma resposta completa. Tenta falar comigo de novo daqui a pouco?",
+  "tests": {
+    "python_passed": 73,
+    "node_passed": 23,
+    "total_passed": 96
+  },
+  "service_health": {
+    "node": 200,
+    "python": 200,
+    "knowledge_api": 200
+  },
+  "generation_limitation": {
+    "provider": "Gemini",
+    "status": "daily_quota_exhausted",
+    "daily_requests_limit": 20,
+    "live_creative_answer_verified": false
+  },
+  "supplied_file_learning": {
+    "documents_saved": 10,
+    "remaining_file_sources": 171,
+    "source": "data/titulos_para_buscar.txt",
+    "retrieved_with_game_context": true
+  },
+  "conversation_learning": {
+    "same_database": true,
+    "account_scoped": true,
+    "learns_without_generation": true,
+    "assistant_outputs_learned": false
+  },
+  "source_registry": {
+    "previously_extracted_sources_confirmed": 5
+  }
+}

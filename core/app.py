@@ -23,6 +23,7 @@ import time
 import json
 import importlib
 import hmac
+import hashlib
 import base64
 import binascii
 import logging
@@ -55,6 +56,8 @@ logger = logging.getLogger("IanaAPI")
 # Tenta integrar o pipeline da Iana (iana_v2.py)
 RUN_PIPELINE_OK = False
 sys.path.insert(0, str(BASE_DIR))
+if str(BASE_DIR.parent) not in sys.path:
+    sys.path.insert(1, str(BASE_DIR.parent))
 try:
     import iana_v2
     RUN_PIPELINE_OK = True
@@ -99,14 +102,17 @@ def resolve_api_key() -> str:
 IANA_API_KEY = resolve_api_key()
 
 # Armazenamento em memória protegido contra acesso concorrente.
-sessoes_memoria: Dict[str, List[Dict[str, str]]] = {}
-sessoes_lock = threading.RLock()
-pipeline_lock = threading.Lock()
-MAX_MESSAGE_LENGTH = 20_000
-MAX_SESSION_ID_LENGTH = 128
-MAX_NAME_LENGTH = 80
-MAX_HISTORY_MESSAGES = 100
-MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+from collections import OrderedDict
+MAX_ACTIVE_SESSIONS = 500
+sessoes_memoria: OrderedDict[str, List[Dict[str, str]]] = OrderedDict()
+
+
+def normalizar_identidade_usuario(value, session_id=None):
+    if value is None:
+        return "session:" + hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:24] if session_id else None
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9:_-]{1,128}", value):
+        raise ValueError("usuario_id deve ser um identificador de usuário válido.")
+    return value
 
 
 def normalizar_anexo(dados: Dict[str, Any]) -> Optional[Dict[str, str]]:
@@ -194,7 +200,7 @@ def normalizar_config_usuario(config: Any) -> Dict[str, Any]:
             raise ValueError(f"config_usuario.{campo} deve ser um texto de até {max_tamanho} caracteres.")
         normalizada[campo] = valor.strip()
 
-    for campo in ("perguntas", "humor", "criatividade", "contexto"):
+    for campo in ("perguntas", "humor", "criatividade", "contexto", "aprender_conversas"):
         valor = config.get(campo)
         if valor is None:
             continue
@@ -283,8 +289,12 @@ def health_check():
     GET /health
     Verifica a saúde da API, status do pipeline e uso de memória.
     """
-    with sessoes_lock:
-        sessoes_ativas = len(sessoes_memoria)
+   with sessoes_lock:
+    if chave_historico in sessoes_memoria:
+        sessoes_memoria.move_to_end(chave_historico)
+    elif len(sessoes_memoria) >= MAX_ACTIVE_SESSIONS:
+        sessoes_memoria.popitem(last=False)
+    sessoes_memoria.setdefault(chave_historico, [])
 
     return jsonify({
         "status": "online",
@@ -412,12 +422,20 @@ def chat_iana():
             "mensagem": "O campo 'sessao_id' não pode estar vazio."
         }), 400
 
-    # Inicializa o histórico da sessão se for nova
+    try:
+        identidade_fornecida = dados.get("usuario_id", request.headers.get("X-Iana-User-Id"))
+        identidade_usuario = normalizar_identidade_usuario(identidade_fornecida, sessao_id)
+    except ValueError as problem:
+        return jsonify({"status": "erro", "mensagem": str(problem)}), 400
+
+    chave_historico = f"{identidade_usuario}\0{sessao_id}" if identidade_fornecida is not None else sessao_id
+    # Identidades explícitas isolam chats com o mesmo nome de sessão.
     with sessoes_lock:
-        sessoes_memoria.setdefault(sessao_id, [])
-        sessoes_memoria[sessao_id].append({"role": "user", "content": mensagem_usuario})
-        limitar_historico(sessoes_memoria[sessao_id])
-        historico_sessao = list(sessoes_memoria[sessao_id][:-1][-10:])
+        sessoes_memoria.setdefault(chave_historico, [])
+        sessoes_memoria[chave_historico].append({"role": "user", "content": mensagem_usuario})
+        limitar_historico(sessoes_memoria[chave_historico])
+        referencia_historico = sessoes_memoria[chave_historico]
+        historico_sessao = list(sessoes_memoria[chave_historico][:-1][-10:])
 
     # Processa a resposta via pipeline RAG ou Fallback
     resposta_final = None
@@ -427,6 +445,9 @@ def chat_iana():
             with pipeline_lock:
                 iana_v2.msg_final = mensagem_usuario
                 iana_v2.nome_usuario = nome_usuario
+                iana_v2.identidade_usuario = identidade_usuario
+                iana_v2.id_conversa = sessao_id
+                iana_v2.ultimo_aprendizado_conversa = None
                 iana_v2.historico = historico_sessao
                 iana_v2.config_usuario = config_usuario
                 iana_v2.contexto_visual = contexto_visual
@@ -438,6 +459,8 @@ def chat_iana():
                     iana_v2.contexto_visual = ""
                     iana_v2.jogo_atual = ""
                     iana_v2.anexo_usuario = None
+                    aprendizado_conversa = iana_v2.ultimo_aprendizado_conversa
+                    iana_v2.identidade_usuario = None
         except Exception as e:
             logger.error(f"Erro na execução do pipeline RAG para sessão '{sessao_id}': {e}")
 
@@ -451,15 +474,20 @@ def chat_iana():
 
     # Registra a resposta da Iana no histórico da sessão
     with sessoes_lock:
-        sessoes_memoria[sessao_id].append({"role": "assistant", "content": str(resposta_final)})
-        limitar_historico(sessoes_memoria[sessao_id])
-        historico_count = len(sessoes_memoria[sessao_id]) - 1
+        historico_atual = sessoes_memoria.get(chave_historico)
+        # Uma limpeza durante a geração permanece limpa; a resposta em voo
+        # não recria a sessão nem entra num novo histórico com o mesmo nome.
+        if historico_atual is referencia_historico:
+            historico_atual.append({"role": "assistant", "content": str(resposta_final)})
+            limitar_historico(historico_atual)
+        historico_count = max(0, len(historico_atual or []) - 1)
 
     return jsonify({
         "status": "sucesso",
         "versao_api": API_VERSION,
         "sessao_id": sessao_id,
         "resposta": resposta_final,
+        "aprendizado_conversa": aprendizado_conversa if RUN_PIPELINE_OK and 'aprendizado_conversa' in locals() else None,
         "historico_count": historico_count,
         "timestamp": int(time.time())
     }), 200
@@ -475,8 +503,13 @@ def obter_historico(sessao_id: str):
     if not autenticado and erro_resp:
         return erro_resp
 
+    try:
+        usuario = normalizar_identidade_usuario(request.headers.get("X-Iana-User-Id"))
+    except ValueError as problem:
+        return jsonify({"mensagem": str(problem)}), 400
+    chave = f"{usuario}\0{sessao_id}" if usuario else sessao_id
     with sessoes_lock:
-        sessao = sessoes_memoria.get(sessao_id)
+        sessao = sessoes_memoria.get(chave)
         mensagens = [dict(m) for m in sessao if m.get("role") != "system"] if sessao else None
 
     if mensagens is None:
@@ -506,8 +539,13 @@ def limpar_historico(sessao_id: str):
     if not autenticado and erro_resp:
         return erro_resp
 
+    try:
+        usuario = normalizar_identidade_usuario(request.headers.get("X-Iana-User-Id"))
+    except ValueError as problem:
+        return jsonify({"mensagem": str(problem)}), 400
+    chave = f"{usuario}\0{sessao_id}" if usuario else sessao_id
     with sessoes_lock:
-        sessoes_memoria.pop(sessao_id, None)
+        sessoes_memoria.pop(chave, None)
     logger.info(f"Sessão '{sessao_id}' resetada com sucesso.")
 
     return jsonify({
@@ -520,6 +558,55 @@ def limpar_historico(sessao_id: str):
 # ================================================================
 # EXECUÇÃO DO SERVIDOR
 # ================================================================
+
+from core.knowledge_jobs import get_jobs, validate_submission, capabilities
+
+
+@app.route('/api/v1/knowledge', methods=['GET'])
+def knowledge_overview():
+    authenticated, error = verificar_autenticacao()
+    if not authenticated:
+        return error
+    try:
+        from core.learning_engine import knowledge_status, list_documents
+        usuario = normalizar_identidade_usuario(request.headers.get("X-Iana-User-Id"))
+        return jsonify({"stats": knowledge_status(usuario_id=usuario), "documents": list_documents(limit=50, usuario_id=usuario), "capabilities": capabilities()})
+    except ValueError as problem:
+        return jsonify({"mensagem": str(problem)}), 400
+    except Exception as problem:
+        logger.warning("Base de conhecimento indisponível (%s).", type(problem).__name__)
+        return jsonify({"mensagem": "Não foi possível consultar a base de conhecimento."}), 503
+
+
+@app.route('/api/v1/knowledge/jobs', methods=['POST'])
+def start_knowledge_job():
+    authenticated, error = verificar_autenticacao()
+    if not authenticated:
+        return error
+    try:
+        data = validate_submission(request.get_json(silent=True))
+        job = get_jobs().submit(data)
+        return jsonify({"job": job}), 202
+    except ValueError as problem:
+        return jsonify({"mensagem": str(problem)}), 400
+    except RuntimeError as problem:
+        return jsonify({"mensagem": str(problem)}), 429
+    except Exception as problem:
+        logger.warning("Não foi possível iniciar extração (%s).", type(problem).__name__)
+        return jsonify({"mensagem": "O serviço de aprendizado está indisponível."}), 503
+
+
+@app.route('/api/v1/knowledge/jobs/<job_id>', methods=['GET'])
+def get_knowledge_job(job_id):
+    authenticated, error = verificar_autenticacao()
+    if not authenticated:
+        return error
+    if not re.fullmatch(r"[a-f0-9-]{36}", job_id):
+        return jsonify({"mensagem": "Tarefa não encontrada."}), 404
+    job = get_jobs().get(job_id)
+    if job is None:
+        return jsonify({"mensagem": "Tarefa não encontrada."}), 404
+    return jsonify({"job": job})
 
 if __name__ == '__main__':
     porta = int(os.getenv("PORT", "5000"))

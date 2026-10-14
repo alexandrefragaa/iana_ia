@@ -2,6 +2,13 @@ import crypto from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
+export function conversationIdentity(user, sessionState) {
+  if (user?.id !== undefined && user?.id !== null) return `user:${user.id}`;
+  if (!sessionState) throw new Error('Sessão necessária para aprender na conversa.');
+  sessionState.knowledgeGuestId ||= crypto.randomUUID();
+  return `guest:${sessionState.knowledgeGuestId}`;
+}
+
 export function pythonExecutable(root, env = process.env) {
   if (env.IANA_PYTHON_PATH) return env.IANA_PYTHON_PATH;
   for (const folder of ['.venv', 'venv']) {

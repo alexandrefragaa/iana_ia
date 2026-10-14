@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import argparse
 import json
 import os
 import re
@@ -14,14 +15,13 @@ import requests
 from bs4 import BeautifulSoup
 
 
-try:
-    from learning_engine import learn
-except ImportError:
+def learn(*args, **kwargs):
+    # Importar o minerador não abre o banco nem carrega modelos desnecessários.
     try:
-        from core.learning_engine import learn
+        from core.learning_engine import learn as learner
     except ImportError:
-        print("❌ learning_engine.py não encontrado.")
-        sys.exit(1)
+        from learning_engine import learn as learner
+    return learner(*args, **kwargs)
 
 
 BASE_DIR = Path(
@@ -195,22 +195,13 @@ def carregar_links_concluidos() -> set:
 def marcar_link_concluido(url: str):
     url = normalizar_url(url)
 
-    if not url:
+    if not url or _registry().is_search_url(url):
         return
-
-    ARQUIVO_LINKS_CONCLUIDOS.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    if url in carregar_links_concluidos():
-        return
-
-    with ARQUIVO_LINKS_CONCLUIDOS.open(
-        "a",
-        encoding="utf-8",
-    ) as arquivo:
-        arquivo.write(url + "\n")
+    with _registry().registry_lock(DATA_DIR):
+        original = _registry().read_text(ARQUIVO_LINKS_CONCLUIDOS)
+        if url not in _registry().source_urls(original):
+            _registry()._atomic_write(ARQUIVO_LINKS_CONCLUIDOS,
+                original + ("\n" if original and not original.endswith("\n") else "") + url + "\n")
 
 
 def carregar_estado() -> Dict:
@@ -228,19 +219,14 @@ def carregar_estado() -> Dict:
 
 
 def salvar_estado(estado: Dict):
-    ARQUIVO_ESTADO.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    ARQUIVO_ESTADO.write_text(
-        json.dumps(
-            estado,
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    with _registry().registry_lock(DATA_DIR):
+        # Leituras antigas nunca apagam entradas escritas por outro trabalhador.
+        existing_text = _registry().read_text(ARQUIVO_ESTADO)
+        existing = json.loads(existing_text) if existing_text.strip() else {}
+        if not isinstance(existing, dict):
+            raise ValueError("Arquivo de estado inválido; conteúdo preservado.")
+        existing.update(estado)
+        _registry()._atomic_write(ARQUIVO_ESTADO, json.dumps(existing, ensure_ascii=False, indent=2) + "\n")
 
 
 def limpar_soup(soup: BeautifulSoup):
@@ -438,18 +424,17 @@ def aprender_url(
     url: str,
     categoria: str = "web_mining",
 ) -> str:
-    titulo, conteudo = extrair_conteudo(url)
-
-    if not titulo or not conteudo:
-        return "ERRO"
-
-    return learn(
-        titulo=titulo,
-        conteudo=conteudo,
-        categoria=categoria,
-        id_documento=uid_url(url),
-        url=url,
-    )
+    resultado = aprender_fonte(url, {"categoria": categoria}, data_dir=DATA_DIR)
+    for item in resultado["results"]:
+        if item.get("status") == "failed":
+            print(f"  Pendente: {item.get('reason') or item.get('url')}")
+    if resultado["status"] == "partial":
+        return "PARCIAL"
+    statuses = [item.get("outcome") for item in resultado["results"]]
+    for status in ("NOVO", "ATUALIZADO", "EXISTE"):
+        if status in statuses:
+            return status
+    return "ERRO"
 
 
 def minerar_urls(
@@ -481,7 +466,8 @@ def minerar_urls(
         print(f"\n[{indice}/{len(urls_unicas)}]")
         print(f"🌐 {url}")
 
-        if marcar_feitos and url in concluidos:
+        busca_youtube = urlparse(url).path == "/results" and urlparse(url).hostname in {"youtube.com", "www.youtube.com", "m.youtube.com"}
+        if marcar_feitos and url in concluidos and not busca_youtube:
             pulados += 1
             print("⏭️ Já consta como concluído.")
             continue
@@ -492,16 +478,14 @@ def minerar_urls(
             novos += 1
             print(f"✅ Aprendido: {status}")
 
-            if marcar_feitos:
-                marcar_link_concluido(url)
-
-        elif status in ("EXISTE", "PARECIDO"):
+        elif status == "EXISTE":
             pulados += 1
             print(f"⏭️ {status}")
 
-            if marcar_feitos:
-                marcar_link_concluido(url)
-
+        elif status == "PARCIAL":
+            novos += 1
+            erros += 1
+            print("⚠️ Parte da fonte foi salva; os itens com falha permanecem pendentes.")
         else:
             erros += 1
             print("❌ Falha")
@@ -573,7 +557,6 @@ def minerar_atualizacoes():
         print("⚠️ Nenhuma URL em update_sources.txt.")
         return 0
 
-    estado = carregar_estado()
     atualizados = 0
 
     print("\n🔄 FASE 3 — update_sources.txt")
@@ -582,44 +565,10 @@ def minerar_atualizacoes():
         print(f"\n[{indice}/{len(urls)}]")
         print(f"🔄 {url}")
 
-        titulo, conteudo = extrair_conteudo(url)
-
-        if not titulo or not conteudo:
-            print("⚠️ Conteúdo insuficiente.")
-            continue
-
-        digest = hash_texto(conteudo)
-        digest_anterior = estado.get(url)
-
-        if digest_anterior == digest:
-            print("⏭️ Fonte sem alteração.")
-            continue
-
-        status = learn(
-            titulo=titulo,
-            conteudo=conteudo,
-            categoria="update",
-            id_documento=uid_url(url),
-            url=url,
-        )
-
-        if status in ("NOVO", "ATUALIZADO"):
-            atualizados += 1
-            print(f"✅ {status}: {titulo}")
-
-            estado[url] = digest
-            salvar_estado(estado)
-
-        elif status == "EXISTE":
-            estado[url] = digest
-            salvar_estado(estado)
-
-            print("⏭️ Já estava atualizado.")
-
-        else:
-            print(f"⚠️ Resultado: {status}")
-
-        time.sleep(0.5)
+        # Sites e vídeos usam a mesma extração validada e o mesmo registro.
+        resultado = aprender_fonte(url, {"categoria": "update"}, data_dir=DATA_DIR)
+        atualizados += resultado["learned_count"]
+        print(f"Resultado: {resultado['status']}; {resultado['document_count']} documentos disponíveis.")
 
     print(f"\n📊 Updates: {atualizados} atualizados.")
 
@@ -1260,7 +1209,225 @@ def mostrar_resumo(
     )
 
 
+def _registry():
+    try:
+        from core import source_registry
+    except ImportError:
+        import source_registry
+    return source_registry
+
+
+def aprender_extraido(source_url, extracted, *, learner=None, data_dir=None):
+    """Persist actual content, preserving failures and confirmed provenance."""
+    learner = learner or learn
+    results = []
+    raw_results = []
+    documents = extracted.get("documentos", [])
+    document_urls = {doc.get("url", "") for doc in documents}
+    warnings = list(extracted.get("avisos", []))
+    for item in extracted.get("itens", []):
+        if item.get("url", "") in document_urls and item.get("status") == "EXTRAIDO":
+            continue
+        status = "skipped" if item.get("status") == "IGNORADO" else "failed"
+        results.append({"url": item.get("url", ""), "status": status,
+                        "reason": item.get("mensagem") or item.get("motivo") or "Nenhum conteúdo extraído."})
+    for doc in documents:
+        try:
+            outcome = learner(
+                titulo=doc["titulo"], conteudo=doc["conteudo"],
+                categoria=doc.get("categoria", "web_mining"), id_documento=doc["id"],
+                url=doc.get("url", ""), metadata=doc.get("metadata", {}),
+            )
+        except Exception as problem:
+            outcome = "ERRO"
+            warnings.append(f"Não foi possível salvar um documento ({type(problem).__name__}).")
+        saved = outcome in _registry().SAVED_OUTCOMES
+        raw_results.append({"id": doc.get("id", ""), "url": doc.get("url", ""), "outcome": outcome})
+        results.append({"id": doc.get("id", ""), "url": doc.get("url", ""),
+                        "titulo": doc.get("titulo", "Fonte"), "outcome": outcome,
+                        "status": "existing" if outcome == "EXISTE" else "learned" if saved else "failed",
+                        "reason": "Conteúdo já disponível." if outcome == "EXISTE" else "Conteúdo salvo." if saved else "Não foi possível salvar o conteúdo."})
+    count = sum(item.get("outcome") in _registry().SAVED_OUTCOMES for item in results)
+    learned = sum(item.get("outcome") in {"NOVO", "ATUALIZADO"} for item in results)
+    registry_failed = False
+    try:
+        registered = _registry().record_source_result(source_url, extracted, raw_results, data_dir=data_dir)
+    except (OSError, ValueError) as problem:
+        registry_failed = True
+        registered = {"saved_urls": [], "updated_urls": []}
+        warnings.append(f"O conteúdo foi processado, mas o registro de fontes não pôde ser atualizado ({type(problem).__name__}).")
+    failed = registry_failed or any(item["status"] == "failed" for item in results) or extracted.get("status") in {"ERRO", "failed"}
+    status = "partial" if count and failed else "failed" if failed else "completed" if count else "skipped" if results else "failed"
+    return {"source": source_url, "status": status, "document_count": count, "learned_count": learned,
+            "results": results, "warnings": warnings, "registry": registered}
+
+
+def aprender_fonte(url, options=None, *, extractor=None, learner=None, data_dir=None):
+    if extractor is None:
+        try:
+            from core.knowledge_sources import extract_source
+        except ImportError:
+            from knowledge_sources import extract_source
+        extractor = extract_source
+    try:
+        extracted = extractor(url, options or {})
+    except Exception as problem:
+        return {"source": url, "status": "failed", "document_count": 0, "learned_count": 0,
+                "results": [{"url": url, "status": "failed", "reason": f"Não foi possível extrair a fonte ({type(problem).__name__})."}], "warnings": []}
+    return aprender_extraido(url, extracted, learner=learner, data_dir=data_dir)
+
+
+def _file_candidates(directory):
+    """Read a bounded queue's candidates without deleting or consuming files."""
+    registry = _registry()
+    candidates = []
+    title_file = directory / "titulos_para_buscar.txt"
+    title_text = registry.read_text(title_file)
+    # Este arquivo também contém explicações manuais, não só títulos de busca.
+    for index, block in enumerate(re.split(r"\n\s*\n", title_text), 1):
+        lines = [line.strip() for line in block.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+        prose_lines = [line for line in lines if not re.fullmatch(r"https?://\S+", line, re.I)]
+        prose = "\n".join(prose_lines).strip()
+        if not prose:
+            continue
+        words = re.findall(r"\w+", prose)
+        supplied_content = len(prose) >= 160 or (len(words) >= 18 and re.search(r"[.,:;!?]", prose))
+        if supplied_content:
+            identifier = "arquivo_" + hashlib.sha256(f"{title_file.resolve()}#bloco={index}".encode("utf-8")).hexdigest()[:48]
+            candidates.append({"kind": "local", "file": str(title_file), "id": identifier,
+                               "titulo": prose.splitlines()[0][:120], "conteudo": prose, "block": index})
+        else:
+            for line in prose_lines:
+                if not registry.source_urls(line):
+                    candidates.append({"kind": "topic", "topic": line, "file": str(title_file)})
+    seen = set()
+    urls = []
+    for filename in registry.SOURCE_FILES:
+        for url in registry.source_urls(registry.read_text(directory / filename)):
+            if url in seen:
+                continue
+            seen.add(url)
+            urls.append({"kind": "url", "url": url, "file": str(directory / filename),
+                         "category": "update" if filename == "update_sources.txt" else "web_mining"})
+    # URLs escritas na lista de tópicos seguem o extrator, nunca viram textos.
+    for url in registry.source_urls(title_text):
+        if url not in seen:
+            seen.add(url)
+            urls.append({"kind": "url", "url": url, "file": str(title_file), "category": "web_mining"})
+    local = [item for item in candidates if item["kind"] == "local"]
+    topics = [item for item in candidates if item["kind"] == "topic"]
+    return local + urls + topics
+
+
+def _content_game(options, content):
+    """Use an explicit game, or infer DBD only from this content itself."""
+    configured = (options or {}).get("jogo")
+    if configured is None:
+        configured = (options or {}).get("game")
+    if configured is not None:
+        if not isinstance(configured, str) or not 1 <= len(configured.strip()) <= 120:
+            raise ValueError("jogo deve ser um nome de jogo de até 120 caracteres.")
+        return configured.strip()
+    if re.search(r"(?<!\w)DBD(?!\w)|Dead[\s/_-]+by[\s/_-]+Daylight", str(content), re.I):
+        return "DBD"
+    return None
+
+
+def learn_from_files(max_sources=None, options=None, *, data_dir=None, extractor=None,
+                     learner=None, topic_lookup=None, progress=None):
+    """Learn only the existing source files, with an explicit bounded workload.
+
+    Long passages supplied in titulos_para_buscar.txt are local knowledge.
+    Short titles require an actual Wikipedia extract before becoming knowledge.
+    Completion/history files are retained; every run may refresh saved sources.
+    """
+    if max_sources is None:
+        try:
+            max_sources = int(os.getenv("IANA_FILE_MAX_SOURCES", "10"))
+        except ValueError:
+            max_sources = 10
+    if isinstance(max_sources, bool) or not isinstance(max_sources, int) or not 1 <= max_sources <= 100:
+        raise ValueError("max_sources deve ser um inteiro entre 1 e 100.")
+    _content_game(options, "")  # Validar a configuração antes de iniciar o lote.
+    registry = _registry()
+    directory = registry.data_directory(data_dir)
+    candidates = _file_candidates(directory)
+    signature = content_hash_for_batch(candidates)
+    offset = registry.file_batch_cursor(signature, directory)
+    if offset >= len(candidates):
+        offset = 0
+    selected = candidates[offset:offset + max_sources]
+    source_results = []
+    for index, candidate in enumerate(selected, 1):
+        kind = candidate["kind"]
+        if progress:
+            progress({"index": index, "total": len(selected), "kind": kind,
+                      "source": candidate.get("url") or candidate.get("topic") or candidate.get("titulo")})
+        if kind == "url":
+            result = aprender_fonte(candidate["url"], {**(options or {}), "categoria": candidate["category"]},
+                                    extractor=extractor, learner=learner, data_dir=directory)
+        elif kind == "local":
+            metadata = {"tipo": "texto_local", "arquivo": candidate["file"], "natureza": "conteudo_fornecido",
+                        "verificado": False, "bloco": candidate["block"]}
+            game = _content_game(options, candidate["conteudo"])
+            if game:
+                metadata["jogo"] = game
+            doc = {"id": candidate["id"], "titulo": candidate["titulo"], "conteudo": candidate["conteudo"],
+                   "categoria": "texto_local", "url": "", "metadata": metadata}
+            result = aprender_extraido(candidate["file"], {"documentos": [doc], "itens": []}, learner=learner, data_dir=directory)
+        else:
+            lookup = topic_lookup or buscar_wikipedia
+            try:
+                found = lookup(candidate["topic"])
+            except Exception:
+                found = None
+            if found and len(str(found[1] or "").strip()) >= 100:
+                title, content, url = found
+                doc = {"id": "fonte_" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:48],
+                       "titulo": title, "conteudo": content, "categoria": "topico", "url": url,
+                       "metadata": {"tipo": "site", "metodo": "wikipedia_extract", "consulta": candidate["topic"], "arquivo": candidate["file"]}}
+                game = _content_game(options, content)
+                if game:
+                    doc["metadata"]["jogo"] = game
+                result = aprender_extraido(url, {"documentos": [doc], "itens": []}, learner=learner, data_dir=directory)
+            else:
+                result = {"source": candidate["topic"], "status": "failed", "document_count": 0, "learned_count": 0,
+                          "results": [{"status": "failed", "reason": "Título pendente: não foi encontrado conteúdo suficiente na Wikipedia."}], "warnings": []}
+        result["source_file"] = candidate["file"]
+        result["kind"] = kind
+        source_results.append(result)
+        registry.save_file_batch_cursor(signature, offset + len(source_results), directory)
+    count = sum(item["document_count"] for item in source_results)
+    failures = sum(item["status"] in {"failed", "partial"} for item in source_results)
+    status = "partial" if count and failures else "failed" if failures else "completed" if source_results else "empty"
+    return {"status": status, "data_dir": str(directory), "processed_sources": len(source_results),
+            "available_sources": len(candidates), "remaining_sources": max(0, len(candidates) - offset - len(selected)),
+            "batch_offset": offset, "next_batch_offset": offset + len(selected),
+            "document_count": count, "learned_count": sum(item["learned_count"] for item in source_results),
+            "failed_sources": failures, "results": source_results}
+
+
+def content_hash_for_batch(candidates):
+    # Alterações no conteúdo manual ou nas listas iniciam uma nova passagem.
+    # O histórico cresce durante a coleta e não deve reiniciar o próprio lote.
+    queue = [item for item in candidates if Path(item["file"]).name != "links_concluidos.txt"]
+    return _registry().content_hash(json.dumps(queue, ensure_ascii=False, sort_keys=True))
+
+
 def main():
+    parser = argparse.ArgumentParser(description="Aprende com os arquivos de fontes existentes da Iana.")
+    parser.add_argument("--max-sources", type=int, default=None)
+    parser.add_argument("--max-videos", type=int, default=5)
+    parser.add_argument("--recent-days", type=int, default=7)
+    parser.add_argument("--game", help="Jogo associado aos textos locais e tópicos deste lote.")
+    args = parser.parse_args()
+    report = learn_from_files(args.max_sources, {"max_videos": args.max_videos, "recent_days": args.recent_days, "jogo": args.game},
+                              progress=lambda item: print(f"[{item['index']}/{item['total']}] {item['source']}", file=sys.stderr))
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 1 if report["status"] == "failed" else 0
+
+
+def _legacy_main():
     inicio = time.time()
 
     print("\n" + "=" * 60)
@@ -1321,7 +1488,7 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        raise SystemExit(main())
 
     except KeyboardInterrupt:
         print("\n⚠️ Mineração interrompida.")

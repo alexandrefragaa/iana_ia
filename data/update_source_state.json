@@ -3,5 +3,14 @@
   "https://deadbydaylight.com/pt-br/noticias/": "0d10328c7a6cf316157da09949c0b1c1",
   "https://halloweengame.com/news": "390e7fb479e63d76c36784ed33f98331eea525e5b9fa9eb3119225a9c4090767",
   "https://steamcommunity.com/app/381210/news/": "24d7466df8665625785de70198c5b180bac2aa41d1bfa925cc86ad10d3285bef",
-  "https://www.ign.com/articles": "500830974f0e427196cc215f110ff0f4130554d9932229bd56c27d1f2fd08dcd"
+  "https://www.ign.com/articles": "500830974f0e427196cc215f110ff0f4130554d9932229bd56c27d1f2fd08dcd",
+  "__file_batch__": {
+    "signature": "9c6d3dec2b985c21e9387b0b2cdc03af055c79cf6496d86dad154ad794207112",
+    "next_index": 10
+  },
+  "https://deadbydaylight.com/game/": "39d39cd0baed51439993ebde63c3a3ec21b4e274496649c43acb296decba369b",
+  "https://www.youtube.com/watch?v=4Q80bhS-Vls": "30b7e5b500e2137e46831cfe3c46f1897c5e8f1620e0a93c560c0a2aaeff0b24",
+  "https://www.youtube.com/watch?v=Phd5WFbd5T4": "4a4edcd32eef83b9121fbcfcea12cbb41653286c32b0ba350eedb80694b99ee7",
+  "https://www.youtube.com/watch?v=2MYI6M8H5Ww": "14f0eb1f1f85a77718d7572e26daaaf2f70fe25754b11e903b5a3e92793839ab",
+  "https://www.youtube.com/watch?v=-jywmHo4tdo": "a8ad7625ac7e8bb78a91eb2436bd9d26170a08d38d9a55e5591df0c1f50946d7"
 }

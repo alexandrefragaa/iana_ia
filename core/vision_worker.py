@@ -1,7 +1,6 @@
 """Persistent local detector. JSON lines over stdin/stdout; no screen or network access."""
 import base64
 import contextlib
-import io
 import json
 import os
 import sys
@@ -14,6 +13,7 @@ Path(os.environ['YOLO_CONFIG_DIR']).mkdir(parents=True, exist_ok=True)
 os.environ.setdefault('YOLO_AUTOINSTALL', 'false')
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
+
 
 def respond(payload):
     print(json.dumps(payload, ensure_ascii=False), flush=True)
@@ -39,9 +39,18 @@ def summarize_scene(detections):
         if label:
             labels.append(label)
 
-    dangerous = {'enemy', 'monster', 'boss', 'danger', 'trap', 'hazard', 'fire', 'spikes'}
-    items = {'chest', 'coin', 'potion', 'key', 'ammo', 'weapon', 'sword', 'shield', 'armor', 'health', 'item'}
-    routes = {'door', 'stairs', 'portal', 'exit', 'path', 'checkpoint'}
+    dangerous = {
+        'enemy', 'monster', 'boss', 'danger', 'trap', 'hazard', 'fire', 'spikes',
+        'person', 'knife', 'scissors', 'bear', 'dog'
+    }
+    items = {
+        'chest', 'coin', 'potion', 'key', 'ammo', 'weapon', 'sword', 'shield', 'armor', 'health', 'item',
+        'bottle', 'cup', 'backpack', 'handbag', 'suitcase', 'book', 'cell phone', 'clock'
+    }
+    routes = {
+        'door', 'stairs', 'portal', 'exit', 'path', 'checkpoint',
+        'traffic light', 'stop sign', 'bench', 'chair', 'car', 'truck'
+    }
 
     detected_items = sorted({label for label in labels if label in items})
     detected_danger = sorted({label for label in labels if label in dangerous})
@@ -51,17 +60,17 @@ def summarize_scene(detections):
         status = 'perigoso'
         risk = 'alta'
         route = 'evite a rota frontal, mantenha cobertura e procure uma trilha lateral segura.'
-        decision = 'Há ameaça visível. Recuar, se posicionar melhor ou desviar para uma rota lateral.'
+        decision = 'Há presença ou ameaça visível. Recuar, posicionar câmera ou desviar para rota lateral.'
     elif detected_items:
         status = 'explorar'
         risk = 'média'
         route = 'avance em direção ao item útil mais próximo e confirme a rota antes do próximo encontro.'
-        decision = 'Há recursos visíveis. Coletar o útil agora pode compensar o risco da próxima área.'
+        decision = 'Há objetos interativos visíveis. Coletar ou inspecionar agora pode ajudar na área.'
     elif detected_routes:
         status = 'transitar'
         risk = 'baixa'
         route = 'siga pela referência de caminho mais clara e confirme se a área está livre.'
-        decision = 'Sem ameaça evidente. Use a rota visível como referência e avance com calma.'
+        decision = 'Sem ameaça imediata. Use a estrutura visível como referência e avance com calma.'
     else:
         status = 'seguro'
         risk = 'baixa'
@@ -73,7 +82,7 @@ def summarize_scene(detections):
     if detected_items:
         decision = f"{decision} Itens relevantes: {', '.join(detected_items)}."
     if detected_danger:
-        decision = f"{decision} Perigos: {', '.join(detected_danger)}."
+        decision = f"{decision} Alvos/Perigos: {', '.join(detected_danger)}."
 
     return {
         'status': status,
@@ -88,7 +97,7 @@ def summarize_scene(detections):
 def main():
     model_path = Path(os.getenv('IANA_VISION_MODEL', str(ROOT / 'models' / 'yolo26n.pt')))
     if not model_path.is_file():
-        respond({'event':'error','error':'Modelo local ausente. Execute npm run vision:setup.'})
+        respond({'event': 'error', 'error': 'Modelo local ausente. Execute npm run vision:setup.'})
         return
     with contextlib.redirect_stdout(sys.stderr):
         import cv2
@@ -98,7 +107,7 @@ def main():
         model = YOLO(str(model_path))
         device = '0' if torch.cuda.is_available() else 'cpu'
         model.predict(np.zeros((384, 640, 3), dtype=np.uint8), imgsz=640, device=device, verbose=False)
-    respond({'event':'ready','model':model_path.name,'device':device,'scope':'generic-object-detection'})
+    respond({'event': 'ready', 'model': model_path.name, 'device': device, 'scope': 'generic-object-detection'})
     for line in sys.stdin:
         request = {}
         try:
@@ -114,14 +123,27 @@ def main():
                 result = model.predict(frame, imgsz=640, conf=0.4, max_det=40, device=device, verbose=False)[0]
             boxes = []
             for box in result.boxes:
-                boxes.append({'label':result.names[int(box.cls.item())], 'confidence':round(float(box.conf.item()),3), 'xyxy':[round(float(v),1) for v in box.xyxy[0].tolist()]})
+                boxes.append({
+                    'label': result.names[int(box.cls.item())],
+                    'confidence': round(float(box.conf.item()), 3),
+                    'xyxy': [round(float(v), 1) for v in box.xyxy[0].tolist()]
+                })
             scene = summarize_scene(boxes)
-            respond({'id':request['id'],'detections':boxes,'width':frame.shape[1],'height':frame.shape[0],'inferenceMs':round((time.perf_counter()-started)*1000,1),'device':device,'summary':scene})
+            respond({
+                'id': request['id'],
+                'detections': boxes,
+                'width': frame.shape[1],
+                'height': frame.shape[0],
+                'inferenceMs': round((time.perf_counter() - started) * 1000, 1),
+                'device': device,
+                'summary': scene
+            })
         except Exception as exc:
-            respond({'id':request.get('id'),'error':str(exc)[:250]})
+            respond({'id': request.get('id'), 'error': str(exc)[:250]})
+
 
 if __name__ == '__main__':
     try:
         main()
     except Exception as exc:
-        respond({'event':'error','error':str(exc)[:250]})
+        respond({'event': 'error', 'error': str(exc)[:250]})

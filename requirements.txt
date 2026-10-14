@@ -7,3 +7,5 @@ waitress
 # sentence-transformers
 beautifulsoup4
 pymysql
+youtube-transcript-api>=1.2,<2
+yt-dlp>=2026.8.19,<2027

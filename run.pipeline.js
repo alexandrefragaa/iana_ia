@@ -27,13 +27,13 @@ async function run() {
     for (const url of urls.slice(0, 20)) {
         processed++;
         try {
-            const data = await scrape(url);
-            if (!data) continue;
-
             if (isDuplicate(url)) {
                 console.log("⏭️  Duplicado:", url);
                 continue;
             }
+
+            const data = await scrape(url);
+            if (!data) continue;
 
             if (!isValidGameContent(data.title, url)) {
                 console.log("⏭️  Não é conteúdo de game:", url);
@@ -41,7 +41,10 @@ async function run() {
             }
 
             console.log("✅ Novo link:", url);
-            if (await saveDiscovery(data.title, url)) learned++;
+            if (await saveDiscovery(data.title, url)) {
+                saveLink(url);
+                learned++;
+            }
         } catch (err) {
             console.log("❌ Erro:", err.message);
         }

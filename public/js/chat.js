@@ -604,6 +604,7 @@ function garantirSocketVoz() {
         return null;
     }
 
+    const socketVozAtual = vozSocket;
     vozSocket.on('connect', async () => {
         vozSocketConectando = false;
 
@@ -613,6 +614,7 @@ function garantirSocketVoz() {
         );
 
         await garantirAudioElevenAtivo();
+        if (vozSocket !== socketVozAtual || !emChamadaVoz || !socketVozAtual.connected) return;
 
         try {
             vozSocket.emit('voz:iniciar', {
@@ -743,6 +745,11 @@ function garantirSocketVoz() {
 
 
     vozSocket.on('disconnect', motivo => {
+        if (vozSocket !== socketVozAtual) return;
+        if (motivo === 'io server disconnect') {
+            fecharVoz();
+            return;
+        }
         vozSocketConectando = false;
 
         console.warn(
@@ -1143,6 +1150,7 @@ function fecharVoz() {
         } catch {}
 
         try {
+            vozSocket.removeAllListeners();
             vozSocket.disconnect();
         } catch {}
 
@@ -2491,6 +2499,8 @@ async function realizarLogin() {
         btn.disabled = true;
     }
 
+    fecharVoz();
+    pararRespostaIA();
     try {
         const res =
             await fetch(
@@ -2585,6 +2595,8 @@ async function realizarCadastro() {
         btn.disabled = true;
     }
 
+    fecharVoz();
+    pararRespostaIA();
     try {
         const res =
             await fetch(
@@ -2644,6 +2656,8 @@ async function realizarCadastro() {
 
 
 async function realizarLogout() {
+    fecharVoz();
+    pararRespostaIA();
     try {
         const res = await fetch(
             '/auth/logout',
@@ -4038,6 +4052,7 @@ function usarSugestao(texto) {
 
 
 function resetarChat() {
+    fecharVoz();
     pararRespostaIA();
 
     idConversaAtiva =

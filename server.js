@@ -247,7 +247,84 @@ app.get('/auth/me', (req, res) => {
 });
 
 /* ================================================================
-   6. ROTAS DE CHAT E STREAMING (SSE)
+   6. ROTAS DE GERENCIAMENTO DE CONVERSAS (HISTÓRICO)
+   ================================================================ */
+app.get('/conversas', authRequired, async (req, res) => {
+  try {
+    const [conversas] = await pool.query(
+      'SELECT id, titulo, fixada, atualizado_em FROM conversas WHERE usuario_id = ? ORDER BY fixada DESC, atualizado_em DESC',
+      [req.user.id]
+    );
+    return res.json({ status: 'sucesso', conversas });
+  } catch (err) {
+    return res.json({ status: 'sucesso', conversas: [] });
+  }
+});
+
+app.get('/conversas/:id', authRequired, async (req, res) => {
+  try {
+    const [mensagens] = await pool.query(
+      'SELECT id, mensagem as conteudo, remetente, criado_em FROM mensagens WHERE conversa_id = ? AND usuario_id = ? ORDER BY id ASC',
+      [req.params.id, req.user.id]
+    );
+    return res.json({ status: 'sucesso', conversa_id: req.params.id, mensagens });
+  } catch (err) {
+    return res.json({ status: 'sucesso', conversa_id: req.params.id, mensagens: [] });
+  }
+});
+
+app.post('/conversas/:id/fixar', authRequired, async (req, res) => {
+  try {
+    const [conversas] = await pool.query(
+      'SELECT fixada FROM conversas WHERE id = ? AND usuario_id = ?',
+      [req.params.id, req.user.id]
+    );
+    if (!conversas.length) return res.status(404).json({ status: 'erro', mensagem: 'Conversa não encontrada.' });
+
+    const fixada = conversas[0].fixada ? 0 : 1;
+    await pool.query(
+      'UPDATE conversas SET fixada = ? WHERE id = ? AND usuario_id = ?',
+      [fixada, req.params.id, req.user.id]
+    );
+    return res.json({ status: 'sucesso', fixada: Boolean(fixada) });
+  } catch (err) {
+    return res.status(500).json({ status: 'erro', mensagem: 'Não foi possível fixar a conversa.' });
+  }
+});
+
+app.patch('/conversas/:id', authRequired, async (req, res) => {
+  const titulo = typeof req.body.titulo === 'string' ? req.body.titulo.trim() : '';
+  if (!titulo || titulo.length > 80) {
+    return res.status(400).json({ status: 'erro', mensagem: 'O título deve ter entre 1 e 80 caracteres.' });
+  }
+  try {
+    const [existentes] = await pool.query(
+      'SELECT id FROM conversas WHERE id = ? AND usuario_id = ?',
+      [req.params.id, req.user.id]
+    );
+    if (!existentes.length) return res.status(404).json({ status: 'erro', mensagem: 'Conversa não encontrada.' });
+    await pool.query(
+      'UPDATE conversas SET titulo = ? WHERE id = ? AND usuario_id = ?',
+      [titulo, req.params.id, req.user.id]
+    );
+    return res.json({ status: 'sucesso', titulo });
+  } catch (err) {
+    return res.status(500).json({ status: 'erro', mensagem: 'Não foi possível renomear a conversa.' });
+  }
+});
+
+app.delete('/conversas/:id', authRequired, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM mensagens WHERE conversa_id = ? AND usuario_id = ?', [req.params.id, req.user.id]);
+    await pool.query('DELETE FROM conversas WHERE id = ? AND usuario_id = ?', [req.params.id, req.user.id]);
+    return res.json({ status: 'sucesso', mensagem: 'Conversa excluída.' });
+  } catch (err) {
+    return res.status(500).json({ status: 'erro', mensagem: err.message });
+  }
+});
+
+/* ================================================================
+   7. ROTAS DE CHAT E STREAMING (SSE)
    ================================================================ */
 app.post('/chat', chatLimiter, async (req, res) => {
   const nomeUsuario = req.user?.nome || req.body.nome_usuario || 'Jogador';
@@ -341,7 +418,7 @@ app.get('/chat/stream', authRequired, async (req, res) => {
 });
 
 /* ================================================================
-   7. SOCKET.IO & INICIALIZAÇÃO DOS SERVIÇOS
+   8. SOCKET.IO & INICIALIZAÇÃO DOS SERVIÇOS
    ================================================================ */
 const io = new SocketIOServer(server, {
   cors: { origin: origensPermitidas, credentials: true }

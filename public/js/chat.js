@@ -3655,6 +3655,15 @@ function atualizarMensagemIA(
     }
 }
 
+async function processarEnvioIA(mensagem, anexo = null, visualizacaoAnexo = null) {
+    if (typeof processarEnvioIAStreaming === 'function') {
+        if (visualizacaoAnexo) {
+            adicionarAnexoUsuarioDOM(visualizacaoAnexo);
+        }
+        return await processarEnvioIAStreaming(mensagem);
+    }
+    console.warn('[IANA] processarEnvioIA chamado sem streaming disponível.');
+}
 
 // Substitua a chamada de envio no chat.js para suportar streaming
 async function processarEnvioIAStreaming(texto) {

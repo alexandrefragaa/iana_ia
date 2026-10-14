@@ -5,20 +5,59 @@ services:
     plan: free
     buildCommand: npm install && python -m pip install -r requirements.txt
     startCommand: npm start
+    healthCheckPath: /health
     envVars:
+      # Ambiente e Segurança
       - key: NODE_ENV
         value: production
+      - key: SESSION_SECURE
+        value: "true"
       - key: SESSION_SECRET
         generateValue: true
       - key: IANA_API_KEY
         generateValue: true
-      - key: SYSTEM_PROMPT
-        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://iana-ia.onrender.com
+
+      # Integração Node.js + Python Flask (RAG)
       - key: START_PYTHON_API
-        value: true
+        value: "true"
+      - key: PYTHON_API_PORT
+        value: "5000"
       - key: IANA_RAG_MODE
         value: keyword
-      - key: PYTHON_API_PORT
-        value: 5000
-      - key: SESSION_SECURE
-        value: true
+
+      # Provedor de IA (Configure os valores secretos no painel do Render)
+      - key: MINHA_API_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: SYSTEM_PROMPT
+        sync: false
+
+      # Banco de Dados MySQL (Aiven)
+      # Preencha DB_HOST, DB_PORT, DB_PASSWORD e DB_PASS no painel Environment do Render
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_USER
+        value: avnadmin
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_PASS
+        sync: false
+      - key: DB_NAME
+        value: defaultdb
+      - key: DB_SSL
+        value: "true"
+
+      # Voz Opcional (ElevenLabs — se vazio, usa o TTS nativo do navegador)
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        value: 42swcOVaxVM4TNSGUmkc
+      - key: ELEVENLABS_MODEL_ID
+        value: eleven_multilingual_v2

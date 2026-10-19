@@ -98,6 +98,49 @@ class SourceRegistryTests(unittest.TestCase):
         self.assertEqual(path.read_text(encoding="utf-8"), original + "\n" + SEARCH + "\n")
 
 
+
+    def test_irrelevant_wikipedia_article_is_not_learned(self):
+        title_file = self.directory / "titulos_para_buscar.txt"
+        title_file.write_text(
+            "Item Drop Tech Dead by Daylight\n",
+            encoding="utf-8",
+        )
+
+        irrelevant_title = (
+            "História da violência contra pessoas LGBTQ nos Estados Unidos"
+        )
+        irrelevant_content = (
+            "Este artigo descreve a história da violência contra pessoas "
+            "LGBTQ nos Estados Unidos. " * 10
+        )
+        irrelevant_url = (
+            "https://pt.wikipedia.org/wiki/"
+            "Hist%C3%B3ria_da_viol%C3%AAncia"
+        )
+
+        learner = Mock(return_value="NOVO")
+        lookup = Mock(
+            return_value=(
+                irrelevant_title,
+                irrelevant_content,
+                irrelevant_url,
+            )
+        )
+
+        scraper.learn_from_files(
+            5,
+            data_dir=self.directory,
+            learner=learner,
+            topic_lookup=lookup,
+        )
+
+        learner.assert_not_called()
+        self.assertNotIn(
+            irrelevant_url,
+            registry.completed_urls(self.directory),
+        )
+
+
 class ExistingFileLearningTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()

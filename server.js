@@ -331,8 +331,8 @@ app.get('/auth/me', (req, res) => {
 });
 
 app.post('/auth/trocar-senha', authRequired, loginLimiter, async (req, res) => {
-  const senhaAtual = typeof req.body?.senhaAtual === 'string' ? req.body.senhaAtual : '';
-  const novaSenha = typeof req.body?.novaSenha === 'string' ? req.body.novaSenha : '';
+  const senhaAtual = typeof req.body?.senhaAtual === 'string' ? req.body.senhaAtual.trim() : '';
+  const novaSenha = typeof req.body?.novaSenha === 'string' ? req.body.novaSenha.trim() : '';
 
   if (!senhaAtual || !novaSenha) {
     return res.status(400).json({ status: 'erro', mensagem: 'Informe a senha atual e a nova senha.' });

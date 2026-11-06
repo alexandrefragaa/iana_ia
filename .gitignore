@@ -2,11 +2,38 @@
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 data/chromadb/
 titulos_concluidos.txt
 iana_database/
 .vscode/
 .DS_Store
+
+# Ambientes e dependências locais
+.venv/
+venv/
+
+# Bancos locais, arquivos auxiliares e cópias de segurança
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.db
+*.db-*
+*.dump
+*.dump.*
+*.sql.gz
+*.bak
+*.backup
+*.backup.*
+**/backup/
+**/backups/
+*.log
+*.tmp
 
 # Dados e Bancos Locais (Não sobe o que a Iana gerou/salvou)
 /crawler/*.txt

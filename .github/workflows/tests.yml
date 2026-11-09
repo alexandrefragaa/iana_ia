@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, ci/add-automated-tests-20261108]
 
 permissions:
   contents: read

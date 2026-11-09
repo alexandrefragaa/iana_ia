@@ -144,6 +144,7 @@ class ApiTests(unittest.TestCase):
             return api.iana_v2.anexo_usuario["mime_type"]
 
         with patch.object(api, "RUN_PIPELINE_OK", True), \
+             patch.object(api.iana_v2, "MINHA_API_PROVIDER", "gemini"), \
              patch.object(api.iana_v2, "run_pipeline", side_effect=pipeline_with_attachment):
             response = self.client.post(
                 "/api/v1/chat",
@@ -166,6 +167,7 @@ class ApiTests(unittest.TestCase):
             return api.iana_v2.anexo_usuario["mime_type"]
 
         with patch.object(api, "RUN_PIPELINE_OK", True), \
+             patch.object(api.iana_v2, "MINHA_API_PROVIDER", "gemini"), \
              patch.object(api.iana_v2, "run_pipeline", side_effect=pipeline_with_video):
             response = self.client.post(
                 "/api/v1/chat",

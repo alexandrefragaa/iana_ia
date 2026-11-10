@@ -643,44 +643,45 @@ def buscar_wikipedia(
             .get("query", {})
             .get("search", [])
         )
-
+        candidatos = []
+        vistos = set()
         for resultado in resultados:
-            pageid = resultado.get("pageid")
+            pageid = str(resultado.get("pageid") or "")
             titulo = resultado.get("title")
+            if pageid and titulo and pageid not in vistos:
+                candidatos.append((pageid, titulo))
+                vistos.add(pageid)
 
-            if not pageid or not titulo:
-                continue
+        if not candidatos:
+            return None
 
-            page_response = SESSION.get(
-                wikipedia_api,
-                params={
-                    "action": "query",
-                    "prop": "extracts|info",
-                    "explaintext": True,
-                    "redirects": 1,
-                    "inprop": "url",
-                    "pageids": pageid,
-                    "format": "json",
-                },
-                timeout=REQUEST_TIMEOUT,
-            )
+        page_response = SESSION.get(
+            wikipedia_api,
+            params={
+                "action": "query",
+                "prop": "extracts|info",
+                "explaintext": True,
+                "redirects": 1,
+                "inprop": "url",
+                "pageids": "|".join(pageid for pageid, _ in candidatos),
+                "format": "json",
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
 
-            page_response.raise_for_status()
+        page_response.raise_for_status()
 
-            data = page_response.json()
+        data = page_response.json()
 
-            pages = (
-                data
-                .get("query", {})
-                .get("pages", {})
-            )
+        pages = (
+            data
+            .get("query", {})
+            .get("pages", {})
+        )
 
-            page = pages.get(str(pageid), {})
-
-            extract = str(
-                page.get("extract", "")
-            ).strip()
-
+        for pageid, titulo in candidatos:
+            page = pages.get(pageid, {})
+            extract = str(page.get("extract", "")).strip()
             url = page.get("fullurl")
 
             if len(extract) < 100 or not _topic_matches(consulta, titulo, extract):

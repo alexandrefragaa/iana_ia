@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
@@ -575,6 +576,41 @@ def minerar_atualizacoes():
     return atualizados
 
 
+def _topic_terms(text: str) -> set:
+    """Normalize topic terms so accent/case differences do not hide relevance."""
+    stopwords = {
+        "a", "as", "ao", "aos", "da", "das", "de", "do", "dos", "e", "em",
+        "na", "nas", "no", "nos", "o", "os", "para", "por", "com", "sem",
+        "um", "uma", "uns", "umas", "the", "and", "of", "to", "in", "on",
+        "for", "with", "from", "by", "how", "what", "where", "when", "why",
+    }
+    normalized = unicodedata.normalize("NFKD", str(text or "").casefold())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    tokens = {
+        token for token in re.findall(r"[a-z0-9]+", normalized)
+        if len(token) > 1 and token not in stopwords
+    }
+    if "dbd" in tokens:
+        tokens.update({"dead", "daylight"})
+    return tokens
+
+
+def _topic_matches(topic: str, title: str, content: str = "") -> bool:
+    """Reject search results that share no meaningful terms with the requested topic."""
+    query_terms = _topic_terms(topic)
+    if not query_terms:
+        return False
+
+    title_matches = len(query_terms & _topic_terms(title))
+    required_title_matches = 1 if len(query_terms) <= 3 else 2
+    if title_matches >= required_title_matches:
+        return True
+
+    content_matches = len(query_terms & _topic_terms(str(content or "")[:12000]))
+    required_content_matches = 1 if len(query_terms) == 1 else 2
+    return content_matches >= required_content_matches
+
+
 def buscar_wikipedia(
     consulta: str,
 ) -> Optional[Tuple[str, str, str]]:
@@ -607,16 +643,16 @@ def buscar_wikipedia(
             .get("query", {})
             .get("search", [])
         )
+        candidatos = []
+        vistos = set()
+        for resultado in resultados:
+            pageid = str(resultado.get("pageid") or "")
+            titulo = resultado.get("title")
+            if pageid and titulo and pageid not in vistos:
+                candidatos.append((pageid, titulo))
+                vistos.add(pageid)
 
-        if not resultados:
-            return None
-
-        melhor = resultados[0]
-
-        pageid = melhor.get("pageid")
-        titulo = melhor.get("title")
-
-        if not pageid or not titulo:
+        if not candidatos:
             return None
 
         page_response = SESSION.get(
@@ -627,7 +663,7 @@ def buscar_wikipedia(
                 "explaintext": True,
                 "redirects": 1,
                 "inprop": "url",
-                "pageids": pageid,
+                "pageids": "|".join(pageid for pageid, _ in candidatos),
                 "format": "json",
             },
             timeout=REQUEST_TIMEOUT,
@@ -643,25 +679,24 @@ def buscar_wikipedia(
             .get("pages", {})
         )
 
-        page = pages.get(str(pageid), {})
+        for pageid, titulo in candidatos:
+            page = pages.get(pageid, {})
+            extract = str(page.get("extract", "")).strip()
+            url = page.get("fullurl")
 
-        extract = str(
-            page.get("extract", "")
-        ).strip()
+            if len(extract) < 100 or not _topic_matches(consulta, titulo, extract):
+                continue
 
-        url = page.get("fullurl")
+            return (
+                titulo,
+                extract[:25000],
+                url or (
+                    "https://pt.wikipedia.org/wiki/"
+                    + titulo.replace(" ", "_")
+                ),
+            )
 
-        if len(extract) < 100:
-            return None
-
-        return (
-            titulo,
-            extract[:25000],
-            url or (
-                "https://pt.wikipedia.org/wiki/"
-                + titulo.replace(" ", "_")
-            ),
-        )
+        return None
 
     except Exception as e:
         print(f"  ⚠️ Wikipedia: {e}")
@@ -1381,7 +1416,8 @@ def learn_from_files(max_sources=None, options=None, *, data_dir=None, extractor
                 found = lookup(candidate["topic"])
             except Exception:
                 found = None
-            if found and len(str(found[1] or "").strip()) >= 100:
+            if (found and len(str(found[1] or "").strip()) >= 100
+                    and _topic_matches(candidate["topic"], found[0], found[1])):
                 title, content, url = found
                 doc = {"id": "fonte_" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:48],
                        "titulo": title, "conteudo": content, "categoria": "topico", "url": url,
@@ -1392,7 +1428,7 @@ def learn_from_files(max_sources=None, options=None, *, data_dir=None, extractor
                 result = aprender_extraido(url, {"documentos": [doc], "itens": []}, learner=learner, data_dir=directory)
             else:
                 result = {"source": candidate["topic"], "status": "failed", "document_count": 0, "learned_count": 0,
-                          "results": [{"status": "failed", "reason": "Título pendente: não foi encontrado conteúdo suficiente na Wikipedia."}], "warnings": []}
+                          "results": [{"status": "failed", "reason": "Não foi encontrado conteúdo suficiente e relacionado ao tópico na Wikipedia."}], "warnings": []}
         result["source_file"] = candidate["file"]
         result["kind"] = kind
         source_results.append(result)

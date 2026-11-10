@@ -2,7 +2,7 @@ name: Testes automatizados
 
 on:
   push:
-    branches: [main]
+    branches: [main, "fix/**"]
   pull_request:
     branches: [main, ci/add-automated-tests-20261108]
 

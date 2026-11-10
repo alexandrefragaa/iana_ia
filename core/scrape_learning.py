@@ -586,10 +586,13 @@ def _topic_terms(text: str) -> set:
     }
     normalized = unicodedata.normalize("NFKD", str(text or "").casefold())
     normalized = "".join(char for char in normalized if not unicodedata.combining(char))
-    return {
+    tokens = {
         token for token in re.findall(r"[a-z0-9]+", normalized)
         if len(token) > 1 and token not in stopwords
     }
+    if "dbd" in tokens:
+        tokens.update({"dead", "daylight"})
+    return tokens
 
 
 def _topic_matches(topic: str, title: str, content: str = "") -> bool:

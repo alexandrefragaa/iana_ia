@@ -2,9 +2,9 @@ name: Testes automatizados
 
 on:
   push:
-    branches: [main]
+    branches: [main, "fix/**"]
   pull_request:
-    branches: [main, ci/add-automated-tests-20261108, test/fix-multimodal-chat-ci-20261109]
+    branches: [main, ci/add-automated-tests-20261108]
 
 permissions:
   contents: read

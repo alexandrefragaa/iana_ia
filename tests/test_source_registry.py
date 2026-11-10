@@ -9,7 +9,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from core import source_registry as registry
 from core import scrape_learning as scraper
@@ -139,6 +139,69 @@ class SourceRegistryTests(unittest.TestCase):
             irrelevant_url,
             registry.completed_urls(self.directory),
         )
+
+
+    def test_relevant_wikipedia_article_is_learned(self):
+        title_file = self.directory / "titulos_para_buscar.txt"
+        title_file.write_text("Item Drop Tech Dead by Daylight\\n", encoding="utf-8")
+        article = (
+            "Dead by Daylight é um jogo de terror assimétrico. "
+            "O item drop tech descreve uma técnica usada durante as partidas. " * 3
+        )
+        url = "https://pt.wikipedia.org/wiki/Dead_by_Daylight"
+        learner = Mock(return_value="NOVO")
+
+        result = scraper.learn_from_files(
+            5,
+            data_dir=self.directory,
+            learner=learner,
+            topic_lookup=Mock(return_value=("Dead by Daylight", article, url)),
+        )
+
+        self.assertEqual(result["document_count"], 1)
+        learner.assert_called_once()
+        self.assertIn(url, registry.completed_urls(self.directory))
+
+    def test_wikipedia_lookup_skips_irrelevant_first_search_result(self):
+        search_response = Mock()
+        search_response.json.return_value = {
+            "query": {
+                "search": [
+                    {"pageid": 1, "title": "História da violência contra pessoas LGBTQ"},
+                    {"pageid": 2, "title": "Dead by Daylight"},
+                ]
+            }
+        }
+        irrelevant_page = Mock()
+        irrelevant_page.json.return_value = {
+            "query": {"pages": {"1": {
+                "extract": "História da violência contra pessoas LGBTQ nos Estados Unidos. " * 5,
+                "fullurl": "https://pt.wikipedia.org/wiki/Historia_da_violencia",
+            }}}
+        }
+        relevant_page = Mock()
+        relevant_content = (
+            "Dead by Daylight é um jogo de terror assimétrico. "
+            "O item drop tech descreve uma técnica usada durante as partidas. " * 3
+        )
+        relevant_page.json.return_value = {
+            "query": {"pages": {"2": {
+                "extract": relevant_content,
+                "fullurl": "https://pt.wikipedia.org/wiki/Dead_by_Daylight",
+            }}}
+        }
+
+        with patch.object(
+            scraper.SESSION,
+            "get",
+            side_effect=[search_response, irrelevant_page, relevant_page],
+        ) as request:
+            result = scraper.buscar_wikipedia("Item Drop Tech Dead by Daylight")
+
+        self.assertEqual(request.call_count, 3)
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0], "Dead by Daylight")
+        self.assertEqual(result[2], "https://pt.wikipedia.org/wiki/Dead_by_Daylight")
 
 
 class ExistingFileLearningTests(unittest.TestCase):

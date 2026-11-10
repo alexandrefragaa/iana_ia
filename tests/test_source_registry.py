@@ -143,7 +143,7 @@ class SourceRegistryTests(unittest.TestCase):
 
     def test_relevant_wikipedia_article_is_learned(self):
         title_file = self.directory / "titulos_para_buscar.txt"
-        title_file.write_text("Item Drop Tech Dead by Daylight\\n", encoding="utf-8")
+        title_file.write_text("Item Drop Tech Dead by Daylight\n", encoding="utf-8")
         article = (
             "Dead by Daylight é um jogo de terror assimétrico. "
             "O item drop tech descreve uma técnica usada durante as partidas. " * 3

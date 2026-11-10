@@ -202,6 +202,7 @@ class SourceRegistryTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result[0], "Dead by Daylight")
         self.assertEqual(result[2], "https://pt.wikipedia.org/wiki/Dead_by_Daylight")
+        self.assertTrue(scraper._topic_matches("DBD", "Dead by Daylight", relevant_content))
 
 
 class ExistingFileLearningTests(unittest.TestCase):

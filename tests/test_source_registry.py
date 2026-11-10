@@ -172,33 +172,33 @@ class SourceRegistryTests(unittest.TestCase):
                 ]
             }
         }
-        irrelevant_page = Mock()
-        irrelevant_page.json.return_value = {
-            "query": {"pages": {"1": {
-                "extract": "História da violência contra pessoas LGBTQ nos Estados Unidos. " * 5,
-                "fullurl": "https://pt.wikipedia.org/wiki/Historia_da_violencia",
-            }}}
-        }
-        relevant_page = Mock()
+        page_response = Mock()
         relevant_content = (
             "Dead by Daylight é um jogo de terror assimétrico. "
             "O item drop tech descreve uma técnica usada durante as partidas. " * 3
         )
-        relevant_page.json.return_value = {
-            "query": {"pages": {"2": {
-                "extract": relevant_content,
-                "fullurl": "https://pt.wikipedia.org/wiki/Dead_by_Daylight",
-            }}}
+        page_response.json.return_value = {
+            "query": {"pages": {
+                "1": {
+                    "extract": "História da violência contra pessoas LGBTQ nos Estados Unidos. " * 5,
+                    "fullurl": "https://pt.wikipedia.org/wiki/Historia_da_violencia",
+                },
+                "2": {
+                    "extract": relevant_content,
+                    "fullurl": "https://pt.wikipedia.org/wiki/Dead_by_Daylight",
+                },
+            }}
         }
 
         with patch.object(
             scraper.SESSION,
             "get",
-            side_effect=[search_response, irrelevant_page, relevant_page],
+            side_effect=[search_response, page_response],
         ) as request:
             result = scraper.buscar_wikipedia("Item Drop Tech Dead by Daylight")
 
-        self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[1].kwargs["params"]["pageids"], "1|2")
         self.assertIsNotNone(result)
         self.assertEqual(result[0], "Dead by Daylight")
         self.assertEqual(result[2], "https://pt.wikipedia.org/wiki/Dead_by_Daylight")

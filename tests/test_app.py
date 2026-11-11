@@ -64,11 +64,13 @@ class ApiTests(unittest.TestCase):
             {"label": "danger", "confidence": 0.91, "xyxy": [120, 300, 220, 440]},
         ]
         summary = api.vision_worker.summarize_scene(detections)
-        self.assertIn("status", summary)
+        self.assertEqual(summary["status"], "perigoso")
+        self.assertEqual(summary["risk"], "alta")
         self.assertIn("route", summary)
-        self.assertIn("items", summary)
+        self.assertEqual(summary["items"], ["chest", "sword"])
         self.assertIn("decision", summary)
-        self.assertTrue(summary["items"])
+        self.assertIn("danger", summary["decision"])
+        self.assertIn("Cena em estado perigoso", summary["summary"])
 
     def test_gemini_provider_returns_generated_text(self):
         response = Mock()

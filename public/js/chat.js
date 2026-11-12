@@ -1620,14 +1620,15 @@ async function processarEnvioIAStreaming(texto) {
     let bufferSSE = '';
 
     try {
-        const params = new URLSearchParams({
-            mensagem: textoLimpo,
-            conversa_id: idConversaAtiva || '',
-            config: JSON.stringify(obterConfigSalva())
-        });
-
-        const response = await fetch(`/chat/stream?${params.toString()}`, {
+        const response = await fetch('/chat/stream', {
+            method: 'POST',
             credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                mensagem: textoLimpo,
+                conversa_id: idConversaAtiva || '',
+                config: obterConfigSalva()
+            }),
             signal: controller.signal
         });
 

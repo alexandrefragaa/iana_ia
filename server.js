@@ -17,6 +17,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import crypto from 'crypto';
 import WebSocket from 'ws';
 import { ensureConversation, escapeHTML, pythonExecutable, conversationIdentity } from './core/runtime.js';
+import { parseChatStreamInput } from './core/chat-stream-input.js';
 import { createKnowledgeRouter } from './core/knowledge-proxy.js';
 import { createSessionStore } from './core/session-store.js';
 import { voiceSessionRoom, voiceRequestPayload, socketSessionCurrent, voiceTurnActive, cancelVoiceTurn, clearVoiceState } from './core/voice-session.js';
@@ -539,20 +540,15 @@ app.post('/chat', chatLimiter, async (req, res) => {
   }
 });
 
-// FIX CRÍTICO: Removido authRequired para permitir que visitantes conversem sem erro 401
-app.get('/chat/stream', chatLimiter, async (req, res) => {
-  const mensagem = (req.query.mensagem || '').trim();
-  const conversaId = (req.query.conversa_id || '').trim() || `sessao_${Date.now()}`;
+// POST mantém a mensagem fora da URL. GET permanece por compatibilidade com clientes antigos.
+const processarChatStream = async (req, res) => {
+  const { mensagem, conversaId: conversaIdSolicitada, configUsuario } = parseChatStreamInput(req);
+  const conversaId = conversaIdSolicitada || `sessao_${Date.now()}`;
   const nomeUsuario = req.user?.nome || 'Jogador';
   const identidade = conversationIdentity(req.user, req.session);
 
   if (!mensagem) {
     return res.status(400).json({ status: 'erro', mensagem: 'Mensagem obrigatória.' });
-  }
-
-  let configUsuario = {};
-  if (typeof req.query.config === 'string' && req.query.config.trim()) {
-    try { configUsuario = JSON.parse(req.query.config); } catch {}
   }
 
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -614,7 +610,11 @@ app.get('/chat/stream', chatLimiter, async (req, res) => {
       res.end();
     }
   }
-});
+};
+
+app.post('/chat/stream', chatLimiter, processarChatStream);
+// Compatibilidade temporária com clientes que ainda enviam mensagens por query string.
+app.get('/chat/stream', chatLimiter, processarChatStream);
 
 /* ================================================================
    8. SOCKET.IO (COMUNICAÇÃO EM TEMPO REAL E VOZ COMPLETA)

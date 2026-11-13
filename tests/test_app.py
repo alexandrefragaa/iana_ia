@@ -480,5 +480,77 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(second.result(timeout=2), "message-b")
 
 
+    def test_normalizar_config_usuario_accepts_and_normalizes_supported_preferences(self):
+        normalized = api.normalizar_config_usuario({
+            "personalidade": ["  gamer  ", "", "direta"],
+            "foco": ["dbd"],
+            "plataforma": ["pc"],
+            "voz": ["animada"],
+            "tamanho": "  media ",
+            "emojis": " moderado ",
+            "instrucoes": "  Seja objetiva.  ",
+            "sobreVoce": "  Jogo no PC.  ",
+            "perguntas": True,
+            "humor": False,
+            "criatividade": True,
+            "contexto": False,
+            "aprender_conversas": True,
+            "campo_desconhecido": "não deve ser encaminhado",
+        })
+
+        self.assertEqual(normalized, {
+            "personalidade": ["gamer", "direta"],
+            "foco": ["dbd"],
+            "plataforma": ["pc"],
+            "voz": ["animada"],
+            "tamanho": "media",
+            "emojis": "moderado",
+            "instrucoes": "Seja objetiva.",
+            "sobreVoce": "Jogo no PC.",
+            "perguntas": True,
+            "humor": False,
+            "criatividade": True,
+            "contexto": False,
+            "aprender_conversas": True,
+        })
+
+    def test_normalizar_config_usuario_rejects_invalid_list_preferences(self):
+        invalid_preferences = (
+            {"personalidade": "gamer"},
+            {"foco": ["x" * 41]},
+            {"plataforma": [123]},
+            {"voz": ["opção"] * 11},
+        )
+
+        for preferences in invalid_preferences:
+            with self.subTest(preferences=preferences):
+                with self.assertRaises(ValueError):
+                    api.normalizar_config_usuario(preferences)
+
+    def test_normalizar_config_usuario_rejects_invalid_or_oversized_text(self):
+        invalid_preferences = (
+            {"tamanho": "x" * 31},
+            {"emojis": "x" * 31},
+            {"instrucoes": "x" * 801},
+            {"sobreVoce": "x" * 401},
+            {"instrucoes": 123},
+        )
+
+        for preferences in invalid_preferences:
+            with self.subTest(preferences=list(preferences)):
+                with self.assertRaises(ValueError):
+                    api.normalizar_config_usuario(preferences)
+
+    def test_normalizar_config_usuario_requires_boolean_toggles(self):
+        for field in ("perguntas", "humor", "criatividade", "contexto", "aprender_conversas"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError):
+                    api.normalizar_config_usuario({field: "true"})
+
+    def test_normalizar_config_usuario_defaults_to_empty_for_missing_preferences(self):
+        self.assertEqual(api.normalizar_config_usuario(None), {})
+        self.assertEqual(api.normalizar_config_usuario({}), {})
+
+
 if __name__ == "__main__":
     unittest.main()
